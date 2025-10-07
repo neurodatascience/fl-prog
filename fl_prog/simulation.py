@@ -49,6 +49,8 @@ def simulate_all_subjects(
     k_max: float = 10.0,
     x0_min: float = 0,
     x0_max: float = 1.0,
+    t0_min: float = 0.0,
+    t0_max: float = 1.0,
     sigma: float = 0.1,
     rng: Optional[np.random.Generator] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -70,6 +72,10 @@ def simulate_all_subjects(
         Minimum value for logistic function midpoint parameter
     x0_max : float, optional
         Maximum value for logistic function midpoint parameter
+    t0_min : float, optional
+        Minimum value for the first timepoint of each subject
+    t0_max : float, optional
+        Maximum value for the first timepoint of each subject
     sigma : float, optional
         Standard deviation for Gaussian noise added to biomarkers
     rng : Optional[np.random.Generator], optional
@@ -87,7 +93,9 @@ def simulate_all_subjects(
     biomarkers_all = []
     for _ in range(n_subjects):
         n_timepoints = rng.integers(1, max_n_timepoints + 1)
-        timepoints = generate_timepoints(n_timepoints, rng=rng)
+        timepoints = generate_timepoints(
+            n_timepoints, t0_min=t0_min, t0_max=t0_max, rng=rng
+        )
 
         biomarkers = multivariate_logistic(timepoints, k_values, x0_values)
         biomarkers += rng.normal(0, sigma, size=biomarkers.shape)

@@ -13,6 +13,7 @@ from fl_prog.utils.io import save_json
 DEFAULT_N_SUBJECTS = 50
 DEFAULT_N_MAX_TIMEPOINTS = 3
 DEFAULT_N_BIOMARKERS = 5
+DEFAULT_SHIFT_TIME = False
 DEFAULT_K_MIN = 5.0
 DEFAULT_K_MAX = 10.0
 DEFAULT_X0_MIN = 0.0
@@ -22,7 +23,7 @@ DEFAULT_T0_MAX = 1.0
 DEFAULT_SIGMA = 0.1
 
 
-def _build_df(timepoints, biomarkers) -> pd.DataFrame:
+def _build_df(timepoints, biomarkers, n_biomarkers) -> pd.DataFrame:
     subjects = np.repeat(np.arange(len(biomarkers)), [len(bm) for bm in biomarkers])
 
     df_data = pd.DataFrame(
@@ -31,7 +32,7 @@ def _build_df(timepoints, biomarkers) -> pd.DataFrame:
             "timepoint": np.concatenate(timepoints),
             **{
                 f"biomarker_{i}": np.concatenate(biomarkers)[:, i]
-                for i in range(len(biomarkers[0]))
+                for i in range(n_biomarkers)
             },
         }
     )
@@ -52,6 +53,7 @@ def _build_df(timepoints, biomarkers) -> pd.DataFrame:
 @click.option(
     "--n-biomarkers", type=click.IntRange(min=1), default=DEFAULT_N_BIOMARKERS
 )
+@click.option("--shift-time/--no-shift-time", default=DEFAULT_SHIFT_TIME)
 @click.option("--k-min", type=float, default=DEFAULT_K_MIN)
 @click.option("--k-max", type=float, default=DEFAULT_K_MAX)
 @click.option("--x0-min", type=float, default=DEFAULT_X0_MIN)
@@ -67,6 +69,7 @@ def simulate_data(
     n_subjects: int = DEFAULT_N_SUBJECTS,
     n_max_timepoints: int = DEFAULT_N_MAX_TIMEPOINTS,
     n_biomarkers: int = DEFAULT_N_BIOMARKERS,
+    shift_time: bool = DEFAULT_SHIFT_TIME,
     k_min: float = DEFAULT_K_MIN,
     k_max: float = DEFAULT_K_MAX,
     x0_min: float = DEFAULT_X0_MIN,
@@ -77,10 +80,11 @@ def simulate_data(
     rng_seed: int = None,
 ):
     json_data = {"settings": locals()}
-    timepoints, biomarkers, k_values, x0_values = simulate_all_subjects(
+    timepoints, biomarkers, time_shifts, k_values, x0_values = simulate_all_subjects(
         n_subjects=n_subjects,
         max_n_timepoints=n_max_timepoints,
         n_biomarkers=n_biomarkers,
+        shift_time=shift_time,
         k_min=k_min,
         k_max=k_max,
         x0_min=x0_min,
@@ -90,9 +94,13 @@ def simulate_data(
         sigma=sigma,
         rng=np.random.default_rng(rng_seed),
     )
-    json_data["params"] = {"k_values": k_values, "x0_values": x0_values}
+    json_data["params"] = {
+        "time_shifts": time_shifts,
+        "k_values": k_values,
+        "x0_values": x0_values,
+    }
 
-    df_data = _build_df(timepoints, biomarkers)
+    df_data = _build_df(timepoints, biomarkers, n_biomarkers)
 
     dpath_data.mkdir(parents=True, exist_ok=True)
 

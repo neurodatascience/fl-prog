@@ -45,6 +45,7 @@ def simulate_all_subjects(
     n_subjects: int,
     max_n_timepoints: int = 3,
     n_biomarkers: int = 5,
+    shift_time: bool = False,
     k_min: float = 5.0,
     k_max: float = 10.0,
     x0_min: float = 0,
@@ -53,7 +54,7 @@ def simulate_all_subjects(
     t0_max: float = 1.0,
     sigma: float = 0.1,
     rng: Optional[np.random.Generator] = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
     """Simulate timepoints and biomarkers for all subjects.
 
     Subjects can have multiple timepoints, but they are concatenated into a single
@@ -64,6 +65,8 @@ def simulate_all_subjects(
     n_subjects : int
     max_n_timepoints : int, optional
     n_biomarkers : int, optional
+    shift_time : bool, optional
+        If True, shift timepoints so that the first timepoint for each subject is at 0.
     k_min : float, optional
         Minimum value for logistic function steepness parameter
     k_max : float, optional
@@ -82,9 +85,13 @@ def simulate_all_subjects(
 
     Returns
     -------
-    Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-        Timepoints (n_total_timepoints,), biomarkers (n_total_timepoints, n_biomarkers),
-        k values (n_biomarkers,), and x0 values (n_biomarkers,).
+    Tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]
+        Timepoints: (n_total_timepoints,)
+        Biomarkers: list of length n_subjects with elements of shape (n_timepoints,
+                    n_biomarkers),
+        Time shift values: (n_subjects,)
+        k values: (n_biomarkers,)
+        x0 values: (n_biomarkers,)
     """
     k_values = rng.uniform(k_min, k_max, size=n_biomarkers)
     x0_values = rng.uniform(x0_min, x0_max, size=n_biomarkers)
@@ -103,4 +110,11 @@ def simulate_all_subjects(
         timepoints_all.append(timepoints)
         biomarkers_all.append(biomarkers)
 
-    return (timepoints_all, biomarkers_all, k_values, x0_values)
+    if shift_time:
+        # shift timepoints so that the first timepoint is at 0
+        time_shifts = [tp[0] for tp in timepoints_all]
+        timepoints_all = [tp - tp[0] for tp in timepoints_all]
+    else:
+        time_shifts = [0.0] * n_subjects
+
+    return (timepoints_all, biomarkers_all, np.array(time_shifts), k_values, x0_values)

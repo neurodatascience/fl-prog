@@ -95,6 +95,9 @@ classifiers = [
 # For an analysis of this field vs pip's requirements files see:
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
 dependencies = [
+  "click",
+  "ipykernel",
+  "numpy",
   # DP-MoSt dependencies: https://gitlab.inria.fr/aviani/dpmost/-/blob/a8ba20d77ab17361c9d61aca339735a9baafd36d/README.md
   "matplotlib==3.8.3",
   "pandas==1.5.3",

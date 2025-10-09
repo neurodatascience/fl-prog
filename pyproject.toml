@@ -54,7 +54,7 @@ readme = "README.md"
 # 'Programming Language' classifiers in this file, 'pip install' will check this
 # and refuse to install the project if the version does not match. See
 # https://packaging.python.org/guides/distributing-packages-using-setuptools/#python-requires
-requires-python = "~=3.12.0"
+requires-python = "~=3.10.0"
 
 # This is either text indicating the license for the distribution, or a file
 # that contains the license.
@@ -85,7 +85,7 @@ maintainers = []
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.10",
 ]
 
 # This field lists other packages that your project depends on to run.
@@ -96,16 +96,10 @@ classifiers = [
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
 dependencies = [
   "click",
+  "fedbiomed[node,researcher]",
   "ipykernel",
   "numpy",
-  # DP-MoSt dependencies: https://gitlab.inria.fr/aviani/dpmost/-/blob/a8ba20d77ab17361c9d61aca339735a9baafd36d/README.md
-  "matplotlib==3.8.3",
-  "pandas==1.5.3",
-  "numpy==1.26.4",
-  "scikit-learn==1.4.1.post1",
-  "scipy==1.12.0",
-  "seaborn==0.13.2",
-  "torch==2.2.1",
+  "torch",
 ]
 # List additional groups of dependencies here (e.g. development
 # dependencies). Users will be able to install these using the "extras"

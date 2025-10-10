@@ -1,7 +1,19 @@
 import json
+import os
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
+
+
+@contextmanager
+def working_directory(dpath):
+    dpath_old = Path.cwd()
+    os.chdir(dpath)
+    try:
+        yield
+    finally:
+        os.chdir(dpath_old)
 
 
 def serialize_data(obj: object):

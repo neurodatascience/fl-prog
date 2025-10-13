@@ -1,19 +1,22 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 from pathlib import Path
+from typing import Optional
 
 import click
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import GroupKFold
 
 from fl_prog.simulation import simulate_all_subjects
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import save_json
+from fl_prog.utils.io import save_json, get_dpath_latest
 
 DEFAULT_N_SUBJECTS = 50
+DEFAULT_N_SPLITS = 3
 DEFAULT_N_MAX_TIMEPOINTS = 3
 DEFAULT_N_BIOMARKERS = 5
-DEFAULT_SHIFT_TIME = False
+DEFAULT_SHIFT_TIME = True
 DEFAULT_K_MIN = 5.0
 DEFAULT_K_MAX = 10.0
 DEFAULT_X0_MIN = 0.0
@@ -22,22 +25,33 @@ DEFAULT_T0_MIN = 0.0
 DEFAULT_T0_MAX = 1.0
 DEFAULT_SIGMA = 0.1
 
+COL_SUBJECT = "subject"
+COL_TIMEPOINT = "timepoint"
+COL_BIOMARKER_PREFIX = "biomarker_"
+
 
 def _build_df(timepoints, biomarkers, n_biomarkers) -> pd.DataFrame:
     subjects = np.repeat(np.arange(len(biomarkers)), [len(bm) for bm in biomarkers])
 
     df_data = pd.DataFrame(
         data={
-            "subject": subjects,
-            "timepoint": np.concatenate(timepoints),
+            COL_SUBJECT: subjects,
+            COL_TIMEPOINT: np.concatenate(timepoints),
             **{
-                f"biomarker_{i}": np.concatenate(biomarkers)[:, i]
+                f"{COL_BIOMARKER_PREFIX}{i}": np.concatenate(biomarkers)[:, i]
                 for i in range(n_biomarkers)
             },
         }
     )
 
     return df_data
+
+
+def _get_fname_out(i_split: Optional[int] = None, suffix: str = ".tsv") -> str:
+    prefix = "simulated_data"
+    if i_split is not None:
+        prefix = f"{prefix}-{i_split+1:02d}"
+    return f"{prefix}{suffix}"
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -47,6 +61,7 @@ def _build_df(timepoints, biomarkers, n_biomarkers) -> pd.DataFrame:
     envvar="DPATH_DATA",
 )
 @click.option("--n-subjects", type=click.IntRange(min=1), default=DEFAULT_N_SUBJECTS)
+@click.option("--n-splits", type=click.IntRange(min=1), default=DEFAULT_N_SPLITS)
 @click.option(
     "--n-max-timepoints", type=click.IntRange(min=1), default=DEFAULT_N_MAX_TIMEPOINTS
 )
@@ -67,6 +82,7 @@ def _build_df(timepoints, biomarkers, n_biomarkers) -> pd.DataFrame:
 def simulate_data(
     dpath_data: Path,
     n_subjects: int = DEFAULT_N_SUBJECTS,
+    n_splits: int = DEFAULT_N_SPLITS,
     n_max_timepoints: int = DEFAULT_N_MAX_TIMEPOINTS,
     n_biomarkers: int = DEFAULT_N_BIOMARKERS,
     shift_time: bool = DEFAULT_SHIFT_TIME,
@@ -79,6 +95,9 @@ def simulate_data(
     sigma: float = DEFAULT_SIGMA,
     rng_seed: int = None,
 ):
+    dpath_out = get_dpath_latest(dpath_data, use_today=True)
+    dpath_out.mkdir(parents=True, exist_ok=True)
+
     json_data = {"settings": locals()}
     timepoints, biomarkers, time_shifts, k_values, x0_values = simulate_all_subjects(
         n_subjects=n_subjects,
@@ -102,13 +121,23 @@ def simulate_data(
 
     df_data = _build_df(timepoints, biomarkers, n_biomarkers)
 
-    dpath_data.mkdir(parents=True, exist_ok=True)
+    dfs_split: list[pd.DataFrame] = []
+    if n_splits > 1:
+        for _, idx_test in GroupKFold(n_splits=DEFAULT_N_SPLITS).split(
+            df_data.index, groups=df_data[COL_SUBJECT]
+        ):
+            df_split: pd.DataFrame = df_data.loc[idx_test]
+            df_split = df_split.sort_values(by=COL_SUBJECT)
+            dfs_split.append(df_split)
+    else:
+        dfs_split.append(df_data)
 
-    fpath_tsv = dpath_data / "simulated_data.tsv"
-    df_data.to_csv(fpath_tsv, sep="\t", index=False)
-    print(f"Saved simulated data to {fpath_tsv}")
+    for i_split, df_split in enumerate(dfs_split):
+        fpath_tsv = dpath_out / _get_fname_out(i_split)
+        df_split.to_csv(fpath_tsv, sep="\t", index=False)
+        print(f"Saved simulated data to {fpath_tsv}")
 
-    fpath_json = fpath_tsv.with_suffix(".json")
+    fpath_json = dpath_out / _get_fname_out(suffix=".json")
     save_json(fpath_json, json_data)
     print(f"Saved simulation settings and parameters to {fpath_json}")
 

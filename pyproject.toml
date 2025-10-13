@@ -99,6 +99,7 @@ dependencies = [
   "fedbiomed[node,researcher]",
   "ipykernel",
   "numpy",
+  "scikit-learn",
   "torch",
 ]
 # List additional groups of dependencies here (e.g. development

@@ -8,8 +8,9 @@ import pandas as pd
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import get_dpath_latest
 
-PREFIX = "simulated_data"
-FNAME_MERGED = f"{PREFIX}-merged.tsv"
+
+def _get_fname_merged(tag: str) -> str:
+    return f"{tag}-merged.tsv"
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -18,18 +19,20 @@ FNAME_MERGED = f"{PREFIX}-merged.tsv"
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     envvar="DPATH_DATA",
 )
-def merge_data(dpath_data):
+@click.option("--tag", type=str, required=True)
+def merge_data(dpath_data, tag):
     dpath_out = get_dpath_latest(dpath_data, use_today=True)
+    fname_merged = _get_fname_merged(tag)
 
     fpaths_tsv = [
         fpath
-        for fpath in sorted(dpath_out.glob(f"{PREFIX}*.tsv"))
-        if fpath.name != FNAME_MERGED
+        for fpath in sorted(dpath_out.glob(f"{tag}*.tsv"))
+        if fpath.name != fname_merged
     ]
     dfs = [pd.read_csv(fpath, sep="\t") for fpath in fpaths_tsv]
     df = pd.concat(dfs)
 
-    fpath_out = dpath_out / FNAME_MERGED
+    fpath_out = dpath_out / fname_merged
     df.to_csv(fpath_out, sep="\t", index=False)
     print(f"Saved merged data to {fpath_out}")
 

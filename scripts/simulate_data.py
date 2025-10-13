@@ -47,11 +47,10 @@ def _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far) -> pd.Dat
     return df_data
 
 
-def _get_fname_out(i: Optional[int] = None, suffix: str = ".tsv") -> str:
-    prefix = "simulated_data"
+def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
     if i is not None:
-        prefix = f"{prefix}-{i+1}"
-    return f"{prefix}{suffix}"
+        tag = f"{tag}-{i+1}"
+    return f"{tag}{suffix}"
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -60,6 +59,7 @@ def _get_fname_out(i: Optional[int] = None, suffix: str = ".tsv") -> str:
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     envvar="DPATH_DATA",
 )
+@click.option("--tag", type=str, required=True)
 @click.option(
     "--n-biomarkers", type=click.IntRange(min=1), default=DEFAULT_N_BIOMARKERS
 )
@@ -98,6 +98,7 @@ def _get_fname_out(i: Optional[int] = None, suffix: str = ".tsv") -> str:
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
 def simulate_data(
     dpath_data: Path,
+    tag: str,
     n_biomarkers: int = DEFAULT_N_BIOMARKERS,
     shift_time: bool = DEFAULT_SHIFT_TIME,
     n_subjects_all: int = DEFAULT_N_SUBJECTS_ALL,
@@ -114,6 +115,8 @@ def simulate_data(
     dpath_out = get_dpath_latest(dpath_data, use_today=True)
     dpath_out.mkdir(parents=True, exist_ok=True)
 
+    json_data = {"settings": locals()}
+
     list_lengths = [
         len(n_subjects_all),
         len(n_max_timepoints_all),
@@ -126,8 +129,6 @@ def simulate_data(
             "Arguments --n-subjects, --n-max-timepoints, --t0-min, --t0-max, and "
             f"--sigma must have the same number of values. Got {list_lengths}."
         )
-
-    json_data = {"settings": locals()}
 
     rng = np.random.default_rng(rng_seed)
     k_values = rng.uniform(k_min, k_max, size=n_biomarkers)
@@ -164,7 +165,7 @@ def simulate_data(
         time_shifts_all.append(time_shifts)
 
         df_data = _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far)
-        fpath_tsv = dpath_out / _get_fname_out(i_dataset)
+        fpath_tsv = dpath_out / _get_fname_out(tag, i_dataset)
         df_data.to_csv(fpath_tsv, sep="\t", index=False)
         print(f"Saved simulated data to {fpath_tsv}")
 
@@ -176,7 +177,7 @@ def simulate_data(
         "x0_values": x0_values,
     }
 
-    fpath_json = dpath_out / _get_fname_out(suffix=".json")
+    fpath_json = dpath_out / _get_fname_out(tag, suffix=".json")
     save_json(fpath_json, json_data)
     print(f"Saved simulation settings and parameters to {fpath_json}")
 

@@ -10,8 +10,6 @@ from fl_prog.training_plan import FLProgTrainingPlan
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, FNAME_WEIGHTS
 from fl_prog.utils.io import get_dpath_latest, save_json, working_directory
 
-DEFAULT_TAG = "iid"
-
 DEFAULT_NODE_MEGA = "NODE_CENTRALIZED"
 DEFAULT_NODES_FEDERATED = ("NODE_1", "NODE_2", "NODE_3")
 
@@ -27,6 +25,7 @@ DEFAULT_LEARNING_RATE = 0.01
 
 
 def _get_model_args(
+    tag: str,
     n_biomarkers: int = DEFAULT_N_BIOMARKERS,
     col_subject_id: str = DEFAULT_COL_SUBJECT_ID,
     col_time: str = DEFAULT_COL_TIME,
@@ -41,6 +40,7 @@ def _get_model_args(
         "lr_with_shift": {
             "n_features": n_biomarkers,
         },
+        "tag": tag,
     }
 
 
@@ -109,6 +109,7 @@ def _run_experiment(
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     envvar="DPATH_RESULTS",
 )
+@click.option("--tag", type=str)
 @click.option("--node-mega", type=str, default=DEFAULT_NODE_MEGA)
 @click.option(
     "--nodes-federated",
@@ -116,7 +117,6 @@ def _run_experiment(
     multiple=True,
     default=DEFAULT_NODES_FEDERATED,
 )
-@click.option("--tag", type=str, default=DEFAULT_TAG)
 @click.option("--col-subject-id", type=str, default=DEFAULT_COL_SUBJECT_ID)
 @click.option("--col-time", type=str, default=DEFAULT_COL_TIME)
 @click.option(
@@ -139,9 +139,9 @@ def _run_experiment(
 def run_fedbiomed(
     dpath_fbm: Path,
     dpath_results: Path,
+    tag: str,
     node_mega: str = DEFAULT_NODE_MEGA,
     nodes_federated: Iterable[str] = DEFAULT_NODES_FEDERATED,
-    tag: str = DEFAULT_TAG,
     col_subject_id: str = DEFAULT_COL_SUBJECT_ID,
     col_time: str = DEFAULT_COL_TIME,
     cols_biomarker: str = DEFAULT_COLS_BIOMARKER,
@@ -152,7 +152,9 @@ def run_fedbiomed(
     learning_rate: float = DEFAULT_LEARNING_RATE,
 ):
     tags = [tag]
-    model_args = _get_model_args(n_biomarkers, col_subject_id, col_time, cols_biomarker)
+    model_args = _get_model_args(
+        tag, n_biomarkers, col_subject_id, col_time, cols_biomarker
+    )
     training_args = _get_training_args(n_updates, batch_size, learning_rate)
     dpath_out = get_dpath_latest(dpath_results, use_today=True)
 

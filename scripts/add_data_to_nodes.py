@@ -10,7 +10,7 @@ import warnings
 import click
 import pandas as pd
 
-from fl_prog.utils.constants import FNAME_NODE_CONFIG
+from fl_prog.utils.constants import DNAME_LATEST, FNAME_NODE_CONFIG
 from fl_prog.utils.io import save_json
 
 DEFAULT_COL_SUBJECT = "subject"
@@ -50,6 +50,9 @@ def _data_already_added(dpath_node: Path, fpath_tsv: Path) -> bool:
 
     db_json = json.loads(fpath_db.read_text())
     df_datasets = pd.DataFrame(db_json["Datasets"]).T
+
+    if df_datasets.empty:
+        return False
 
     return str(fpath_tsv) in df_datasets["path"].to_list()
 
@@ -122,7 +125,7 @@ def _add_data_to_node(
     help="Column name for subject IDs",
 )
 def add_data_to_nodes(dpath_data: Path, dpath_nodes: Path, col_subject: str):
-    fpaths_tsv = dpath_data.glob("**/*.tsv")
+    fpaths_tsv = (dpath_data / DNAME_LATEST).glob("*.tsv")
     for fpath_tsv in sorted(fpaths_tsv):
         print(f"----- {fpath_tsv} -----")
         _add_data_to_node(fpath_tsv, dpath_nodes, col_subject)

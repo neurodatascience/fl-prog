@@ -10,3 +10,4 @@ DATE_FORMAT = "%Y_%m_%d"
 
 # federation
 FNAME_NODE_CONFIG = "config.json"
+FNAME_WEIGHTS = "weights.pth"

@@ -50,7 +50,7 @@ def _build_df(timepoints, biomarkers, n_biomarkers) -> pd.DataFrame:
 def _get_fname_out(i_split: Optional[int] = None, suffix: str = ".tsv") -> str:
     prefix = "simulated_data"
     if i_split is not None:
-        prefix = f"{prefix}-{i_split+1:02d}"
+        prefix = f"{prefix}-{i_split+1}"
     return f"{prefix}{suffix}"
 
 

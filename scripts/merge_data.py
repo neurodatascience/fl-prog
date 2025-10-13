@@ -8,7 +8,7 @@ import pandas as pd
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import get_dpath_latest
 
-PREFIX = "simulated_data"
+PREFIX = "simulated_data-merged"
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)

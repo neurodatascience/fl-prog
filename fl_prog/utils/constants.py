@@ -7,3 +7,6 @@ CLICK_CONTEXT_SETTINGS = {
 # directory naming conventions
 DNAME_LATEST = "latest"
 DATE_FORMAT = "%Y_%m_%d"
+
+# federation
+FNAME_NODE_CONFIG = "config.json"

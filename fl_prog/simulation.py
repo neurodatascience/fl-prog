@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 from fl_prog.utils.math import multivariate_logistic
 from fl_prog.utils.validation import check_rng
@@ -43,13 +43,10 @@ def generate_timepoints(
 @check_rng
 def simulate_all_subjects(
     n_subjects: int,
+    k_values: Optional[Iterable[float]],
+    x0_values: Optional[Iterable[float]],
     max_n_timepoints: int = 3,
-    n_biomarkers: int = 5,
     shift_time: bool = False,
-    k_min: float = 5.0,
-    k_max: float = 10.0,
-    x0_min: float = 0,
-    x0_max: float = 1.0,
     t0_min: float = 0.0,
     t0_max: float = 1.0,
     sigma: float = 0.1,
@@ -67,14 +64,10 @@ def simulate_all_subjects(
     n_biomarkers : int, optional
     shift_time : bool, optional
         If True, shift timepoints so that the first timepoint for each subject is at 0.
-    k_min : float, optional
-        Minimum value for logistic function steepness parameter
-    k_max : float, optional
-        Maximum value for logistic function steepness parameter
-    x0_min : float, optional
-        Minimum value for logistic function midpoint parameter
-    x0_max : float, optional
-        Maximum value for logistic function midpoint parameter
+    k_values : Iterable[np.ndarray]
+        Logistic function steepness parameters. Must have the same length as x0_values.
+    x0_values : Iterable[np.ndarray]
+        Logistic function midpoint parameters. Must have the same length as k_values.
     t0_min : float, optional
         Minimum value for the first timepoint of each subject
     t0_max : float, optional
@@ -85,16 +78,17 @@ def simulate_all_subjects(
 
     Returns
     -------
-    Tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]
+    Tuple[np.ndarray, list[np.ndarray], np.ndarray]
         Timepoints: (n_total_timepoints,)
         Biomarkers: list of length n_subjects with elements of shape (n_timepoints,
                     n_biomarkers),
         Time shift values: (n_subjects,)
-        k values: (n_biomarkers,)
-        x0 values: (n_biomarkers,)
     """
-    k_values = rng.uniform(k_min, k_max, size=n_biomarkers)
-    x0_values = rng.uniform(x0_min, x0_max, size=n_biomarkers)
+    if len(k_values) != len(x0_values):
+        raise ValueError(
+            "k_values and x0_values must have the same length. "
+            f"Got {len(k_values)} and {len(x0_values)}."
+        )
 
     timepoints_all = []
     biomarkers_all = []
@@ -117,4 +111,4 @@ def simulate_all_subjects(
     else:
         time_shifts = [0.0] * n_subjects
 
-    return (timepoints_all, biomarkers_all, np.array(time_shifts), k_values, x0_values)
+    return (timepoints_all, biomarkers_all, np.array(time_shifts))

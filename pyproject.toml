@@ -99,7 +99,6 @@ dependencies = [
   "fedbiomed[node,researcher]",
   "ipykernel",
   "numpy",
-  "scikit-learn",
   "seaborn",
   "torch",
 ]

@@ -444,7 +444,6 @@ dependencies = [
     { name = "fedbiomed", extra = ["researcher"] },
     { name = "ipykernel" },
     { name = "numpy" },
-    { name = "scikit-learn" },
     { name = "seaborn" },
     { name = "torch" },
 ]
@@ -455,7 +454,6 @@ requires-dist = [
     { name = "fedbiomed", extras = ["node", "researcher"] },
     { name = "ipykernel" },
     { name = "numpy" },
-    { name = "scikit-learn" },
     { name = "seaborn" },
     { name = "torch" },
 ]

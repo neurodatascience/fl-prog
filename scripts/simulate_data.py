@@ -175,6 +175,7 @@ def simulate_data(
         "time_shifts": time_shifts_all,
         "k_values": k_values,
         "x0_values": x0_values,
+        "sigmas": sigma_all,
     }
 
     fpath_json = dpath_out / _get_fname_out(tag, suffix=".json")

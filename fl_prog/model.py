@@ -26,6 +26,10 @@ class LogisticRegressionModelWithShift(nn.Module):
         # log_k_values (parameters to optimize) can be any real number
         return torch.exp(log_k_values)
 
+    def get_sigma(self, log_sigma_sq: torch.Tensor) -> torch.Tensor:
+        sigma_sq = torch.exp(log_sigma_sq)
+        return torch.sqrt(sigma_sq)
+
     def _check_participant_ids(self, participant_ids):
         if isinstance(participant_ids, torch.Tensor):
             participant_ids = participant_ids.tolist()

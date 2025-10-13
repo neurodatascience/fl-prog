@@ -1,3 +1,3 @@
-# fl-pd
+# fl-prog
 
-Federated learning on Parkinson's (and other) disease neuroimaging datasets.
+Federated disease progression modelling.

@@ -41,7 +41,10 @@ def _get_info(fpath_tsv) -> str:
 def _data_already_added(dpath_node: Path, fpath_tsv: Path, wipe: bool = False) -> bool:
     fpath_config = dpath_node / "etc" / "config.ini"
     if not fpath_config.exists():
-        raise FileNotFoundError(f"Node config file not found: {fpath_config}")
+        raise FileNotFoundError(
+            f"Node config file not found: {fpath_config}"
+            ". Make sure node has been initialized."
+        )
 
     config = configparser.ConfigParser()
     config.read(str(fpath_config))
@@ -54,8 +57,12 @@ def _data_already_added(dpath_node: Path, fpath_tsv: Path, wipe: bool = False) -
         fpath_db.unlink()
         return False
 
-    db_json = json.loads(fpath_db.read_text())
-    df_datasets = pd.DataFrame(db_json["Datasets"]).T
+    try:
+        db_json = json.loads(fpath_db.read_text())
+        df_datasets = pd.DataFrame(db_json["Datasets"]).T
+    except (json.JSONDecodeError, KeyError):
+        warnings.warn(f"Error parsing the database file: {fpath_db}")
+        return False
 
     if df_datasets.empty:
         return False

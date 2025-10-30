@@ -53,7 +53,8 @@ class FLProgTrainingPlan(TorchTrainingPlan):
     def _configure_model_and_optimizer(self, initialize_optimizer: bool = True):
         super()._configure_model_and_optimizer(initialize_optimizer)
         self._model = FLProgTrainingPlan.LocalParamsTorchModel(
-            self._model.model, ["time_shifts"]
+            self._model.model,
+            ["time_shifts"],
         )
         if not self._model.weights_path.exists():
             self._model.get_weights()

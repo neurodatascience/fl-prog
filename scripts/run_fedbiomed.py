@@ -189,7 +189,7 @@ def run_fedbiomed(
     }
 
     dpath_out.mkdir(parents=True, exist_ok=True)
-    fpath_out = dpath_out / "fedbiomed_estimated_params.json"
+    fpath_out = dpath_out / f"{tag}-estimated_params.json"
     save_json(fpath_out, json_data)
     print(f"Saved results to {fpath_out}")
 

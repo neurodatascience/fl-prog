@@ -84,7 +84,7 @@ def _add_dataset_to_node(
     dpath_node = dpath_nodes / node_name
 
     fpath_config = dpath_node / FNAME_NODE_CONFIG
-    if fpath_config.exists():
+    if fpath_config.exists() and not wipe:
         config = json.loads(fpath_config.read_text())
     else:
         config = {}

@@ -7,17 +7,21 @@ import click
 from fl_prog.aggregator import SelectiveFedAverage
 from fl_prog.model import LogisticRegressionModelWithShift
 from fl_prog.training_plan import FLProgTrainingPlan
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, FNAME_WEIGHTS
+from fl_prog.utils.constants import (
+    CLICK_CONTEXT_SETTINGS,
+    FNAME_WEIGHTS,
+    NODE_ID_CENTRALIZED,
+    NODE_PREFIX,
+)
 from fl_prog.utils.io import (
     get_dpath_latest,
+    get_node_id_map,
     save_json,
     working_directory,
+    DEFAULT_DPATH_DATA,
     DEFAULT_DPATH_FEDBIOMED,
     DEFAULT_DPATH_RESULTS,
 )
-
-DEFAULT_NODE_MEGA = "NODE_CENTRALIZED"
-DEFAULT_NODES_FEDERATED = ("NODE_1", "NODE_2", "NODE_3")
 
 DEFAULT_N_BIOMARKERS = 5
 DEFAULT_COL_SUBJECT_ID = "subject"
@@ -110,6 +114,12 @@ def _run_experiment(
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
 @click.option("--tag", type=str, required=True)
 @click.option(
+    "--data-dir",
+    "dpath_data",
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+    default=DEFAULT_DPATH_DATA,
+)
+@click.option(
     "--results-dir",
     "dpath_results",
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
@@ -121,12 +131,8 @@ def _run_experiment(
     type=click.Path(path_type=Path, exists=True, file_okay=False, dir_okay=True),
     default=DEFAULT_DPATH_FEDBIOMED,
 )
-@click.option("--node-mega", type=str, default=DEFAULT_NODE_MEGA)
 @click.option(
-    "--nodes-federated",
-    type=str,
-    multiple=True,
-    default=DEFAULT_NODES_FEDERATED,
+    "--node-centralized", "node_id_centralized", type=str, default=NODE_ID_CENTRALIZED
 )
 @click.option("--col-subject-id", type=str, default=DEFAULT_COL_SUBJECT_ID)
 @click.option("--col-time", type=str, default=DEFAULT_COL_TIME)
@@ -150,9 +156,9 @@ def _run_experiment(
 def run_fedbiomed(
     tag: str,
     dpath_fbm: Path,
+    dpath_data: Path,
     dpath_results: Path,
-    node_mega: str = DEFAULT_NODE_MEGA,
-    nodes_federated: Iterable[str] = DEFAULT_NODES_FEDERATED,
+    node_id_centralized: str = NODE_ID_CENTRALIZED,
     col_subject_id: str = DEFAULT_COL_SUBJECT_ID,
     col_time: str = DEFAULT_COL_TIME,
     cols_biomarker: str = DEFAULT_COLS_BIOMARKER,
@@ -169,12 +175,20 @@ def run_fedbiomed(
     training_args = _get_training_args(n_updates, batch_size, learning_rate)
     dpath_out = get_dpath_latest(dpath_results, use_today=True)
 
+    node_id_map = get_node_id_map(get_dpath_latest(dpath_data) / f"{tag}.json")
+    nodes_federated = sorted(
+        [
+            f"{NODE_PREFIX}{node_id}"
+            for node_id in set(node_id_map.values()) - {node_id_centralized}
+        ]
+    )
+
     json_data = {"settings": locals()}
 
     # centralized
     results_centralized = _run_experiment(
         dpath_fbm,
-        nodes=[node_mega],
+        nodes=[f"{NODE_PREFIX}{node_id_centralized}"],
         tags=tags,
         model_args=model_args,
         n_rounds=n_rounds,

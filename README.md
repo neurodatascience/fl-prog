@@ -37,19 +37,28 @@ Merge data for centralized case:
 ./scripts/merge_data.py --tag unequal_sigma
 ```
 
-Create Fed-BioMed nodes:
+Create Fed-BioMed nodes and update their `config.ini`:
+
 ```shell
-# TODO
+scripts/create_nodes.py --tag iid
+scripts/create_nodes.py --tag non_overlapping_t0
+scripts/create_nodes.py --tag unequal_sigma
 ```
 
 Add data to nodes:
+
 ```shell
 ./scripts/add_datasets_to_nodes.py --tag iid
 ./scripts/add_datasets_to_nodes.py --tag non_overlapping_t0
 ./scripts/add_datasets_to_nodes.py --tag unequal_sigma
 ```
 
+Start the nodes in separate processes:
+- For each node, make sure you are in the node directory, e.g. `./fedbiomed/node-1`
+- Then run `fedbiomed node -p . start`
+
 Run model fitting:
+
 ```shell
 ./scripts/run_fedbiomed.py --tag iid
 ./scripts/run_fedbiomed.py --tag non_overlapping_t0

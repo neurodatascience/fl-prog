@@ -3,10 +3,11 @@
 from pathlib import Path
 
 import click
+import json
 import pandas as pd
 
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import get_dpath_latest, DEFAULT_DPATH_DATA
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_ID_CENTRALIZED
+from fl_prog.utils.io import get_dpath_latest, save_json, DEFAULT_DPATH_DATA
 
 
 def _get_fname_merged(tag: str) -> str:
@@ -22,8 +23,12 @@ def _get_fname_merged(tag: str) -> str:
     default=DEFAULT_DPATH_DATA,
 )
 def merge_data(dpath_data, tag):
-    dpath_out = get_dpath_latest(dpath_data, use_today=True)
+    dpath_out = get_dpath_latest(dpath_data)
     fname_merged = _get_fname_merged(tag)
+
+    fpath_json = dpath_out / f"{tag}.json"
+    json_data = json.loads(fpath_json.read_text())
+    json_data["node_id_map"][fname_merged] = NODE_ID_CENTRALIZED
 
     fpaths_tsv = [
         fpath
@@ -36,6 +41,9 @@ def merge_data(dpath_data, tag):
     fpath_out = dpath_out / fname_merged
     df.to_csv(fpath_out, sep="\t", index=False)
     print(f"Saved merged data to {fpath_out}")
+
+    save_json(fpath_json, json_data)
+    print(f"Updated node ID map in {fpath_json}")
 
 
 if __name__ == "__main__":

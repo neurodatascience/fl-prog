@@ -12,30 +12,17 @@ import pandas as pd
 
 from fl_prog.utils.constants import (
     CLICK_CONTEXT_SETTINGS,
-    DNAME_LATEST,
     FNAME_NODE_CONFIG,
 )
-from fl_prog.utils.io import save_json, DEFAULT_DPATH_DATA, DEFAULT_DPATH_FEDBIOMED
+from fl_prog.utils.io import (
+    save_json,
+    get_dpath_latest,
+    get_node_id_map,
+    DEFAULT_DPATH_DATA,
+    DEFAULT_DPATH_FEDBIOMED,
+)
 
 DEFAULT_COL_SUBJECT = "subject"
-
-DATA_SUFFIX_TO_NODE_MAP = {
-    "1": "node-1",
-    "2": "node-2",
-    "3": "node-3",
-    "merged": "node-centralized",
-}
-
-
-def _get_info(fpath_tsv) -> str:
-    match = re.search(r"-(.+)\.", Path(fpath_tsv).name)
-    if not match:
-        raise ValueError(f"Could not extract dataset name from {fpath_tsv}")
-    dataset_name = match.group(1)
-    if dataset_name not in DATA_SUFFIX_TO_NODE_MAP:
-        raise ValueError(f"Unrecognized dataset name: {dataset_name}")
-
-    return DATA_SUFFIX_TO_NODE_MAP[dataset_name]
 
 
 def _data_already_added(dpath_node: Path, fpath_tsv: Path, wipe: bool = False) -> bool:
@@ -82,14 +69,11 @@ def _create_config(fpath_tsv: Path, col_subject: str) -> dict:
 
 def _add_dataset_to_node(
     fpath_tsv: Path,
-    dpath_nodes: Path,
+    dpath_node: Path,
     tag: str,
     col_subject: str = DEFAULT_COL_SUBJECT,
     wipe: bool = False,
 ):
-    node_name = _get_info(fpath_tsv)
-    dpath_node = dpath_nodes / node_name
-
     fpath_config = dpath_node / FNAME_NODE_CONFIG
     if fpath_config.exists() and not wipe:
         config = json.loads(fpath_config.read_text())
@@ -109,7 +93,7 @@ def _add_dataset_to_node(
         "data_type": "csv",
         "description": "",
         "tags": tag,
-        "name": node_name,
+        "name": dpath_node.name,
     }
     with tempfile.NamedTemporaryFile(mode="+wt") as file_json:
         file_json.write(json.dumps(dataset_info))
@@ -153,11 +137,16 @@ def _add_dataset_to_node(
 def add_datasets_to_nodes(
     tag: str, dpath_data: Path, dpath_nodes: Path, col_subject: str, wipe: bool
 ):
-    fpaths_tsv = (dpath_data / DNAME_LATEST).glob(f"{tag}*.tsv")
+    fpaths_tsv = get_dpath_latest(dpath_data).glob(f"{tag}*.tsv")
+    fpath_json = get_dpath_latest(dpath_data) / f"{tag}.json"
+
+    node_id_map = get_node_id_map(fpath_json)
+
     for fpath_tsv in sorted(fpaths_tsv):
         fpath_tsv = fpath_tsv.absolute()
+        dpath_node = dpath_nodes / f"node-{node_id_map[fpath_tsv.name]}"
         print(f"----- {fpath_tsv} -----")
-        _add_dataset_to_node(fpath_tsv, dpath_nodes, tag, col_subject, wipe)
+        _add_dataset_to_node(fpath_tsv, dpath_node, tag, col_subject, wipe)
 
 
 if __name__ == "__main__":

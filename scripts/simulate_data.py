@@ -140,6 +140,7 @@ def simulate_data(
     time_shifts_all = []
 
     n_subjects_so_far = 0
+    node_id_map = {}
     for i_dataset, (n_subjects, n_max_timepoints, t0_min, t0_max, sigma) in enumerate(
         zip(
             n_subjects_all,
@@ -166,11 +167,13 @@ def simulate_data(
         time_shifts_all.append(time_shifts)
 
         df_data = _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far)
-        fpath_tsv = dpath_out / _get_fname_out(tag, i_dataset)
+        fname_tsv = _get_fname_out(tag, i_dataset)
+        fpath_tsv = dpath_out / fname_tsv
         df_data.to_csv(fpath_tsv, sep="\t", index=False)
         print(f"Saved simulated data to {fpath_tsv}")
 
         n_subjects_so_far += n_subjects
+        node_id_map[fname_tsv] = f"{i_dataset+1}"
 
     json_data["params"] = {
         "time_shifts": time_shifts_all,
@@ -178,10 +181,11 @@ def simulate_data(
         "x0_values": x0_values,
         "sigmas": sigma_all,
     }
+    json_data["node_id_map"] = node_id_map
 
     fpath_json = dpath_out / _get_fname_out(tag, suffix=".json")
     save_json(fpath_json, json_data)
-    print(f"Saved simulation settings and parameters to {fpath_json}")
+    print(f"Saved simulation settings, parameters and node ID map to {fpath_json}")
 
 
 if __name__ == "__main__":

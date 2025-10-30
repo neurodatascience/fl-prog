@@ -9,5 +9,7 @@ DNAME_LATEST = "latest"
 DATE_FORMAT = "%Y_%m_%d"
 
 # federation
+NODE_PREFIX = "node_"
+NODE_ID_CENTRALIZED = "centralized"
 FNAME_NODE_CONFIG = "config.json"
 FNAME_WEIGHTS = "weights.pth"

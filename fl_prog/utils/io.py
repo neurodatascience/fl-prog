@@ -35,6 +35,23 @@ def get_dpath_latest(dpath_parent, use_today=False):
     return dpath_latest.resolve()
 
 
+def get_node_id_map(fpath_json) -> dict[str, str]:
+    fpath_json = Path(fpath_json)
+    if not fpath_json.exists():
+        raise FileNotFoundError(
+            f"Expected a JSON file at {fpath_json} with a 'node_id_map' entry"
+            " where keys are data filenames and values are node IDs."
+        )
+    json_data = json.loads(fpath_json.read_text())
+    node_id_map: dict[str, str] = json_data.get("node_id_map", {})
+    if not node_id_map:
+        raise ValueError(
+            f"{fpath_json} must contain a 'node_id_map' entry"
+            " where keys are data filenames and values are node IDs."
+        )
+    return node_id_map
+
+
 def save_json(dpath: Path, data: dict, indent: int = 4):
     with open(dpath, "w") as file_json:
         json.dump(data, file_json, indent=indent, default=serialize_data)

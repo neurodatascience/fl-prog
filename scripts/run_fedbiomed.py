@@ -8,7 +8,13 @@ from fl_prog.aggregator import SelectiveFedAverage
 from fl_prog.model import LogisticRegressionModelWithShift
 from fl_prog.training_plan import FLProgTrainingPlan
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, FNAME_WEIGHTS
-from fl_prog.utils.io import get_dpath_latest, save_json, working_directory
+from fl_prog.utils.io import (
+    get_dpath_latest,
+    save_json,
+    working_directory,
+    DEFAULT_DPATH_FEDBIOMED,
+    DEFAULT_DPATH_RESULTS,
+)
 
 DEFAULT_NODE_MEGA = "NODE_CENTRALIZED"
 DEFAULT_NODES_FEDERATED = ("NODE_1", "NODE_2", "NODE_3")
@@ -102,17 +108,19 @@ def _run_experiment(
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
-@click.argument(
-    "dpath_fbm",
-    type=click.Path(path_type=Path, exists=True, file_okay=False, dir_okay=True),
-    envvar="DPATH_FEDBIOMED",
-)
-@click.argument(
+@click.option("--tag", type=str, required=True)
+@click.option(
+    "--results-dir",
     "dpath_results",
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    envvar="DPATH_RESULTS",
+    default=DEFAULT_DPATH_RESULTS,
 )
-@click.option("--tag", type=str)
+@click.option(
+    "--fedbiomed-dir",
+    "dpath_fbm",
+    type=click.Path(path_type=Path, exists=True, file_okay=False, dir_okay=True),
+    default=DEFAULT_DPATH_FEDBIOMED,
+)
 @click.option("--node-mega", type=str, default=DEFAULT_NODE_MEGA)
 @click.option(
     "--nodes-federated",
@@ -140,9 +148,9 @@ def _run_experiment(
     default=DEFAULT_LEARNING_RATE,
 )
 def run_fedbiomed(
+    tag: str,
     dpath_fbm: Path,
     dpath_results: Path,
-    tag: str,
     node_mega: str = DEFAULT_NODE_MEGA,
     nodes_federated: Iterable[str] = DEFAULT_NODES_FEDERATED,
     col_subject_id: str = DEFAULT_COL_SUBJECT_ID,

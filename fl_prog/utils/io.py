@@ -8,6 +8,11 @@ import numpy as np
 
 from fl_prog.utils.constants import DNAME_LATEST, DATE_FORMAT
 
+DPATH_PROJECT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_DPATH_DATA = DPATH_PROJECT / "data"
+DEFAULT_DPATH_FEDBIOMED = DPATH_PROJECT / "fedbiomed"
+DEFAULT_DPATH_RESULTS = DPATH_PROJECT / "results"
+
 
 def get_dpath_latest(dpath_parent, use_today=False):
     dpath_parent = Path(dpath_parent)

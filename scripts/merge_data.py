@@ -6,7 +6,7 @@ import click
 import pandas as pd
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import get_dpath_latest
+from fl_prog.utils.io import get_dpath_latest, DEFAULT_DPATH_DATA
 
 
 def _get_fname_merged(tag: str) -> str:
@@ -14,12 +14,13 @@ def _get_fname_merged(tag: str) -> str:
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
-@click.argument(
+@click.option("--tag", type=str, required=True)
+@click.option(
+    "--data-dir",
     "dpath_data",
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    envvar="DPATH_DATA",
+    default=DEFAULT_DPATH_DATA,
 )
-@click.option("--tag", type=str, required=True)
 def merge_data(dpath_data, tag):
     dpath_out = get_dpath_latest(dpath_data, use_today=True)
     fname_merged = _get_fname_merged(tag)

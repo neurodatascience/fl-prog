@@ -15,7 +15,7 @@ from fl_prog.utils.constants import (
     DNAME_LATEST,
     FNAME_NODE_CONFIG,
 )
-from fl_prog.utils.io import save_json
+from fl_prog.utils.io import save_json, DEFAULT_DPATH_DATA, DEFAULT_DPATH_FEDBIOMED
 
 DEFAULT_COL_SUBJECT = "subject"
 
@@ -130,17 +130,19 @@ def _add_dataset_to_node(
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
-@click.argument(
+@click.option("--tag", type=str, required=True)
+@click.option(
+    "--data-dir",
     "dpath_data",
     type=click.Path(path_type=Path, exists=True, file_okay=False),
-    envvar="DPATH_DATA",
+    default=DEFAULT_DPATH_DATA,
 )
-@click.argument(
+@click.option(
+    "--nodes-dir",
     "dpath_nodes",
     type=click.Path(path_type=Path, exists=True, file_okay=False),
-    envvar="DPATH_FEDBIOMED",
+    default=DEFAULT_DPATH_FEDBIOMED,
 )
-@click.option("--tag", type=str, required=True)
 @click.option(
     "--col-subject",
     type=str,
@@ -149,7 +151,7 @@ def _add_dataset_to_node(
 )
 @click.option("--wipe/--no-wipe", default=False, help="Wipe existing data in nodes")
 def add_datasets_to_nodes(
-    dpath_data: Path, dpath_nodes: Path, tag: str, col_subject: str, wipe: bool
+    tag: str, dpath_data: Path, dpath_nodes: Path, col_subject: str, wipe: bool
 ):
     fpaths_tsv = (dpath_data / DNAME_LATEST).glob(f"{tag}*.tsv")
     for fpath_tsv in sorted(fpaths_tsv):

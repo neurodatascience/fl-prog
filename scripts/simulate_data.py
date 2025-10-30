@@ -9,7 +9,7 @@ import pandas as pd
 
 from fl_prog.simulation import simulate_all_subjects
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import save_json, get_dpath_latest
+from fl_prog.utils.io import save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
 DEFAULT_N_BIOMARKERS = 5
 DEFAULT_SHIFT_TIME = True
@@ -54,12 +54,13 @@ def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
-@click.argument(
+@click.option("--tag", type=str, required=True)
+@click.option(
+    "--data-dir",
     "dpath_data",
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    envvar="DPATH_DATA",
+    default=DEFAULT_DPATH_DATA,
 )
-@click.option("--tag", type=str, required=True)
 @click.option(
     "--n-biomarkers", type=click.IntRange(min=1), default=DEFAULT_N_BIOMARKERS
 )
@@ -97,8 +98,8 @@ def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
 @click.option("--x0-max", type=float, default=DEFAULT_X0_MAX)
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
 def simulate_data(
-    dpath_data: Path,
     tag: str,
+    dpath_data: Path,
     n_biomarkers: int = DEFAULT_N_BIOMARKERS,
     shift_time: bool = DEFAULT_SHIFT_TIME,
     n_subjects_all: int = DEFAULT_N_SUBJECTS_ALL,

@@ -23,7 +23,7 @@ def _get_fname_merged(tag: str) -> str:
     default=DEFAULT_DPATH_DATA,
 )
 def merge_data(dpath_data, tag):
-    dpath_out = get_dpath_latest(dpath_data)
+    dpath_out = get_dpath_latest(dpath_data) / tag
     fname_merged = _get_fname_merged(tag)
 
     fpath_json = dpath_out / f"{tag}.json"

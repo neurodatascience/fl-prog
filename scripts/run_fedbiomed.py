@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import json
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -23,11 +24,6 @@ from fl_prog.utils.io import (
     DEFAULT_DPATH_RESULTS,
 )
 
-DEFAULT_N_BIOMARKERS = 5
-DEFAULT_COL_SUBJECT_ID = "subject"
-DEFAULT_COL_TIME = "timepoint"
-DEFAULT_COLS_BIOMARKER = [f"biomarker_{i}" for i in range(DEFAULT_N_BIOMARKERS)]
-
 DEFAULT_N_ROUNDS = 10
 DEFAULT_N_UPDATES = 70
 DEFAULT_BATCH_SIZE = 100000
@@ -36,10 +32,9 @@ DEFAULT_LEARNING_RATE = 0.01
 
 def _get_model_args(
     tag: str,
-    n_biomarkers: int = DEFAULT_N_BIOMARKERS,
-    col_subject_id: str = DEFAULT_COL_SUBJECT_ID,
-    col_time: str = DEFAULT_COL_TIME,
-    cols_biomarker: Optional[Iterable[str]] = DEFAULT_COLS_BIOMARKER,
+    col_subject_id: str,
+    col_time: str,
+    cols_biomarker: Optional[Iterable[str]],
 ):
     return {
         "colnames": {
@@ -48,7 +43,7 @@ def _get_model_args(
             "cols_biomarker": cols_biomarker,
         },
         "lr_with_shift": {
-            "n_features": n_biomarkers,
+            "n_features": len(cols_biomarker),
         },
         "tag": tag,
     }
@@ -134,17 +129,6 @@ def _run_experiment(
 @click.option(
     "--node-centralized", "node_id_centralized", type=str, default=NODE_ID_CENTRALIZED
 )
-@click.option("--col-subject-id", type=str, default=DEFAULT_COL_SUBJECT_ID)
-@click.option("--col-time", type=str, default=DEFAULT_COL_TIME)
-@click.option(
-    "--cols-biomarker",
-    type=str,
-    multiple=True,
-    default=DEFAULT_COLS_BIOMARKER,
-)
-@click.option(
-    "--n-biomarkers", type=click.IntRange(min=1), default=DEFAULT_N_BIOMARKERS
-)
 @click.option("--n-rounds", type=click.IntRange(min=1), default=DEFAULT_N_ROUNDS)
 @click.option("--n-updates", type=click.IntRange(min=1), default=DEFAULT_N_UPDATES)
 @click.option("--batch-size", type=click.IntRange(min=1), default=DEFAULT_BATCH_SIZE)
@@ -153,29 +137,46 @@ def _run_experiment(
     type=click.FloatRange(min=0, min_open=True),
     default=DEFAULT_LEARNING_RATE,
 )
+@click.option("--overwrite/--no-overwrite", default=False)
 def run_fedbiomed(
     tag: str,
     dpath_fbm: Path,
     dpath_data: Path,
     dpath_results: Path,
     node_id_centralized: str = NODE_ID_CENTRALIZED,
-    col_subject_id: str = DEFAULT_COL_SUBJECT_ID,
-    col_time: str = DEFAULT_COL_TIME,
-    cols_biomarker: str = DEFAULT_COLS_BIOMARKER,
-    n_biomarkers: int = DEFAULT_N_BIOMARKERS,
     n_rounds: int = DEFAULT_N_ROUNDS,
     n_updates: int = DEFAULT_N_UPDATES,
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
+    overwrite: bool = False,
 ):
-    tags = [tag]
-    model_args = _get_model_args(
-        tag, n_biomarkers, col_subject_id, col_time, cols_biomarker
-    )
-    training_args = _get_training_args(n_updates, batch_size, learning_rate)
-    dpath_out = get_dpath_latest(dpath_results, use_today=True)
+    dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
+    fpath_out = dpath_out / f"{tag}-estimated_params.json"
+    if fpath_out.exists() and not overwrite:
+        print(f"{fpath_out} already exists. Use --overwrite to overwrite.")
+        return
 
-    node_id_map = get_node_id_map(get_dpath_latest(dpath_data) / f"{tag}.json")
+    fpath_config = get_dpath_latest(dpath_data) / tag / f"{tag}.json"
+    try:
+        config = json.loads(fpath_config.read_text())
+    except Exception:
+        raise RuntimeError(f"Expected a JSON file at {fpath_config}")
+    try:
+        cols = config["cols"]
+        col_subject_id = cols["col_subject"]
+        col_time = cols["col_timepoint"]
+        cols_biomarker = cols["cols_biomarker"]
+    except KeyError:
+        raise RuntimeError(
+            f'{fpath_config} should have a "cols" entry with keys: '
+            '"col_subject" (str), "col_timepoint" (str), "cols_biomarker" (list[str])'
+        )
+
+    tags = [tag]
+    model_args = _get_model_args(tag, col_subject_id, col_time, cols_biomarker)
+    training_args = _get_training_args(n_updates, batch_size, learning_rate)
+
+    node_id_map = get_node_id_map(fpath_config)
     nodes_federated = sorted(
         [
             f"{NODE_PREFIX}{node_id}"
@@ -211,7 +212,6 @@ def run_fedbiomed(
     }
 
     dpath_out.mkdir(parents=True, exist_ok=True)
-    fpath_out = dpath_out / f"{tag}-estimated_params.json"
     save_json(fpath_out, json_data)
     print(f"Saved results to {fpath_out}")
 

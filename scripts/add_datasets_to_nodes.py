@@ -93,7 +93,7 @@ def _add_dataset_to_node(
         "data_type": "csv",
         "description": "",
         "tags": tag,
-        "name": dpath_node.name,
+        "name": f"{dpath_node.name} {tag}",
     }
     with tempfile.NamedTemporaryFile(mode="+wt") as file_json:
         file_json.write(json.dumps(dataset_info))
@@ -137,8 +137,9 @@ def _add_dataset_to_node(
 def add_datasets_to_nodes(
     tag: str, dpath_data: Path, dpath_nodes: Path, col_subject: str, wipe: bool
 ):
-    fpaths_tsv = get_dpath_latest(dpath_data).glob(f"{tag}*.tsv")
-    fpath_json = get_dpath_latest(dpath_data) / f"{tag}.json"
+    dpath_tag = get_dpath_latest(dpath_data) / tag
+    fpaths_tsv = dpath_tag.glob(f"{tag}*.tsv")
+    fpath_json = dpath_tag / f"{tag}.json"
 
     node_id_map = get_node_id_map(fpath_json)
 

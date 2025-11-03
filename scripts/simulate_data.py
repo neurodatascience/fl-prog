@@ -113,7 +113,7 @@ def simulate_data(
     x0_max: float = DEFAULT_X0_MAX,
     rng_seed: int = None,
 ):
-    dpath_out = get_dpath_latest(dpath_data, use_today=True)
+    dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
     dpath_out.mkdir(parents=True, exist_ok=True)
 
     json_data = {"settings": locals()}
@@ -182,6 +182,14 @@ def simulate_data(
         "sigmas": sigma_all,
     }
     json_data["node_id_map"] = node_id_map
+
+    json_data["cols"] = {
+        "col_subject": COL_SUBJECT,
+        "col_timepoint": COL_TIMEPOINT,
+        "cols_biomarker": sorted(
+            list(set(df_data.columns) - {COL_SUBJECT, COL_TIMEPOINT})
+        ),
+    }
 
     fpath_json = dpath_out / _get_fname_out(tag, suffix=".json")
     save_json(fpath_json, json_data)

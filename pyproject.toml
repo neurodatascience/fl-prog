@@ -100,6 +100,7 @@ dependencies = [
   "ipykernel",
   "numpy",
   "seaborn",
+  "scikit-learn",
   "torch",
 ]
 # List additional groups of dependencies here (e.g. development

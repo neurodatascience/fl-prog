@@ -4,6 +4,11 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import click
+from declearn.optimizer.modules import ScaffoldServerModule
+from fedbiomed.common.optimizers.optimizer import Optimizer
+
+from fedbiomed.researcher.aggregators.fedavg import FedAverage
+from fedbiomed.researcher.aggregators.scaffold import Scaffold
 
 from fl_prog.aggregator import SelectiveFedAverage
 from fl_prog.model import LogisticRegressionModelWithShift
@@ -27,7 +32,10 @@ from fl_prog.utils.io import (
 DEFAULT_N_ROUNDS = 10
 DEFAULT_N_UPDATES = 70
 DEFAULT_BATCH_SIZE = 100000
-DEFAULT_LEARNING_RATE = 0.01
+DEFAULT_LEARNING_RATE = 0.05
+DEFAULT_AGGREGATOR_NAME = "fedavg"
+
+VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
 
 
 def _get_model_args(
@@ -53,12 +61,30 @@ def _get_training_args(
     n_updates: int = DEFAULT_N_UPDATES,
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
+    aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
 ):
-    return {
+    training_args = {
         "num_updates": n_updates,
         "loader_args": {"batch_size": batch_size, "shuffle": False},
-        "optimizer_args": {"lr": learning_rate},
+        "optimizer_args": {"lr": learning_rate, "aggregator_name": aggregator_name},
     }
+    if aggregator_name == "fedprox":
+        training_args["fedprox_mu"] = 1.0
+    return training_args
+
+
+def _get_aggregator(aggregator_name: str):
+    return {
+        "fedavg": FedAverage(),
+        "fedprox": FedAverage(),  # FedProx is FedAvg with additional training arg
+        "scaffold": FedAverage(),  # Scaffold(server_lr=1),
+    }[aggregator_name]
+
+
+def _get_agg_optimizer(aggregator_name: str):
+    if aggregator_name == "scaffold":
+        return Optimizer(lr=0.8, modules=[ScaffoldServerModule()])
+    return None
 
 
 def _run_experiment(
@@ -66,8 +92,9 @@ def _run_experiment(
     nodes: Iterable[str],
     tags: Iterable[str],
     model_args: dict,
-    n_rounds: int,
     training_args: dict,
+    n_rounds: int = DEFAULT_N_ROUNDS,
+    aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
 ):
     for fpath_weights in Path(dpath_fbm).rglob(f"{FNAME_WEIGHTS}"):
         fpath_weights.unlink()
@@ -84,7 +111,8 @@ def _run_experiment(
             model_args=model_args,
             round_limit=n_rounds,
             training_args=training_args,
-            aggregator=SelectiveFedAverage(["time_shifts"]),
+            aggregator=_get_aggregator(aggregator_name),
+            agg_optimizer=_get_agg_optimizer(aggregator_name),
             node_selection_strategy=None,
         )
         experiment.run()
@@ -137,6 +165,12 @@ def _run_experiment(
     type=click.FloatRange(min=0, min_open=True),
     default=DEFAULT_LEARNING_RATE,
 )
+@click.option(
+    "--aggregator",
+    "aggregator_name",
+    type=click.Choice(VALID_AGGREGATOR_NAMES),
+    default=DEFAULT_AGGREGATOR_NAME,
+)
 @click.option("--overwrite/--no-overwrite", default=False)
 def run_fedbiomed(
     tag: str,
@@ -148,6 +182,7 @@ def run_fedbiomed(
     n_updates: int = DEFAULT_N_UPDATES,
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
+    aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
     overwrite: bool = False,
 ):
     dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
@@ -174,7 +209,9 @@ def run_fedbiomed(
 
     tags = [tag]
     model_args = _get_model_args(tag, col_subject_id, col_time, cols_biomarker)
-    training_args = _get_training_args(n_updates, batch_size, learning_rate)
+    training_args = _get_training_args(
+        n_updates, batch_size, learning_rate, aggregator_name
+    )
 
     node_id_map = get_node_id_map(fpath_config)
     nodes_federated = sorted(
@@ -186,24 +223,26 @@ def run_fedbiomed(
 
     json_data = {"settings": locals()}
 
-    # centralized
-    results_centralized = _run_experiment(
-        dpath_fbm,
-        nodes=[f"{NODE_PREFIX}{node_id_centralized}"],
-        tags=tags,
-        model_args=model_args,
-        n_rounds=n_rounds,
-        training_args=training_args,
-    )
-
     # federated
     results_federated = _run_experiment(
         dpath_fbm,
         nodes=nodes_federated,
         tags=tags,
         model_args=model_args,
-        n_rounds=n_rounds,
         training_args=training_args,
+        n_rounds=n_rounds,
+        aggregator_name=aggregator_name,
+    )
+
+    # centralized
+    results_centralized = _run_experiment(
+        dpath_fbm,
+        nodes=[f"{NODE_PREFIX}{node_id_centralized}"],
+        tags=tags,
+        model_args=model_args,
+        training_args=training_args,
+        n_rounds=5,  # n_rounds,
+        aggregator_name=aggregator_name,
     )
 
     json_data["results"] = {

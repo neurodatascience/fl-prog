@@ -7,6 +7,12 @@ import pandas as pd
 import torch
 import torch.optim as optim
 from fedbiomed.common.data import DataManager
+from fedbiomed.common.optimizers.optimizer import Optimizer
+from fedbiomed.common.optimizers.declearn import (
+    AdamModule,
+    RidgeRegularizer,
+    ScaffoldClientModule,
+)
 from fedbiomed.common.models import TorchModel
 from fedbiomed.common.training_plans import TorchTrainingPlan
 
@@ -39,6 +45,10 @@ class FLProgTrainingPlan(TorchTrainingPlan):
                 for param_name in self.param_names
                 if param_name in w
             }
+            # if we do this, then we don't need a custom aggregator anymore
+            # but this changes more things in base Fed-BioMed
+            for param_name in self.param_names:
+                del w[param_name]
             torch.save(to_save, self.weights_path)
             return w
 
@@ -104,15 +114,25 @@ class FLProgTrainingPlan(TorchTrainingPlan):
             "import torch.optim as optim",
             "from fedbiomed.common.data import DataManager",
             "from fedbiomed.common.models import TorchModel",
+            "from fedbiomed.common.optimizers.optimizer import Optimizer",
+            "from fedbiomed.common.optimizers.declearn import AdamModule, RidgeRegularizer, ScaffoldClientModule",
             "from fl_prog.model import LogisticRegressionModelWithShift",
             "from fl_prog.utils.constants import FNAME_NODE_CONFIG, FNAME_WEIGHTS",
         ]
         return deps
 
     def init_optimizer(self, optimizer_args: dict) -> optim.Optimizer:
-        optimizer = optim.Adam(
-            list(self.model().parameters()), lr=optimizer_args.get("lr", 0.01)
-        )
+        if optimizer_args.get("aggregator_name") == "scaffold":
+            optimizer = Optimizer(
+                lr=optimizer_args.get("lr", 0.01),
+                modules=[AdamModule(), ScaffoldClientModule()],
+                regularizers=[RidgeRegularizer()],
+            )
+        else:
+            optimizer = optim.Adam(
+                list(self.model().parameters()),
+                lr=optimizer_args.get("lr", 0.01),
+            )
         return optimizer
 
     @set_colnames

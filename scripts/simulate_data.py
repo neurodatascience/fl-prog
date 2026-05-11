@@ -14,10 +14,10 @@ from fl_prog.utils.io import save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 DEFAULT_N_BIOMARKERS = 5
 DEFAULT_SHIFT_TIME = True
 DEFAULT_N_SUBJECTS_ALL = (20, 20, 20)
-DEFAULT_N_MAX_TIMEPOINTS_ALL = (3, 3, 3)
-DEFAULT_T0_MIN_ALL = (0.0, 0.0, 0.0)
-DEFAULT_T0_MAX_ALL = (1.0, 1.0, 1.0)
-DEFAULT_SIGMA_ALL = (0.1, 0.1, 0.1)
+DEFAULT_N_MAX_TIMEPOINTS_ALL = (3,)
+DEFAULT_T0_MIN_ALL = (0.0,)
+DEFAULT_T0_MAX_ALL = (1.0,)
+DEFAULT_SIGMA_ALL = (0.1,)
 DEFAULT_K_MIN = 5.0
 DEFAULT_K_MAX = 10.0
 DEFAULT_X0_MIN = 0.0
@@ -26,6 +26,28 @@ DEFAULT_X0_MAX = 1.0
 COL_SUBJECT = "subject"
 COL_TIMEPOINT = "timepoint"
 COL_BIOMARKER_PREFIX = "biomarker_"
+
+
+def _process_list_args(*list_args):
+    def _get_list_lengths(list_args):
+        return [len(list_arg) for list_arg in list_args]
+
+    list_args = list(list_args)
+    initial_list_lengths = _get_list_lengths(list_args)
+
+    # broadcast single-value args to match the length of the longest arg
+    max_list_length = max(initial_list_lengths)
+    for i, list_arg in enumerate(list_args):
+        if len(list_arg) == 1:
+            list_args[i] = list_arg * max_list_length
+
+    if len(set(_get_list_lengths(list_args))) != 1:
+        raise ValueError(
+            "Arguments --n-subjects, --n-max-timepoints, --t0-min, --t0-max, and "
+            f"--sigma must have the same number of values. Got {initial_list_lengths}."
+        )
+
+    return list_args
 
 
 def _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far) -> pd.DataFrame:
@@ -116,20 +138,13 @@ def simulate_data(
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
     dpath_out.mkdir(parents=True, exist_ok=True)
 
-    json_data = {"settings": locals()}
-
-    list_lengths = [
-        len(n_subjects_all),
-        len(n_max_timepoints_all),
-        len(t0_min_all),
-        len(t0_max_all),
-        len(sigma_all),
-    ]
-    if len(set(list_lengths)) != 1:
-        raise ValueError(
-            "Arguments --n-subjects, --n-max-timepoints, --t0-min, --t0-max, and "
-            f"--sigma must have the same number of values. Got {list_lengths}."
+    n_subjects_all, n_max_timepoints_all, t0_min_all, t0_max_all, sigma_all = (
+        _process_list_args(
+            n_subjects_all, n_max_timepoints_all, t0_min_all, t0_max_all, sigma_all
         )
+    )
+
+    json_data = {"settings": locals()}
 
     rng = np.random.default_rng(rng_seed)
     k_values = rng.uniform(k_min, k_max, size=n_biomarkers)

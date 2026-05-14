@@ -62,12 +62,17 @@ def _get_training_args(
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
+    random_seed: Optional[int] = None,
 ):
     training_args = {
         "num_updates": n_updates,
         "loader_args": {"batch_size": batch_size, "shuffle": False},
         "optimizer_args": {"lr": learning_rate, "aggregator_name": aggregator_name},
     }
+
+    if random_seed is not None:
+        training_args["random_seed"] = random_seed
+
     if aggregator_name == "fedprox":
         training_args["fedprox_mu"] = 1.0
     return training_args
@@ -100,6 +105,8 @@ def _run_experiment(
         fpath_weights.unlink()
         print(f"Removed {fpath_weights}")
 
+    training_args = training_args.copy()
+
     with working_directory(dpath_fbm):
 
         from fedbiomed.researcher.federated_workflows import Experiment
@@ -115,7 +122,10 @@ def _run_experiment(
             agg_optimizer=_get_agg_optimizer(aggregator_name),
             node_selection_strategy=None,
         )
-        experiment.run()
+        for _ in range(n_rounds):
+            if "random_seed" in training_args:
+                training_args["random_seed"] += 1
+            experiment.run_once()
 
     fbm_model: LogisticRegressionModelWithShift = experiment.training_plan().model()
     final_params = experiment.aggregated_params()[experiment.round_limit() - 1][
@@ -171,6 +181,7 @@ def _run_experiment(
     type=click.Choice(VALID_AGGREGATOR_NAMES),
     default=DEFAULT_AGGREGATOR_NAME,
 )
+@click.option("--random-seed", type=int, envvar="RNG_SEED")
 @click.option("--overwrite/--no-overwrite", default=False)
 def run_fedbiomed(
     tag: str,
@@ -183,6 +194,7 @@ def run_fedbiomed(
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
+    random_seed: Optional[int] = None,
     overwrite: bool = False,
 ):
     dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
@@ -210,7 +222,7 @@ def run_fedbiomed(
     tags = [tag]
     model_args = _get_model_args(tag, col_subject_id, col_time, cols_biomarker)
     training_args = _get_training_args(
-        n_updates, batch_size, learning_rate, aggregator_name
+        n_updates, batch_size, learning_rate, aggregator_name, random_seed
     )
 
     node_id_map = get_node_id_map(fpath_config)

@@ -83,12 +83,13 @@ def get_fs_data(
     cols_biomarkers = list(df_idp.columns)
 
     # scale so that min-max is 0-1 for each biomarker
+    # also flip direction so that higher values are worse
     extrema = {}
     for col in df_idp.columns:
         min_val = df_idp[col].min()
         max_val = df_idp[col].max()
         extrema[col] = (min_val, max_val)
-        df_idp[col] = (df_idp[col] - min_val) / (max_val - min_val)
+        df_idp[col] = 1 - (df_idp[col] - min_val) / (max_val - min_val)
 
     df_idp = df_idp.reset_index(level=COL_SESSION)
     df_idp[COL_TIMEPOINT] = df_idp[COL_SESSION].map(SESSION_TIMEPOINT_MAP)

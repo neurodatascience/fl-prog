@@ -35,21 +35,63 @@ def get_dpath_latest(dpath_parent, use_today=False):
     return dpath_latest.resolve()
 
 
-def get_node_id_map(fpath_json) -> dict[str, str]:
+def _get_json_field(
+    fpath_json,
+    field_name: str | list[str],
+    content_description: str | list[str],
+):
     fpath_json = Path(fpath_json)
+
+    if isinstance(field_name, str):
+        field_name = [field_name]
+    if isinstance(content_description, str):
+        content_description = [content_description]
+
+    if not len(field_name) == len(content_description):
+        raise ValueError(
+            "field_name and content_description must have the same length"
+            f", got {field_name=} ({len(field_name)}) and {content_description=} ({len(content_description)})."
+        )
+
     if not fpath_json.exists():
         raise FileNotFoundError(
-            f"Expected a JSON file at {fpath_json} with a 'node_id_map' entry"
-            " where keys are data filenames and values are node IDs."
+            f"Expected a JSON file at {fpath_json} with a '{field_name[0]}' entry"
+            f" {content_description[0]}."
         )
     json_data = json.loads(fpath_json.read_text())
-    node_id_map: dict[str, str] = json_data.get("node_id_map", {})
-    if not node_id_map:
-        raise ValueError(
-            f"{fpath_json} must contain a 'node_id_map' entry"
-            " where keys are data filenames and values are node IDs."
-        )
-    return node_id_map
+
+    field_value = None
+    while field_name or content_description:
+        current_field_name = field_name.pop(0)
+        current_content_description = content_description.pop(0)
+
+        field_value = json_data.get(current_field_name)
+        if not field_value:
+            raise ValueError(
+                f"{fpath_json} must contain a '{current_field_name}' entry"
+                f" {current_content_description}."
+            )
+        json_data = field_value
+    return field_value
+
+
+def get_node_id_map(fpath_json) -> dict[str, str]:
+    return _get_json_field(
+        fpath_json,
+        "node_id_map",
+        "where keys are data filenames and values are node IDs",
+    )
+
+
+def get_col_subject(fpath_json) -> str:
+    return _get_json_field(
+        fpath_json,
+        ["cols", "col_subject"],
+        [
+            "with items 'col_subject' (str), 'col_timepoint' (str) and 'cols_biomarker' (list[str])",
+            "specifying the name of the column containing subject IDs",
+        ],
+    )
 
 
 def save_json(dpath: Path, data: dict, indent: int = 4):

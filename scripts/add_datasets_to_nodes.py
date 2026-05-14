@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 from pathlib import Path
 import configparser
-import re
 import json
 import subprocess
 import tempfile
@@ -16,13 +15,12 @@ from fl_prog.utils.constants import (
 )
 from fl_prog.utils.io import (
     save_json,
+    get_col_subject,
     get_dpath_latest,
     get_node_id_map,
     DEFAULT_DPATH_DATA,
     DEFAULT_DPATH_FEDBIOMED,
 )
-
-DEFAULT_COL_SUBJECT = "subject"
 
 
 def _data_already_added(dpath_node: Path, fpath_tsv: Path, wipe: bool = False) -> bool:
@@ -71,7 +69,7 @@ def _add_dataset_to_node(
     fpath_tsv: Path,
     dpath_node: Path,
     tag: str,
-    col_subject: str = DEFAULT_COL_SUBJECT,
+    col_subject: str,
     wipe: bool = False,
 ):
     fpath_config = dpath_node / FNAME_NODE_CONFIG
@@ -127,21 +125,14 @@ def _add_dataset_to_node(
     type=click.Path(path_type=Path, exists=True, file_okay=False),
     default=DEFAULT_DPATH_FEDBIOMED,
 )
-@click.option(
-    "--col-subject",
-    type=str,
-    default=DEFAULT_COL_SUBJECT,
-    help="Column name for subject IDs",
-)
 @click.option("--wipe/--no-wipe", default=False, help="Wipe existing data in nodes")
-def add_datasets_to_nodes(
-    tag: str, dpath_data: Path, dpath_nodes: Path, col_subject: str, wipe: bool
-):
+def add_datasets_to_nodes(tag: str, dpath_data: Path, dpath_nodes: Path, wipe: bool):
     dpath_tag = get_dpath_latest(dpath_data) / tag
     fpaths_tsv = dpath_tag.glob(f"{tag}*.tsv")
     fpath_json = dpath_tag / f"{tag}.json"
 
     node_id_map = get_node_id_map(fpath_json)
+    col_subject = get_col_subject(fpath_json)
 
     for fpath_tsv in sorted(fpaths_tsv):
         fpath_tsv = fpath_tsv.absolute()

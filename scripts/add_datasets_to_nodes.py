@@ -89,7 +89,7 @@ def _add_dataset_to_node(
     dataset_info = {
         "path": str(fpath_tsv),
         "data_type": "csv",
-        "description": "",
+        "description": f"{dpath_node.name} {tag}",
         "tags": tag,
         "name": f"{dpath_node.name} {tag}",
     }

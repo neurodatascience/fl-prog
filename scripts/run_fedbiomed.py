@@ -137,7 +137,6 @@ def _run_experiment(
             final_params["log_k_values"]
         ).data.numpy(),
         "estimated_x0_values": final_params["x0_values"].data.numpy(),
-        "estimated_time_shifts": final_params["time_shifts"].data.numpy(),
         "estimated_sigma": fbm_model.get_sigma(
             final_params["log_sigma_sq"]
         ).data.numpy(),

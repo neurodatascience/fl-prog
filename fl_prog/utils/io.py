@@ -4,6 +4,7 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 
+import torch
 import numpy as np
 
 from fl_prog.utils.constants import DNAME_LATEST, DATE_FORMAT
@@ -91,6 +92,8 @@ def save_json(dpath: Path, data: dict, indent: int = 4):
 def serialize_data(obj: object):
     if isinstance(obj, np.ndarray):
         return obj.tolist()
+    elif isinstance(obj, torch.Tensor):
+        return obj.data.numpy().tolist()
     elif isinstance(obj, Path):
         return str(obj)
     raise TypeError(f"Type {type(obj)} not serializable")

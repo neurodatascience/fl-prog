@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import json
+import shutil
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -35,6 +36,7 @@ DEFAULT_LEARNING_RATE = 1e-3
 DEFAULT_AGGREGATOR_NAME = "fedavg"
 
 VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
+DNAME_TENSORBOARD = "tensorboard"
 
 
 def _get_n_participants_map(
@@ -118,6 +120,9 @@ def _run_experiment(
     training_args: dict,
     n_rounds: int = DEFAULT_N_ROUNDS,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
+    with_tensorboard: bool = False,
+    dpath_tensorboard: Path | None = None,
+    save_training_replies: bool = False,
 ):
 
     training_args = training_args.copy()
@@ -136,6 +141,7 @@ def _run_experiment(
             aggregator=_get_aggregator(aggregator_name),
             agg_optimizer=_get_agg_optimizer(aggregator_name),
             node_selection_strategy=None,
+            tensorboard=with_tensorboard,
         )
         for _ in range(n_rounds):
             if "random_seed" in training_args:
@@ -148,7 +154,7 @@ def _run_experiment(
         "params"
     ]
 
-    return {
+    results = {
         "estimated_k_values": fbm_model.get_k_values(
             final_params["log_k_values"]
         ).data.numpy(),
@@ -157,6 +163,20 @@ def _run_experiment(
             final_params["log_sigma_sq"]
         ).data.numpy(),
     }
+
+    if save_training_replies:
+        results["training_replies"] = experiment.training_replies()
+
+    # move loss data (overwriting if needed)
+    if with_tensorboard:
+        dpath_tensorboard.mkdir(exist_ok=True)
+        for dpath_node_src in Path(experiment.tensorboard_results_path).glob("*"):
+            dpath_node_dest = dpath_tensorboard / dpath_node_src.name
+            if dpath_node_dest.exists():
+                shutil.rmtree(dpath_node_dest)
+            shutil.move(dpath_node_src, dpath_node_dest)
+
+    return results
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -196,6 +216,10 @@ def _run_experiment(
     type=click.Choice(VALID_AGGREGATOR_NAMES),
     default=DEFAULT_AGGREGATOR_NAME,
 )
+@click.option("--tensorboard/--no-tensorboard", "with_tensorboard", default=True)
+@click.option(
+    "--training-replies/--no-training-replies", "save_training_replies", default=False
+)
 @click.option("--random-seed", type=int, envvar="RNG_SEED")
 @click.option("--overwrite/--no-overwrite", default=False)
 def run_fedbiomed(
@@ -209,6 +233,8 @@ def run_fedbiomed(
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
+    with_tensorboard: bool = False,
+    save_training_replies: bool = False,
     random_seed: Optional[int] = None,
     overwrite: bool = False,
 ):
@@ -252,9 +278,15 @@ def run_fedbiomed(
         ]
     )
 
+    if with_tensorboard:
+        dpath_tensorboard = dpath_out / DNAME_TENSORBOARD
+
     json_data = {"settings": locals()}
 
     tags = [tag]
+
+    dpath_out.mkdir(parents=True, exist_ok=True)
+    save_json(fpath_out, json_data)
 
     # federated
     results_federated = _run_experiment(
@@ -265,7 +297,15 @@ def run_fedbiomed(
         training_args=training_args,
         n_rounds=n_rounds,
         aggregator_name=aggregator_name,
+        with_tensorboard=with_tensorboard,
+        dpath_tensorboard=dpath_tensorboard,
+        save_training_replies=save_training_replies,
     )
+
+    json_data["results"] = {
+        "federated": results_federated,
+    }
+    save_json(fpath_out, json_data)
 
     # centralized
     results_centralized = _run_experiment(
@@ -276,14 +316,12 @@ def run_fedbiomed(
         training_args=training_args,
         n_rounds=n_rounds,
         aggregator_name=aggregator_name,
+        with_tensorboard=with_tensorboard,
+        dpath_tensorboard=dpath_tensorboard,
+        save_training_replies=save_training_replies,
     )
 
-    json_data["results"] = {
-        "centralized": results_centralized,
-        "federated": results_federated,
-    }
-
-    dpath_out.mkdir(parents=True, exist_ok=True)
+    json_data["results"]["centralized"] = results_centralized
     save_json(fpath_out, json_data)
     print(f"Saved results to {fpath_out}")
 

@@ -18,7 +18,7 @@ pip install -e .
 
 ## Steps
 
-These scripts should be done sequentially.
+These scripts should be run sequentially.
 
 ### Generate synthetic data
 
@@ -63,7 +63,7 @@ These scripts should be done sequentially.
 ### Run model fitting
 
 ```shell
-./scripts/run_fedbiomed.py --tag iid
+./scripts/run_fedbiomed.py --tag iid --n-rounds 10 --n-updates 100 --learning-rate 0.01
 ./scripts/run_fedbiomed.py --tag non_overlapping_t0
 ./scripts/run_fedbiomed.py --tag unequal_sigma
 ```

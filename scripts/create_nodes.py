@@ -25,6 +25,8 @@ def _create_node(dpath_nodes: Path, node_id: str):
             str(dpath_node),
             "-c",
             "NODE",
+            "-n",
+            f"{NODE_PREFIX}{node_id}",
             "--exist-ok",
         ],
         check=True,

@@ -4,8 +4,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-from pathlib import Path
-
 
 class LogisticRegressionModelWithShift(nn.Module):
     def __init__(self, n_participants: int, n_features: int):

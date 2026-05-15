@@ -9,13 +9,8 @@ import warnings
 import click
 import pandas as pd
 
-from fl_prog.utils.constants import (
-    CLICK_CONTEXT_SETTINGS,
-    FNAME_NODE_CONFIG,
-)
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import (
-    save_json,
-    get_col_subject,
     get_dpath_latest,
     get_node_id_map,
     DEFAULT_DPATH_DATA,
@@ -55,33 +50,12 @@ def _data_already_added(dpath_node: Path, fpath_tsv: Path, wipe: bool = False) -
     return str(fpath_tsv) in df_datasets["path"].to_list()
 
 
-def _create_config(fpath_tsv: Path, col_subject: str) -> dict:
-    df = pd.read_csv(fpath_tsv, sep="\t")
-    if col_subject not in df.columns:
-        raise ValueError(f"Subject column '{col_subject}' not found in {fpath_tsv}")
-    config = {
-        "n_participants": df[col_subject].nunique(),
-    }
-    return config
-
-
 def _add_dataset_to_node(
     fpath_tsv: Path,
     dpath_node: Path,
     tag: str,
-    col_subject: str,
     wipe: bool = False,
 ):
-    fpath_config = dpath_node / FNAME_NODE_CONFIG
-    if fpath_config.exists() and not wipe:
-        config = json.loads(fpath_config.read_text())
-    else:
-        config = {}
-    config[tag] = _create_config(fpath_tsv, col_subject)
-    save_json(fpath_config, config)
-    print(f"Created/updated node config file: {fpath_config}")
-    print(config)
-
     if _data_already_added(dpath_node, fpath_tsv, wipe=wipe):
         print(f"{fpath_tsv.name} is already in node {dpath_node.name}. Skipping")
         return
@@ -132,13 +106,12 @@ def add_datasets_to_nodes(tag: str, dpath_data: Path, dpath_nodes: Path, wipe: b
     fpath_json = dpath_tag / f"{tag}.json"
 
     node_id_map = get_node_id_map(fpath_json)
-    col_subject = get_col_subject(fpath_json)
 
     for fpath_tsv in sorted(fpaths_tsv):
         fpath_tsv = fpath_tsv.absolute()
         dpath_node = dpath_nodes / f"node-{node_id_map[fpath_tsv.name]}"
         print(f"----- {fpath_tsv} -----")
-        _add_dataset_to_node(fpath_tsv, dpath_node, tag, col_subject, wipe)
+        _add_dataset_to_node(fpath_tsv, dpath_node, tag, wipe)
 
 
 if __name__ == "__main__":

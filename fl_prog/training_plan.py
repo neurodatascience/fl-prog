@@ -1,6 +1,4 @@
-import json
 from functools import wraps
-from pathlib import Path
 
 import torch.optim as optim
 from fedbiomed.common.datamanager import DataManager
@@ -15,7 +13,6 @@ from fedbiomed.common.training_plans import TorchTrainingPlan
 
 
 from fl_prog.model import LogisticRegressionModelWithShift
-from fl_prog.utils.constants import FNAME_NODE_CONFIG, FNAME_WEIGHTS
 
 
 class FLProgTrainingPlan(TorchTrainingPlan):
@@ -23,7 +20,6 @@ class FLProgTrainingPlan(TorchTrainingPlan):
     col_time: str
     cols_biomarker: list[str]
 
-    config_path = Path(FNAME_NODE_CONFIG)
     default_config = {"n_participants": 0}
 
     @staticmethod
@@ -45,14 +41,10 @@ class FLProgTrainingPlan(TorchTrainingPlan):
     @set_colnames
     def init_model(self):
         model_args: dict = self.model_args()
-        tag = model_args["tag"]
         kwargs: dict = model_args["lr_with_shift"]
-        if self.config_path.exists():
-            with open(self.config_path) as f:
-                config = json.load(f)
-            kwargs.update(config[tag])
-        else:
-            kwargs.update(self.default_config)
+        kwargs["n_participants"] = model_args["node_specific_args"][
+            "n_participants"
+        ].get(self.node_id(), 0)
         model = LogisticRegressionModelWithShift(**kwargs)
         return model
 
@@ -64,16 +56,13 @@ class FLProgTrainingPlan(TorchTrainingPlan):
 
     def init_dependencies(self):
         deps = [
-            "import json",
             "from functools import wraps",
-            "from pathlib import Path",
             "import torch.optim as optim",
             "from fedbiomed.common.datamanager import DataManager",
             "from fedbiomed.common.dataset import TabularDataset",
             "from fedbiomed.common.optimizers.optimizer import Optimizer",
             "from fedbiomed.common.optimizers.declearn import AdamModule, RidgeRegularizer, ScaffoldClientModule",
             "from fl_prog.model import LogisticRegressionModelWithShift",
-            "from fl_prog.utils.constants import FNAME_NODE_CONFIG, FNAME_WEIGHTS",
         ]
         return deps
 

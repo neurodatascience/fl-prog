@@ -4,18 +4,17 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import click
+import pandas as pd
 from declearn.optimizer.modules import ScaffoldServerModule
 from fedbiomed.common.optimizers.optimizer import Optimizer
 
 from fedbiomed.researcher.aggregators.fedavg import FedAverage
 from fedbiomed.researcher.aggregators.scaffold import Scaffold
 
-from fl_prog.aggregator import SelectiveFedAverage
 from fl_prog.model import LogisticRegressionModelWithShift
 from fl_prog.training_plan import FLProgTrainingPlan
 from fl_prog.utils.constants import (
     CLICK_CONTEXT_SETTINGS,
-    FNAME_WEIGHTS,
     NODE_ID_CENTRALIZED,
     NODE_PREFIX,
 )
@@ -38,11 +37,26 @@ DEFAULT_AGGREGATOR_NAME = "fedavg"
 VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
 
 
+def _get_n_participants_map(
+    dpath_data: Path, node_id_map: dict, col_subject_id: str
+) -> dict[str, int]:
+    n_participants_map = {}
+    for fpath_tsv, node_id in node_id_map.items():
+        df = pd.read_csv(dpath_data / fpath_tsv, sep="\t")
+        if col_subject_id not in df.columns:
+            raise ValueError(
+                f"Subject column '{col_subject_id}' not found in {fpath_tsv}"
+            )
+        n_participants_map[f"{NODE_PREFIX}{node_id}"] = df[col_subject_id].nunique()
+    return n_participants_map
+
+
 def _get_model_args(
-    tag: str,
+    dpath_data: Path,
     col_subject_id: str,
     col_time: str,
     cols_biomarker: Optional[Iterable[str]],
+    node_id_map: dict[str, str],
 ):
     return {
         "colnames": {
@@ -53,7 +67,11 @@ def _get_model_args(
         "lr_with_shift": {
             "n_features": len(cols_biomarker),
         },
-        "tag": tag,
+        "node_specific_args": {
+            "n_participants": _get_n_participants_map(
+                dpath_data, node_id_map, col_subject_id
+            )
+        },
     }
 
 
@@ -82,7 +100,7 @@ def _get_aggregator(aggregator_name: str):
     return {
         "fedavg": FedAverage(),
         "fedprox": FedAverage(),  # FedProx is FedAvg with additional training arg
-        "scaffold": FedAverage(),  # Scaffold(server_lr=1),
+        "scaffold": Scaffold(server_lr=1),
     }[aggregator_name]
 
 
@@ -101,9 +119,6 @@ def _run_experiment(
     n_rounds: int = DEFAULT_N_ROUNDS,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
 ):
-    for fpath_weights in Path(dpath_fbm).rglob(f"{FNAME_WEIGHTS}"):
-        fpath_weights.unlink()
-        print(f"Removed {fpath_weights}")
 
     training_args = training_args.copy()
 
@@ -125,6 +140,7 @@ def _run_experiment(
         for _ in range(n_rounds):
             if "random_seed" in training_args:
                 training_args["random_seed"] += 1
+            experiment.set_training_args(training_args)
             experiment.run_once()
 
     fbm_model: LogisticRegressionModelWithShift = experiment.training_plan().model()
@@ -202,29 +218,33 @@ def run_fedbiomed(
         print(f"{fpath_out} already exists. Use --overwrite to overwrite.")
         return
 
-    fpath_config = get_dpath_latest(dpath_data) / tag / f"{tag}.json"
+    dpath_data = get_dpath_latest(dpath_data) / tag
+    fpath_config = dpath_data / f"{tag}.json"
     try:
         config = json.loads(fpath_config.read_text())
     except Exception:
         raise RuntimeError(f"Expected a JSON file at {fpath_config}")
+
+    node_id_map = get_node_id_map(fpath_config)
+
     try:
-        cols = config["cols"]
-        col_subject_id = cols["col_subject"]
-        col_time = cols["col_timepoint"]
-        cols_biomarker = cols["cols_biomarker"]
+        model_args = _get_model_args(
+            dpath_data,
+            config["cols"]["col_subject"],
+            config["cols"]["col_timepoint"],
+            config["cols"]["cols_biomarker"],
+            node_id_map,
+        )
     except KeyError:
         raise RuntimeError(
             f'{fpath_config} should have a "cols" entry with keys: '
             '"col_subject" (str), "col_timepoint" (str), "cols_biomarker" (list[str])'
         )
 
-    tags = [tag]
-    model_args = _get_model_args(tag, col_subject_id, col_time, cols_biomarker)
     training_args = _get_training_args(
         n_updates, batch_size, learning_rate, aggregator_name, random_seed
     )
 
-    node_id_map = get_node_id_map(fpath_config)
     nodes_federated = sorted(
         [
             f"{NODE_PREFIX}{node_id}"
@@ -233,6 +253,8 @@ def run_fedbiomed(
     )
 
     json_data = {"settings": locals()}
+
+    tags = [tag]
 
     # federated
     results_federated = _run_experiment(
@@ -252,7 +274,7 @@ def run_fedbiomed(
         tags=tags,
         model_args=model_args,
         training_args=training_args,
-        n_rounds=5,  # n_rounds,
+        n_rounds=n_rounds,
         aggregator_name=aggregator_name,
     )
 

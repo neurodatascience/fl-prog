@@ -83,17 +83,6 @@ def get_node_id_map(fpath_json) -> dict[str, str]:
     )
 
 
-def get_col_subject(fpath_json) -> str:
-    return _get_json_field(
-        fpath_json,
-        ["cols", "col_subject"],
-        [
-            "with items 'col_subject' (str), 'col_timepoint' (str) and 'cols_biomarker' (list[str])",
-            "specifying the name of the column containing subject IDs",
-        ],
-    )
-
-
 def save_json(dpath: Path, data: dict, indent: int = 4):
     with open(dpath, "w") as file_json:
         json.dump(data, file_json, indent=indent, default=serialize_data)

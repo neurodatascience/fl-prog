@@ -6,6 +6,7 @@ from collections.abc import Iterable
 
 import click
 import numpy as np
+import pandas as pd
 
 from fl_prog.freesurfer import (
     get_df_idp,
@@ -17,19 +18,20 @@ from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
 DEFAULT_MEASURES = (
-    "rh_parahippocampal_thickness",
-    "lh_parahippocampal_thickness",
-    "rh_entorhinal_thickness",
-    "lh_entorhinal_thickness",
-    "rh_middletemporal_thickness",
-    "lh_middletemporal_thickness",
-    "rh_inferiorparietal_thickness",
-    "lh_inferiorparietal_thickness",
-    "rh_precuneus_thickness",
-    "lh_precuneus_thickness",
+    "rh_parahippocampal_area",
+    "lh_parahippocampal_area",
+    "rh_entorhinal_area",
+    "lh_entorhinal_area",
+    "rh_middletemporal_area",
+    "lh_middletemporal_area",
+    "rh_inferiorparietal_area",
+    "lh_inferiorparietal_area",
+    "rh_precuneus_area",
+    "lh_precuneus_area",
 )
 DEFAULT_MERGE_HEMISPHERES = True
 DEFAULT_N_SITES = 5
+DEFAULT_OUTLIER_THRESHOLD = 3.0
 
 
 SESSION_TIMEPOINT_MAP = {
@@ -44,13 +46,37 @@ def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
     return f"{tag}{suffix}"
 
 
+def _remove_outliers(df, threshold, measures, apply_z_score=False) -> pd.DataFrame:
+    means = df[measures].mean()
+    stds = df[measures].std()
+
+    df_measures_z_scored = (df[measures] - means) / stds
+
+    is_outlier = (df_measures_z_scored.abs() > threshold).any(axis="columns")
+    if apply_z_score:
+        df.loc[:, measures] = df_measures_z_scored
+
+    return df[~is_outlier]
+
+
+def _scale_min_max(df, min, max, measures) -> pd.DataFrame:
+    df.loc[:, measures] = (df[measures] - min) / (max - min)
+    return df
+
+
+def _flip(df, measures) -> pd.DataFrame:
+    df.loc[:, measures] = 1 - df[measures]
+    return df
+
+
 def get_fs_data(
     tag: str,
     fpath_idps: Path,
     merge_hemispheres: bool,
     n_sites: int,
     dpath_data: Path,
-    measures: Iterable[str] | None = None,
+    measures: Iterable[str] | None = DEFAULT_MEASURES,
+    outlier_threshold: Optional[float] = DEFAULT_OUTLIER_THRESHOLD,
     rng_seed: int = None,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
@@ -60,20 +86,21 @@ def get_fs_data(
 
     rng = np.random.default_rng(rng_seed)
 
-    df_idp = get_df_idp(fpath_idps, merge_hemispheres, measures)
+    df_idp = get_df_idp(fpath_idps, merge_hemispheres, SESSION_TIMEPOINT_MAP, measures)
 
-    # scale so that min-max is 0-1 for each biomarker
-    # and flip direction so that higher values are worse
-    extrema = {}
-    for col in df_idp.columns:
-        min_val = df_idp[col].min()
-        max_val = df_idp[col].max()
-        extrema[col] = (min_val, max_val)
-        df_idp[col] = 1 - (df_idp[col] - min_val) / (max_val - min_val)
+    cols_biomarkers = list(set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT})
 
-    cols_biomarkers = list(df_idp.columns)
+    df_idp = _remove_outliers(
+        df_idp, outlier_threshold, cols_biomarkers, apply_z_score=True
+    )
+    df_idp = _scale_min_max(
+        df_idp, -outlier_threshold, outlier_threshold, cols_biomarkers
+    )
+    df_idp = _flip(df_idp, cols_biomarkers)
 
-    participant_ids = sorted(df_idp[COL_SUBJECT_ORIGINAL].unique().tolist())
+    participant_ids = sorted(
+        df_idp.index.get_level_values(COL_SUBJECT_ORIGINAL).unique().tolist()
+    )
     json_data["participant_ids"] = participant_ids.copy()
     rng.shuffle(participant_ids)
 
@@ -101,8 +128,6 @@ def get_fs_data(
         ),
     }
 
-    json_data["extrema"] = extrema
-
     fpath_json = dpath_out / _get_fname_out(tag, suffix=".json")
     save_json(fpath_json, json_data)
     print(f"Saved settings, col names, and node ID map to {fpath_json}")
@@ -117,7 +142,6 @@ def get_fs_data(
     required=True,
     envvar="ADNI_IDP_FILE",
 )
-@click.option("--measures", "-m", multiple=True, default=DEFAULT_MEASURES)
 @click.option(
     "--merge-hemis/--no-merge-hemis",
     "merge_hemispheres",
@@ -130,6 +154,14 @@ def get_fs_data(
     "dpath_data",
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     default=DEFAULT_DPATH_DATA,
+)
+@click.option("--measures", "-m", multiple=True, default=DEFAULT_MEASURES)
+@click.option(
+    "--outlier",
+    "-o",
+    "outlier_threshold",
+    type=click.FloatRange(min=0, min_open=True),
+    default=DEFAULT_OUTLIER_THRESHOLD,
 )
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
 def main(*args, **kwargs):

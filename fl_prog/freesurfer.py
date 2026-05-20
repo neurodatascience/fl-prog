@@ -3,8 +3,6 @@ from pathlib import Path
 
 import pandas as pd
 
-COL_SUBJECT_ORIGINAL = "participant_id"
-COL_SESSION = "session_id"
 COL_SUBJECT = "participant_id_int"
 COL_TIMEPOINT = "months"
 
@@ -20,14 +18,30 @@ def _merge_hemispheres(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def infer_sep(fpath: Path) -> str:
+    if fpath.suffix == ".tsv":
+        return "\t"
+    elif fpath.suffix == ".csv":
+        return ","
+    else:
+        raise ValueError(
+            f"Could not infer separator from file extension {fpath.suffix}."
+        )
+
+
 def get_df_idp(
     fpath_idps: Path,
     merge_hemispheres: bool,
+    col_subject_original: str,
+    col_session_original: str,
     session_timepoint_map: dict[str, float],
     measures: Iterable[str] | None = None,
 ) -> pd.DataFrame:
     df_idp = pd.read_csv(
-        fpath_idps, sep="\t", index_col=[COL_SUBJECT_ORIGINAL, COL_SESSION]
+        fpath_idps,
+        sep=infer_sep(fpath_idps),
+        index_col=[col_subject_original, col_session_original],
+        dtype={col_subject_original: str, col_session_original: str},
     )
     df_idp = df_idp.dropna(axis="index", how="any")
     df_idp = df_idp.sort_index()
@@ -37,13 +51,20 @@ def get_df_idp(
     if merge_hemispheres:
         df_idp = _merge_hemispheres(df_idp)
 
-    df_idp[COL_TIMEPOINT] = df_idp.index.get_level_values(COL_SESSION).map(
+    session_ids = df_idp.index.get_level_values(col_session_original).unique()
+    for session_id in session_ids:
+        if session_id not in session_timepoint_map:
+            raise ValueError(
+                f"Session ID {session_id} not found in session_timepoint_map."
+                f" Make sure all session IDs are present: {session_ids}."
+            )
+    df_idp[COL_TIMEPOINT] = df_idp.index.get_level_values(col_session_original).map(
         session_timepoint_map
     )
     participant_ids = sorted(
-        df_idp.index.get_level_values(COL_SUBJECT_ORIGINAL).unique().tolist()
+        df_idp.index.get_level_values(col_subject_original).unique().tolist()
     )
-    df_idp[COL_SUBJECT] = df_idp.index.get_level_values(COL_SUBJECT_ORIGINAL).map(
+    df_idp[COL_SUBJECT] = df_idp.index.get_level_values(col_subject_original).map(
         lambda x: participant_ids.index(x)
     )
 

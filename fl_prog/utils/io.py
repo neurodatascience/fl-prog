@@ -84,8 +84,12 @@ def get_node_id_map(fpath_json) -> dict[str, str]:
     )
 
 
-def save_json(dpath: Path, data: dict, indent: int = 4):
-    with open(dpath, "w") as file_json:
+def load_json(fpath_json: Path) -> dict | list:
+    return json.loads(fpath_json.read_text())
+
+
+def save_json(fpath: Path, data: dict, indent: int = 4):
+    with open(fpath, "w") as file_json:
         json.dump(data, file_json, indent=indent, default=serialize_data)
 
 

@@ -10,34 +10,33 @@ import pandas as pd
 
 from fl_prog.freesurfer import (
     get_df_idp,
-    COL_SUBJECT_ORIGINAL,
     COL_SUBJECT,
     COL_TIMEPOINT,
 )
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import save_json, get_dpath_latest, DEFAULT_DPATH_DATA
+from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
 DEFAULT_MEASURES = (
-    "rh_parahippocampal_area",
-    "lh_parahippocampal_area",
-    "rh_entorhinal_area",
-    "lh_entorhinal_area",
-    "rh_middletemporal_area",
-    "lh_middletemporal_area",
-    "rh_inferiorparietal_area",
-    "lh_inferiorparietal_area",
-    "rh_precuneus_area",
-    "lh_precuneus_area",
+    "entorhinal_area",
+    "middletemporal_area",
+    "parahippocampal_area",
+    "inferiorparietal_area",
+    "precuneus_area",
+    # "rh_parahippocampal_area",
+    # "lh_parahippocampal_area",
+    # "rh_entorhinal_area",
+    # "lh_entorhinal_area",
+    # "rh_middletemporal_area",
+    # "lh_middletemporal_area",
+    # "rh_inferiorparietal_area",
+    # "lh_inferiorparietal_area",
+    # "rh_precuneus_area",
+    # "lh_precuneus_area",
 )
 DEFAULT_MERGE_HEMISPHERES = True
 DEFAULT_N_SITES = 5
 DEFAULT_OUTLIER_THRESHOLD = 3.0
-
-
-SESSION_TIMEPOINT_MAP = {
-    "bl": 0.0,
-    "m24": 24.0,
-}
+DEFAULT_PREPROCESS = True
 
 
 def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
@@ -75,31 +74,49 @@ def get_fs_data(
     merge_hemispheres: bool,
     n_sites: int,
     dpath_data: Path,
+    fpath_config: Path,
     measures: Iterable[str] | None = DEFAULT_MEASURES,
     outlier_threshold: Optional[float] = DEFAULT_OUTLIER_THRESHOLD,
+    preprocess: bool = DEFAULT_PREPROCESS,
     rng_seed: int = None,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
     dpath_out.mkdir(parents=True, exist_ok=True)
 
+    config = load_json(fpath_config)
+
     json_data = {"settings": locals()}
 
     rng = np.random.default_rng(rng_seed)
 
-    df_idp = get_df_idp(fpath_idps, merge_hemispheres, SESSION_TIMEPOINT_MAP, measures)
+    col_subject_original = config["col_subject_original"]
+    col_session_original = config["col_session_original"]
+    session_timepoint_map = config["session_timepoint_map"]
+
+    df_idp = get_df_idp(
+        fpath_idps,
+        merge_hemispheres,
+        col_subject_original,
+        col_session_original,
+        session_timepoint_map,
+        measures,
+    )
 
     cols_biomarkers = list(set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT})
 
-    df_idp = _remove_outliers(
-        df_idp, outlier_threshold, cols_biomarkers, apply_z_score=True
-    )
-    df_idp = _scale_min_max(
-        df_idp, -outlier_threshold, outlier_threshold, cols_biomarkers
-    )
-    df_idp = _flip(df_idp, cols_biomarkers)
+    if preprocess:
+        df_idp = _remove_outliers(
+            df_idp, outlier_threshold, cols_biomarkers, apply_z_score=True
+        )
+
+        min_threshold = -outlier_threshold
+        max_threshold = outlier_threshold
+        df_idp = _scale_min_max(df_idp, min_threshold, max_threshold, cols_biomarkers)
+
+        df_idp = _flip(df_idp, cols_biomarkers)
 
     participant_ids = sorted(
-        df_idp.index.get_level_values(COL_SUBJECT_ORIGINAL).unique().tolist()
+        df_idp.index.get_level_values(col_subject_original).unique().tolist()
     )
     json_data["participant_ids"] = participant_ids.copy()
     rng.shuffle(participant_ids)
@@ -155,6 +172,13 @@ def get_fs_data(
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     default=DEFAULT_DPATH_DATA,
 )
+@click.option(
+    "--config",
+    "fpath_config",
+    type=click.Path(path_type=Path, file_okay=True, dir_okay=False),
+    required=True,
+    envvar="ADNI_CONFIG_FILE",
+)
 @click.option("--measures", "-m", multiple=True, default=DEFAULT_MEASURES)
 @click.option(
     "--outlier",
@@ -163,6 +187,7 @@ def get_fs_data(
     type=click.FloatRange(min=0, min_open=True),
     default=DEFAULT_OUTLIER_THRESHOLD,
 )
+@click.option("--preprocess/--no-preprocess", default=DEFAULT_PREPROCESS)
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
 def main(*args, **kwargs):
     get_fs_data(*args, **kwargs)

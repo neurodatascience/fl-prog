@@ -8,6 +8,7 @@ import click
 import pandas as pd
 from declearn.optimizer.modules import ScaffoldServerModule
 from fedbiomed.common.optimizers.optimizer import Optimizer
+from fedbiomed.common.serializer import Serializer
 
 from fedbiomed.researcher.aggregators.fedavg import FedAverage
 from fedbiomed.researcher.aggregators.scaffold import Scaffold
@@ -113,7 +114,7 @@ def _get_agg_optimizer(aggregator_name: str):
 
 
 def _run_experiment(
-    dpath_fbm,
+    dpath_fbm: Path,
     nodes: Iterable[str],
     tags: Iterable[str],
     model_args: dict,
@@ -154,6 +155,24 @@ def _run_experiment(
         "params"
     ]
 
+    # get node-side time shift values
+    time_shifts = {}
+    for node in nodes:
+        node_state_file = experiment._node_state_agent.get_last_node_states()[node]
+
+        fpath_persistent_params = (
+            dpath_fbm
+            / node.replace("_", "-")
+            / "var"
+            / f"node_state_{node}"
+            / f"experiment_id_{experiment.id}"
+            / f"persistent_model_weights_{experiment.round_current() - 1}_{node_state_file}"
+        )
+        print(f"Loading time shifts for node {node} from {fpath_persistent_params}")
+
+        final_local_persistent = Serializer.load(fpath_persistent_params)
+        time_shifts[node] = final_local_persistent["time_shifts"].data.numpy()
+
     results = {
         "estimated_k_values": fbm_model.get_k_values(
             final_params["log_k_values"]
@@ -162,6 +181,7 @@ def _run_experiment(
         "estimated_sigma": fbm_model.get_sigma(
             final_params["log_sigma_sq"]
         ).data.numpy(),
+        "estimated_time_shifts": time_shifts,
     }
 
     if save_training_replies:

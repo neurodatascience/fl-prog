@@ -276,7 +276,7 @@ def run_fedbiomed(
     try:
         model_args = _get_model_args(
             dpath_data,
-            config["cols"]["col_subject"],
+            config["cols"]["col_subject_index"],
             config["cols"]["col_timepoint"],
             config["cols"]["cols_biomarker"],
             node_id_map,
@@ -308,6 +308,8 @@ def run_fedbiomed(
     dpath_out.mkdir(parents=True, exist_ok=True)
     save_json(fpath_out, json_data)
 
+    json_data["results"] = {}
+
     # federated
     results_federated = _run_experiment(
         dpath_fbm,
@@ -322,9 +324,7 @@ def run_fedbiomed(
         save_training_replies=save_training_replies,
     )
 
-    json_data["results"] = {
-        "federated": results_federated,
-    }
+    json_data["results"]["federated"] = results_federated
     save_json(fpath_out, json_data)
 
     # centralized

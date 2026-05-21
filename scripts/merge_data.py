@@ -30,6 +30,9 @@ def merge_data(dpath_data, tag):
     json_data = json.loads(fpath_json.read_text())
     json_data["node_id_map"][fname_merged] = NODE_ID_CENTRALIZED
 
+    col_subject = json_data["cols"]["col_subject"]
+    col_subject_index = json_data["cols"]["col_subject_index"]
+
     fpaths_tsv = [
         fpath
         for fpath in sorted(dpath_out.glob(f"{tag}*.tsv"))
@@ -37,6 +40,11 @@ def merge_data(dpath_data, tag):
     ]
     dfs = [pd.read_csv(fpath, sep="\t") for fpath in fpaths_tsv]
     df = pd.concat(dfs)
+
+    subjects = df[col_subject].unique().tolist()
+    df[col_subject_index] = df[col_subject].map(lambda x: subjects.index(x))
+
+    json_data["subjects_by_node"][NODE_ID_CENTRALIZED] = subjects
 
     fpath_out = dpath_out / fname_merged
     df.to_csv(fpath_out, sep="\t", index=False)

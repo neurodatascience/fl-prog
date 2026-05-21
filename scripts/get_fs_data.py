@@ -17,11 +17,18 @@ from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
 DEFAULT_MEASURES = (
-    "entorhinal_area",
-    "middletemporal_area",
-    "parahippocampal_area",
-    "inferiorparietal_area",
-    "precuneus_area",
+    "entorhinal_thickness",
+    "middletemporal_thickness",
+    "inferiortemporal_thickness",
+    "inferiorparietal_thickness",
+    "superiortemporal_thickness",
+    # # area (hemispheres already merged)
+    # "entorhinal_area",
+    # "middletemporal_area",
+    # "parahippocampal_area",
+    # "inferiorparietal_area",
+    # "precuneus_area",
+    # # area (hemispheres not merged)
     # "rh_parahippocampal_area",
     # "lh_parahippocampal_area",
     # "rh_entorhinal_area",
@@ -85,7 +92,7 @@ def get_fs_data(
 
     config = load_json(fpath_config)
 
-    json_data = {"settings": locals()}
+    json_data = {"settings": locals().copy()}
 
     rng = np.random.default_rng(rng_seed)
 
@@ -115,35 +122,49 @@ def get_fs_data(
 
         df_idp = _flip(df_idp, cols_biomarkers)
 
+    df_idp = df_idp.query(f"{COL_TIMEPOINT} < 120")
+    df_idp = _scale_min_max(df_idp, df_idp.min(), df_idp.max(), cols_biomarkers)
+
     participant_ids = sorted(
         df_idp.index.get_level_values(col_subject_original).unique().tolist()
     )
-    json_data["participant_ids"] = participant_ids.copy()
     rng.shuffle(participant_ids)
 
     node_id_map = {}
+    subjects_by_node = {}
     for i_site, site_participant_ids in enumerate(
         np.array_split(participant_ids, n_sites),
         start=1,
     ):
+        node_id = str(i_site)
+        subjects_by_node[node_id] = site_participant_ids.tolist()
         df_site = df_idp.loc[site_participant_ids]
+
+        # reindex
+        df_site[COL_SUBJECT] = df_site.index.get_level_values(col_subject_original).map(
+            lambda x: subjects_by_node[node_id].index(x)
+        )
+
         fname_tsv = _get_fname_out(tag, i=i_site)
         fpath_tsv = dpath_out / fname_tsv
         df_site.to_csv(fpath_tsv, sep="\t", index=True)
         print(
             f"Site {i_site}: {df_site.shape}, {len(site_participant_ids)} participants, {fpath_tsv}"
         )
-        node_id_map[fname_tsv] = str(i_site)
+        node_id_map[fname_tsv] = node_id
 
     json_data["node_id_map"] = node_id_map
 
     json_data["cols"] = {
-        "col_subject": COL_SUBJECT,
+        "col_subject": col_subject_original,
+        "col_subject_index": COL_SUBJECT,
         "col_timepoint": COL_TIMEPOINT,
         "cols_biomarker": sorted(
             cols_biomarkers,
         ),
     }
+
+    json_data["subjects_by_node"] = subjects_by_node
 
     fpath_json = dpath_out / _get_fname_out(tag, suffix=".json")
     save_json(fpath_json, json_data)

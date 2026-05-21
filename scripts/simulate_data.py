@@ -24,6 +24,7 @@ DEFAULT_X0_MIN = 0.0
 DEFAULT_X0_MAX = 1.0
 
 COL_SUBJECT = "subject"
+COL_SUBJECT_INDEX = "subject_index"
 COL_TIMEPOINT = "timepoint"
 COL_BIOMARKER_PREFIX = "biomarker_"
 
@@ -58,6 +59,7 @@ def _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far) -> pd.Dat
     df_data = pd.DataFrame(
         data={
             COL_SUBJECT: subjects,
+            COL_SUBJECT_INDEX: subjects - n_subjects_so_far,
             COL_TIMEPOINT: np.concatenate(timepoints),
             **{
                 f"{COL_BIOMARKER_PREFIX}{i}": np.concatenate(biomarkers)[:, i]
@@ -156,6 +158,7 @@ def simulate_data(
 
     n_subjects_so_far = 0
     node_id_map = {}
+    subjects_by_node = {}
     for i_dataset, (n_subjects, n_max_timepoints, t0_min, t0_max, sigma) in enumerate(
         zip(
             n_subjects_all,
@@ -166,6 +169,7 @@ def simulate_data(
             strict=True,
         )
     ):
+        node_id = f"{i_dataset+1}"
         timepoints, biomarkers, time_shifts = simulate_all_subjects(
             n_subjects=n_subjects,
             k_values=k_values,
@@ -182,13 +186,16 @@ def simulate_data(
         time_shifts_all.append(time_shifts)
 
         df_data = _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far)
+
+        subjects_by_node[node_id] = df_data[COL_SUBJECT].unique().tolist()
+
         fname_tsv = _get_fname_out(tag, i_dataset)
         fpath_tsv = dpath_out / fname_tsv
         df_data.to_csv(fpath_tsv, sep="\t", index=False)
         print(f"Saved simulated data to {fpath_tsv}")
 
         n_subjects_so_far += n_subjects
-        node_id_map[fname_tsv] = f"{i_dataset+1}"
+        node_id_map[fname_tsv] = node_id
 
     json_data["params"] = {
         "time_shifts": time_shifts_all,
@@ -200,11 +207,13 @@ def simulate_data(
 
     json_data["cols"] = {
         "col_subject": COL_SUBJECT,
+        "col_subject_index": COL_SUBJECT_INDEX,
         "col_timepoint": COL_TIMEPOINT,
         "cols_biomarker": sorted(
-            list(set(df_data.columns) - {COL_SUBJECT, COL_TIMEPOINT})
+            list(set(df_data.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_SUBJECT_INDEX})
         ),
     }
+    json_data["subjects_by_node"] = subjects_by_node
 
     fpath_json = dpath_out / _get_fname_out(tag, suffix=".json")
     save_json(fpath_json, json_data)

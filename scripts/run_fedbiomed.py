@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import click
+import numpy as np
 import pandas as pd
 from declearn.optimizer.modules import ScaffoldServerModule
 from fedbiomed.common.optimizers.optimizer import Optimizer
@@ -173,11 +174,24 @@ def _run_experiment(
         final_local_persistent = Serializer.load(fpath_persistent_params)
         time_shifts[node] = final_local_persistent["time_shifts"].data.numpy()
 
+    if "vertical_shifts" in final_params:
+        vertical_shifts = final_params["vertical_shifts"].data.numpy()
+    else:
+        vertical_shifts = np.zeros_like(final_params["log_k_values"].data.numpy())
+    if "log_scaling_factors" in final_params:
+        scaling_factors = fbm_model.get_scaling_factors(
+            final_params["log_scaling_factors"]
+        ).data.numpy()
+    else:
+        scaling_factors = np.ones_like(final_params["log_k_values"].data.numpy())
+
     results = {
         "estimated_k_values": fbm_model.get_k_values(
             final_params["log_k_values"]
         ).data.numpy(),
         "estimated_x0_values": final_params["x0_values"].data.numpy(),
+        "estimated_vertical_shifts": vertical_shifts,
+        "estimated_scaling_factors": scaling_factors,
         "estimated_sigma": fbm_model.get_sigma(
             final_params["log_sigma_sq"]
         ).data.numpy(),

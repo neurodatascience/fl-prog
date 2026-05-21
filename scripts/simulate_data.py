@@ -22,6 +22,10 @@ DEFAULT_K_MIN = 5.0
 DEFAULT_K_MAX = 10.0
 DEFAULT_X0_MIN = 0.0
 DEFAULT_X0_MAX = 1.0
+DEFAULT_VERTICAL_SHIFT_MIN = 0
+DEFAULT_VERTICAL_SHIFT_MAX = 0
+DEFAULT_SCALING_FACTOR_MIN = 1
+DEFAULT_SCALING_FACTOR_MAX = 1
 
 COL_SUBJECT = "subject"
 COL_SUBJECT_INDEX = "subject_index"
@@ -120,6 +124,10 @@ def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
 @click.option("--k-max", type=float, default=DEFAULT_K_MAX)
 @click.option("--x0-min", type=float, default=DEFAULT_X0_MIN)
 @click.option("--x0-max", type=float, default=DEFAULT_X0_MAX)
+@click.option("--vertical-shift-min", type=float, default=DEFAULT_VERTICAL_SHIFT_MIN)
+@click.option("--vertical-shift-max", type=float, default=DEFAULT_VERTICAL_SHIFT_MAX)
+@click.option("--scaling-factor-min", type=float, default=DEFAULT_SCALING_FACTOR_MIN)
+@click.option("--scaling-factor-max", type=float, default=DEFAULT_SCALING_FACTOR_MAX)
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
 def simulate_data(
     tag: str,
@@ -135,6 +143,10 @@ def simulate_data(
     k_max: float = DEFAULT_K_MAX,
     x0_min: float = DEFAULT_X0_MIN,
     x0_max: float = DEFAULT_X0_MAX,
+    vertical_shift_min: float = DEFAULT_VERTICAL_SHIFT_MIN,
+    vertical_shift_max: float = DEFAULT_VERTICAL_SHIFT_MAX,
+    scaling_factor_min: float = DEFAULT_SCALING_FACTOR_MIN,
+    scaling_factor_max: float = DEFAULT_SCALING_FACTOR_MAX,
     rng_seed: int = None,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
@@ -151,6 +163,12 @@ def simulate_data(
     rng = np.random.default_rng(rng_seed)
     k_values = rng.uniform(k_min, k_max, size=n_biomarkers)
     x0_values = rng.uniform(x0_min, x0_max, size=n_biomarkers)
+    vertical_shifts = rng.uniform(
+        vertical_shift_min, vertical_shift_max, size=n_biomarkers
+    )
+    scaling_factors = rng.uniform(
+        scaling_factor_min, scaling_factor_max, size=n_biomarkers
+    )
 
     timepoints_all = []
     biomarkers_all = []
@@ -174,6 +192,8 @@ def simulate_data(
             n_subjects=n_subjects,
             k_values=k_values,
             x0_values=x0_values,
+            vertical_shifts=vertical_shifts,
+            scaling_factors=scaling_factors,
             max_n_timepoints=n_max_timepoints,
             shift_time=shift_time,
             t0_min=t0_min,
@@ -201,6 +221,8 @@ def simulate_data(
         "time_shifts": time_shifts_all,
         "k_values": k_values,
         "x0_values": x0_values,
+        "vertical_shifts": vertical_shifts,
+        "scaling_factors": scaling_factors,
         "sigmas": sigma_all,
     }
     json_data["node_id_map"] = node_id_map

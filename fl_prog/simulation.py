@@ -43,8 +43,10 @@ def generate_timepoints(
 @check_rng
 def simulate_all_subjects(
     n_subjects: int,
-    k_values: Optional[Iterable[float]],
-    x0_values: Optional[Iterable[float]],
+    k_values: Iterable[float],
+    x0_values: Iterable[float],
+    vertical_shifts: Iterable[float],
+    scaling_factors: Iterable[float],
     max_n_timepoints: int = 3,
     shift_time: bool = False,
     t0_min: float = 0.0,
@@ -60,14 +62,17 @@ def simulate_all_subjects(
     Parameters
     ----------
     n_subjects : int
-    max_n_timepoints : int, optional
-    n_biomarkers : int, optional
-    shift_time : bool, optional
-        If True, shift timepoints so that the first timepoint for each subject is at 0.
     k_values : Iterable[np.ndarray]
-        Logistic function steepness parameters. Must have the same length as x0_values.
+        Logistic function steepness parameters.
     x0_values : Iterable[np.ndarray]
         Logistic function midpoint parameters. Must have the same length as k_values.
+    vertical_shifts : Iterable[np.ndarray]
+        Vertical shift parameters for each biomarker. Must have the same length as k_values.
+    scaling_factors : Iterable[np.ndarray]
+        Scaling factors for each biomarker. Must have the same length as k_values.
+    max_n_timepoints : int, optional
+    shift_time : bool, optional
+        If True, shift timepoints so that the first timepoint for each subject is at 0.
     t0_min : float, optional
         Minimum value for the first timepoint of each subject
     t0_max : float, optional
@@ -98,7 +103,9 @@ def simulate_all_subjects(
             n_timepoints, t0_min=t0_min, t0_max=t0_max, rng=rng
         )
 
-        biomarkers = multivariate_logistic(timepoints, k_values, x0_values)
+        biomarkers = multivariate_logistic(
+            timepoints, k_values, x0_values, vertical_shifts, scaling_factors
+        )
         biomarkers += rng.normal(0, sigma, size=biomarkers.shape)
 
         timepoints_all.append(timepoints)

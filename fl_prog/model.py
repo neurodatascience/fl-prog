@@ -4,12 +4,18 @@ import torch.nn as nn
 
 class LogisticRegressionModelWithShift(nn.Module):
     def __init__(
-        self, n_participants: int, n_features: int, with_shift=False, with_scaling=False
+        self,
+        n_participants: int,
+        n_features: int,
+        lambda_: float = 0,
+        with_shift=False,
+        with_scaling=False,
     ):
         super().__init__()
 
         self.n_participants = n_participants
         self.n_features = n_features
+        self.lambda_ = lambda_
         self.with_shift = with_shift
         self.with_scaling = with_scaling
 
@@ -57,5 +63,5 @@ class LogisticRegressionModelWithShift(nn.Module):
             (actual - predicted) ** 2 / (2 * sigma_sq)
             + 0.5 * torch.log(2 * torch.pi * sigma_sq)
         )
-        # loss += torch.mean(torch.abs(self.time_shifts))
+        loss += self.lambda_ * torch.sum(self.time_shifts**2)
         return loss

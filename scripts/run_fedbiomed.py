@@ -70,6 +70,7 @@ def _get_model_args(
         },
         "lr_with_shift": {
             "n_features": len(cols_biomarker),
+            "lambda_": 0.01,
         },
         "node_specific_args": {
             "n_participants": _get_n_participants_map(
@@ -125,6 +126,7 @@ def _run_experiment(
     with_tensorboard: bool = False,
     dpath_tensorboard: Path | None = None,
     save_training_replies: bool = False,
+    save_all_aggregated_params: bool = False,
 ):
 
     training_args = training_args.copy()
@@ -201,6 +203,9 @@ def _run_experiment(
     if save_training_replies:
         results["training_replies"] = experiment.training_replies()
 
+    if save_all_aggregated_params:
+        results["aggregated_params"] = experiment.aggregated_params()
+
     # move loss data (overwriting if needed)
     if with_tensorboard:
         dpath_tensorboard.mkdir(exist_ok=True)
@@ -254,6 +259,11 @@ def _run_experiment(
 @click.option(
     "--training-replies/--no-training-replies", "save_training_replies", default=False
 )
+@click.option(
+    "--aggregated-params/--no-aggregated-params",
+    "save_all_aggregated_params",
+    default=False,
+)
 @click.option("--random-seed", type=int, envvar="RNG_SEED")
 @click.option("--overwrite/--no-overwrite", default=False)
 def run_fedbiomed(
@@ -269,6 +279,7 @@ def run_fedbiomed(
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
     with_tensorboard: bool = False,
     save_training_replies: bool = False,
+    save_all_aggregated_params: bool = False,
     random_seed: Optional[int] = None,
     overwrite: bool = False,
 ):
@@ -336,6 +347,7 @@ def run_fedbiomed(
         with_tensorboard=with_tensorboard,
         dpath_tensorboard=dpath_tensorboard,
         save_training_replies=save_training_replies,
+        save_all_aggregated_params=save_all_aggregated_params,
     )
 
     json_data["results"]["federated"] = results_federated
@@ -353,6 +365,7 @@ def run_fedbiomed(
         with_tensorboard=with_tensorboard,
         dpath_tensorboard=dpath_tensorboard,
         save_training_replies=save_training_replies,
+        save_all_aggregated_params=save_all_aggregated_params,
     )
 
     json_data["results"]["centralized"] = results_centralized

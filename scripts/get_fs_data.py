@@ -2,7 +2,6 @@
 
 from pathlib import Path
 from typing import Optional
-from collections.abc import Iterable
 
 import click
 import numpy as np
@@ -16,30 +15,6 @@ from fl_prog.freesurfer import (
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
-DEFAULT_MEASURES = (
-    "entorhinal_thickness",
-    "middletemporal_thickness",
-    "inferiortemporal_thickness",
-    "inferiorparietal_thickness",
-    "superiortemporal_thickness",
-    # # area (hemispheres already merged)
-    # "entorhinal_area",
-    # "middletemporal_area",
-    # "parahippocampal_area",
-    # "inferiorparietal_area",
-    # "precuneus_area",
-    # # area (hemispheres not merged)
-    # "rh_parahippocampal_area",
-    # "lh_parahippocampal_area",
-    # "rh_entorhinal_area",
-    # "lh_entorhinal_area",
-    # "rh_middletemporal_area",
-    # "lh_middletemporal_area",
-    # "rh_inferiorparietal_area",
-    # "lh_inferiorparietal_area",
-    # "rh_precuneus_area",
-    # "lh_precuneus_area",
-)
 DEFAULT_MERGE_HEMISPHERES = True
 DEFAULT_N_SITES = 5
 DEFAULT_OUTLIER_THRESHOLD = 3.0
@@ -82,7 +57,6 @@ def get_fs_data(
     n_sites: int,
     dpath_data: Path,
     fpath_config: Path,
-    measures: Iterable[str] | None = DEFAULT_MEASURES,
     outlier_threshold: Optional[float] = DEFAULT_OUTLIER_THRESHOLD,
     preprocess: bool = DEFAULT_PREPROCESS,
     rng_seed: int = None,
@@ -99,6 +73,9 @@ def get_fs_data(
     col_subject_original = config["col_subject_original"]
     col_session_original = config["col_session_original"]
     session_timepoint_map = config["session_timepoint_map"]
+    measures = config["measures"]
+    max_time = config.get("max_time", None)
+    min_max_by_measure = config.get("min_max_by_measure", None)
 
     df_idp = get_df_idp(
         fpath_idps,
@@ -122,8 +99,19 @@ def get_fs_data(
 
         df_idp = _flip(df_idp, cols_biomarkers)
 
-    df_idp = df_idp.query(f"{COL_TIMEPOINT} < 120")
-    df_idp = _scale_min_max(df_idp, df_idp.min(), df_idp.max(), cols_biomarkers)
+    if max_time is not None:
+        df_idp = df_idp.query(f"{COL_TIMEPOINT} < {max_time}")
+
+    if min_max_by_measure is not None:
+        min_values = pd.DataFrame(
+            data=[x[0] for x in min_max_by_measure.values()],
+            index=min_max_by_measure.keys(),
+        ).squeeze()
+        max_values = pd.DataFrame(
+            data=[x[1] for x in min_max_by_measure.values()],
+            index=min_max_by_measure.keys(),
+        ).squeeze()
+        df_idp = _scale_min_max(df_idp, min_values, max_values, cols_biomarkers)
 
     participant_ids = sorted(
         df_idp.index.get_level_values(col_subject_original).unique().tolist()
@@ -200,7 +188,6 @@ def get_fs_data(
     required=True,
     envvar="ADNI_CONFIG_FILE",
 )
-@click.option("--measures", "-m", multiple=True, default=DEFAULT_MEASURES)
 @click.option(
     "--outlier",
     "-o",

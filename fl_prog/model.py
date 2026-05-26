@@ -7,17 +7,11 @@ import torch.nn.utils.parametrize as parametrize
 class Positive(nn.Module):
     """Constrain a parameter to be positive using the softplus function."""
 
-    # def forward(self, param):
-    #     return F.softplus(param)
-
-    # def right_inverse(self, constrained_param):
-    #     return constrained_param + torch.log(-torch.expm1(-constrained_param))
-
     def forward(self, param):
-        return torch.exp(param)
+        return F.softplus(param)
 
     def right_inverse(self, constrained_param):
-        return torch.log(constrained_param)
+        return constrained_param + torch.log(-torch.expm1(-constrained_param))
 
 
 class LogisticRegressionModelWithShift(nn.Module):

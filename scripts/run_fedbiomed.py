@@ -195,7 +195,7 @@ def _run_experiment(
         "estimated_vertical_shifts": vertical_shifts,
         "estimated_scaling_factors": scaling_factors,
         "estimated_sigma": fbm_model.get_sigma(
-            final_params["parametrizations.sigma_sq.original"]
+            final_params["parametrizations.sigma.original"]
         ).data.numpy(),
         "estimated_time_shifts": time_shifts,
     }

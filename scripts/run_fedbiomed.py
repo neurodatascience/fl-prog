@@ -179,23 +179,23 @@ def _run_experiment(
     if "vertical_shifts" in final_params:
         vertical_shifts = final_params["vertical_shifts"].data.numpy()
     else:
-        vertical_shifts = np.zeros_like(final_params["log_k_values"].data.numpy())
-    if "log_scaling_factors" in final_params:
+        vertical_shifts = np.zeros_like(final_params["x0_values"].data.numpy())
+    if "parametrizations.scaling_factors.original" in final_params:
         scaling_factors = fbm_model.get_scaling_factors(
-            final_params["log_scaling_factors"]
+            final_params["parametrizations.scaling_factors.original"]
         ).data.numpy()
     else:
-        scaling_factors = np.ones_like(final_params["log_k_values"].data.numpy())
+        scaling_factors = np.ones_like(final_params["x0_values"].data.numpy())
 
     results = {
         "estimated_k_values": fbm_model.get_k_values(
-            final_params["log_k_values"]
+            final_params["parametrizations.k_values.original"]
         ).data.numpy(),
         "estimated_x0_values": final_params["x0_values"].data.numpy(),
         "estimated_vertical_shifts": vertical_shifts,
         "estimated_scaling_factors": scaling_factors,
         "estimated_sigma": fbm_model.get_sigma(
-            final_params["log_sigma_sq"]
+            final_params["parametrizations.sigma_sq.original"]
         ).data.numpy(),
         "estimated_time_shifts": time_shifts,
     }

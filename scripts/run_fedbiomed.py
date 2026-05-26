@@ -2,7 +2,7 @@
 import json
 import shutil
 from pathlib import Path
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 import click
 import numpy as np
@@ -32,9 +32,11 @@ from fl_prog.utils.io import (
 )
 
 DEFAULT_N_ROUNDS = 10
-DEFAULT_N_UPDATES = 500
-DEFAULT_BATCH_SIZE = 100000
-DEFAULT_LEARNING_RATE = 1e-3
+DEFAULT_N_UPDATES = 100
+DEFAULT_BATCH_SIZE = 100000  # all data (no batching)
+DEFAULT_LEARNING_RATE = 0.1
+DEFAULT_LAMBDA = 1
+DEFAULT_EXPECTED_TIME_SHIFT_RANGE = (0.0, 0.0)
 DEFAULT_AGGREGATOR_NAME = "fedavg"
 
 VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
@@ -59,8 +61,10 @@ def _get_model_args(
     dpath_data: Path,
     col_subject_id: str,
     col_time: str,
-    cols_biomarker: Optional[Iterable[str]],
+    cols_biomarker: Iterable[str],
     node_id_map: dict[str, str],
+    lambda_: float = DEFAULT_LAMBDA,
+    estimated_time_shift_range: Iterable[float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
 ):
     return {
         "colnames": {
@@ -70,7 +74,8 @@ def _get_model_args(
         },
         "lr_with_shift": {
             "n_features": len(cols_biomarker),
-            "lambda_": 0.01,
+            "lambda_": lambda_,
+            "expected_time_shift_range": estimated_time_shift_range,
         },
         "node_specific_args": {
             "n_participants": _get_n_participants_map(
@@ -85,7 +90,7 @@ def _get_training_args(
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
-    random_seed: Optional[int] = None,
+    random_seed: int | None = None,
 ):
     training_args = {
         "num_updates": n_updates,
@@ -250,6 +255,21 @@ def _run_experiment(
     default=DEFAULT_LEARNING_RATE,
 )
 @click.option(
+    "--lambda",
+    "lambda_",
+    type=click.FloatRange(min=0),
+    default=DEFAULT_LAMBDA,
+    help="Regularization strength for time shifts",
+)
+@click.option(
+    "--time-shift-range",
+    "estimated_time_shift_range",
+    type=click.Tuple((float, float)),
+    nargs=2,
+    default=DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
+    help="Expected range of time shifts (for initialization and regularization)",
+)
+@click.option(
     "--aggregator",
     "aggregator_name",
     type=click.Choice(VALID_AGGREGATOR_NAMES),
@@ -276,11 +296,13 @@ def run_fedbiomed(
     n_updates: int = DEFAULT_N_UPDATES,
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
+    lambda_: float = DEFAULT_LAMBDA,
+    estimated_time_shift_range: tuple[float, float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
     with_tensorboard: bool = False,
     save_training_replies: bool = False,
     save_all_aggregated_params: bool = False,
-    random_seed: Optional[int] = None,
+    random_seed: int | None = None,
     overwrite: bool = False,
 ):
     dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
@@ -305,6 +327,8 @@ def run_fedbiomed(
             config["cols"]["col_timepoint"],
             config["cols"]["cols_biomarker"],
             node_id_map,
+            lambda_=lambda_,
+            estimated_time_shift_range=estimated_time_shift_range,
         )
     except KeyError:
         raise RuntimeError(

@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,38 +24,82 @@ class LogisticRegressionModelWithShift(nn.Module):
         "scaling_factors": Positive(),
     }
 
+    sigmoid_levels = torch.tensor([0.05, 0.95])  # for computing initial k_values
+    x0_init_std_fraction = (
+        0.1  # std of x0 initialization as a fraction of expected_time_shift_diff
+    )
+
     def __init__(
         self,
         n_participants: int,
         n_features: int,
-        lambda_: float = 0,
+        expected_time_shift_range: Iterable[float] = (0.0, 0.0),
+        lambda_: float = 1.0,
         with_shift=False,
         with_scaling=False,
     ):
         super().__init__()
 
+        if lambda_ < 0:
+            raise ValueError(f"lambda_ must be non-negative, got {lambda_}")
+
+        if len(expected_time_shift_range) != 2:
+            raise ValueError(
+                f"expected_time_shift_range must have length 2, got {len(expected_time_shift_range)}"
+            )
+
+        expected_time_shift_range = torch.tensor(
+            expected_time_shift_range, dtype=torch.float
+        )
+
+        # for initializing some parameters
+        expected_time_shift_middle = torch.mean(expected_time_shift_range)
+        expected_time_shift_diff = (
+            expected_time_shift_range[1] - expected_time_shift_range[0]
+        )
+        if expected_time_shift_diff != 0:
+            starting_k_value = (
+                2
+                * torch.log(self.sigmoid_levels[1] / self.sigmoid_levels[0])
+                / expected_time_shift_diff
+            )
+        else:
+            starting_k_value = torch.tensor(0.0)
+
         self.n_participants = n_participants
         self.n_features = n_features
+        self.expected_time_shift_range = expected_time_shift_range
         self.lambda_ = lambda_
         self.with_shift = with_shift
         self.with_scaling = with_scaling
 
         # slopes
-        self.k_values = nn.Parameter(self.get_k_values(torch.randn(self.n_features)))
-        # midpoints
-        self.x0_values = nn.Parameter(torch.randn(self.n_features))  # standard normal
+        self.k_values = nn.Parameter(torch.rand(self.n_features) + starting_k_value)
 
-        self.time_shifts = nn.Parameter(torch.zeros(self.n_participants))
-        self.sigma = nn.Parameter(torch.tensor(1.0))
+        # midpoints
+        self.x0_values = nn.Parameter(
+            torch.randn(self.n_features)
+            * (expected_time_shift_diff * self.x0_init_std_fraction)
+            + expected_time_shift_middle
+        )
+
+        self.time_shifts = nn.Parameter(
+            torch.randn(self.n_participants) + expected_time_shift_middle
+        )
+
+        self.sigma = nn.Parameter(torch.tensor(0.5))
 
         # does not work well
+        self.vertical_shifts = torch.zeros(self.n_features)
+        self.scaling_factors = torch.ones(self.n_features)
         if with_shift:
-            self.vertical_shifts = nn.Parameter(torch.zeros(self.n_features))
+            self.vertical_shifts = nn.Parameter(self.vertical_shifts)
         if with_scaling:
-            self.log_scaling_factors = nn.Parameter(torch.zeros(self.n_features))
+            self.scaling_factors = nn.Parameter(self.scaling_factors)
 
+        # constrain some parameters
         for param_name, parametrization in self.parametrization_dict.items():
-            if hasattr(self, param_name):
+            if isinstance(getattr(self, param_name), nn.Parameter):
                 parametrize.register_parametrization(self, param_name, parametrization)
 
     def get_k_values(self, unparametrized_k_values: torch.Tensor) -> torch.Tensor:
@@ -84,9 +130,18 @@ class LogisticRegressionModelWithShift(nn.Module):
 
     def get_loss(self, predicted, actual):
         sigma_sq = self.sigma**2
+
+        # negative Gaussian log-likelihood
         loss = torch.sum(
             (actual - predicted) ** 2 / (2 * sigma_sq)
             + 0.5 * torch.log(2 * torch.pi * sigma_sq)
         )
-        loss += self.lambda_ * torch.sum(self.time_shifts**2)
+
+        # penalize time shifts that are outside the expected range
+        # equivalent to L2 regularization if expected_time_shift_range is (0, 0)
+        loss += self.lambda_ * torch.sum(
+            (torch.relu(self.expected_time_shift_range[0] - self.time_shifts) ** 2)
+            + (torch.relu(self.time_shifts - self.expected_time_shift_range[1]) ** 2)
+        )
+
         return loss

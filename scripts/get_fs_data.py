@@ -100,7 +100,8 @@ def get_fs_data(
         df_idp = _flip(df_idp, cols_biomarkers)
 
     if max_time is not None:
-        df_idp = df_idp.query(f"{COL_TIMEPOINT} < {max_time}")
+        df_idp = df_idp.query(f"{COL_TIMEPOINT} <= {max_time}")
+        df_idp.loc[:, COL_TIMEPOINT] = df_idp[COL_TIMEPOINT] / max_time
 
     if min_max_by_measure is not None:
         min_values = pd.DataFrame(

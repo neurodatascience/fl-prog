@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 COL_SUBJECT = "participant_id_int"
-COL_TIMEPOINT = "months"
+COL_TIMEPOINT = "months_scaled"
 
 
 def _merge_hemispheres(df: pd.DataFrame) -> pd.DataFrame:

@@ -7,18 +7,11 @@ import click
 import numpy as np
 import pandas as pd
 
-from fl_prog.freesurfer import (
-    get_df_idp,
-    COL_SUBJECT,
-    COL_TIMEPOINT,
-)
+from fl_prog.freesurfer import get_df_idp, COL_SUBJECT, COL_TIMEPOINT
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
-DEFAULT_MERGE_HEMISPHERES = True
 DEFAULT_N_SITES = 5
-DEFAULT_OUTLIER_THRESHOLD = 3.0
-DEFAULT_PREPROCESS = True
 
 
 def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
@@ -27,25 +20,13 @@ def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
     return f"{tag}{suffix}"
 
 
-def _remove_outliers(df, threshold, measures, apply_z_score=False) -> pd.DataFrame:
-    means = df[measures].mean()
-    stds = df[measures].std()
-
-    df_measures_z_scored = (df[measures] - means) / stds
-
-    is_outlier = (df_measures_z_scored.abs() > threshold).any(axis="columns")
-    if apply_z_score:
-        df.loc[:, measures] = df_measures_z_scored
-
-    return df[~is_outlier]
-
-
 def _scale_min_max(df, min, max, measures) -> pd.DataFrame:
     df.loc[:, measures] = (df[measures] - min) / (max - min)
     return df
 
 
 def _flip(df, measures) -> pd.DataFrame:
+    """Flip 1->0 to 0->1."""
     df.loc[:, measures] = 1 - df[measures]
     return df
 
@@ -53,12 +34,9 @@ def _flip(df, measures) -> pd.DataFrame:
 def get_fs_data(
     tag: str,
     fpath_idps: Path,
-    merge_hemispheres: bool,
     n_sites: int,
     dpath_data: Path,
     fpath_config: Path,
-    outlier_threshold: Optional[float] = DEFAULT_OUTLIER_THRESHOLD,
-    preprocess: bool = DEFAULT_PREPROCESS,
     rng_seed: int = None,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
@@ -70,12 +48,14 @@ def get_fs_data(
 
     rng = np.random.default_rng(rng_seed)
 
-    col_subject_original = config["col_subject_original"]
-    col_session_original = config["col_session_original"]
-    session_timepoint_map = config["session_timepoint_map"]
-    measures = config["measures"]
-    max_time = config.get("max_time", None)
-    min_max_by_measure = config.get("min_max_by_measure", None)
+    merge_hemispheres: bool = config.get("merge_hemispheres", True)
+    col_subject_original: str = config["col_subject_original"]
+    col_session_original: str = config["col_session_original"]
+    session_timepoint_map: dict[str, float] = config["session_timepoint_map"]
+    measures: list[str] = config["measures"]
+    flip: bool = config.get("flip", False)
+    max_time: float = config.get("max_time", None)
+    min_max_by_measure: dict[list[float]] = config.get("min_max_by_measure", None)
 
     df_idp = get_df_idp(
         fpath_idps,
@@ -88,21 +68,6 @@ def get_fs_data(
 
     cols_biomarkers = list(set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT})
 
-    if preprocess:
-        df_idp = _remove_outliers(
-            df_idp, outlier_threshold, cols_biomarkers, apply_z_score=True
-        )
-
-        min_threshold = -outlier_threshold
-        max_threshold = outlier_threshold
-        df_idp = _scale_min_max(df_idp, min_threshold, max_threshold, cols_biomarkers)
-
-        df_idp = _flip(df_idp, cols_biomarkers)
-
-    if max_time is not None:
-        df_idp = df_idp.query(f"{COL_TIMEPOINT} <= {max_time}")
-        df_idp.loc[:, COL_TIMEPOINT] = df_idp[COL_TIMEPOINT] / max_time
-
     if min_max_by_measure is not None:
         min_values = pd.DataFrame(
             data=[x[0] for x in min_max_by_measure.values()],
@@ -113,6 +78,13 @@ def get_fs_data(
             index=min_max_by_measure.keys(),
         ).squeeze()
         df_idp = _scale_min_max(df_idp, min_values, max_values, cols_biomarkers)
+
+    if flip:
+        df_idp = _flip(df_idp, cols_biomarkers)
+
+    if max_time is not None:
+        df_idp = df_idp.query(f"{COL_TIMEPOINT} <= {max_time}")
+        df_idp.loc[:, COL_TIMEPOINT] = df_idp[COL_TIMEPOINT] / max_time
 
     participant_ids = sorted(
         df_idp.index.get_level_values(col_subject_original).unique().tolist()
@@ -169,12 +141,6 @@ def get_fs_data(
     required=True,
     envvar="ADNI_IDP_FILE",
 )
-@click.option(
-    "--merge-hemis/--no-merge-hemis",
-    "merge_hemispheres",
-    is_flag=True,
-    default=DEFAULT_MERGE_HEMISPHERES,
-)
 @click.option("--n-sites", "-n", type=int, default=DEFAULT_N_SITES)
 @click.option(
     "--data-dir",
@@ -189,14 +155,6 @@ def get_fs_data(
     required=True,
     envvar="ADNI_CONFIG_FILE",
 )
-@click.option(
-    "--outlier",
-    "-o",
-    "outlier_threshold",
-    type=click.FloatRange(min=0, min_open=True),
-    default=DEFAULT_OUTLIER_THRESHOLD,
-)
-@click.option("--preprocess/--no-preprocess", default=DEFAULT_PREPROCESS)
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
 def main(*args, **kwargs):
     get_fs_data(*args, **kwargs)

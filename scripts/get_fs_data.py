@@ -6,12 +6,14 @@ from typing import Optional
 import click
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import GroupKFold
 
 from fl_prog.freesurfer import get_df_idp, COL_SUBJECT, COL_TIMEPOINT
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
 DEFAULT_N_SITES = 5
+DEFAULT_IID = True
 
 
 def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
@@ -31,12 +33,35 @@ def _flip(df, measures) -> pd.DataFrame:
     return df
 
 
+def _split_participants_into_sites(
+    participant_ids: list, n_sites: int, site_map: dict | None = None
+) -> list[np.ndarray]:
+    if site_map is None:
+        site_map = {
+            participant_id: i for i, participant_id in enumerate(participant_ids)
+        }
+
+    participant_ids = np.array(participant_ids)
+
+    splitter = GroupKFold(n_splits=n_sites)
+    participant_ids_split = []
+    for _, idx_test in splitter.split(
+        participant_ids,
+        groups=[site_map[participant_id] for participant_id in participant_ids],
+    ):
+        participant_ids_split.append(participant_ids[idx_test])
+
+    return participant_ids_split
+
+
 def get_fs_data(
     tag: str,
     fpath_idps: Path,
     n_sites: int,
     dpath_data: Path,
     fpath_config: Path,
+    fpath_adni_merge: Path | None = None,
+    iid: bool = DEFAULT_IID,
     rng_seed: int = None,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
@@ -65,6 +90,19 @@ def get_fs_data(
         session_timepoint_map,
         measures,
     )
+    if not iid:
+        if fpath_adni_merge is None:
+            raise ValueError(
+                "fpath_adni_merge must be provided if requesting non-IID split"
+            )
+        df_adnimerge = pd.read_csv(fpath_adni_merge, dtype={"RID": str, "SITE": str})
+        site_map = (
+            df_adnimerge.drop_duplicates(["RID", "SITE"])
+            .set_index("RID")["SITE"]
+            .to_dict()
+        )
+    else:
+        site_map = None
 
     cols_biomarkers = list(set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT})
 
@@ -94,7 +132,7 @@ def get_fs_data(
     node_id_map = {}
     subjects_by_node = {}
     for i_site, site_participant_ids in enumerate(
-        np.array_split(participant_ids, n_sites),
+        _split_participants_into_sites(participant_ids, n_sites, site_map=site_map),
         start=1,
     ):
         node_id = str(i_site)
@@ -142,6 +180,7 @@ def get_fs_data(
     envvar="ADNI_IDP_FILE",
 )
 @click.option("--n-sites", "-n", type=int, default=DEFAULT_N_SITES)
+@click.option("--iid/--non-iid", default=DEFAULT_IID)
 @click.option(
     "--data-dir",
     "dpath_data",
@@ -154,6 +193,12 @@ def get_fs_data(
     type=click.Path(path_type=Path, file_okay=True, dir_okay=False),
     required=True,
     envvar="ADNI_CONFIG_FILE",
+)
+@click.option(
+    "--adni-merge",
+    "fpath_adni_merge",
+    type=click.Path(path_type=Path, file_okay=True, dir_okay=False),
+    envvar="ADNI_MERGE_FILE",
 )
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
 def main(*args, **kwargs):

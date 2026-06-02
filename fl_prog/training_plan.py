@@ -67,16 +67,17 @@ class FLProgTrainingPlan(TorchTrainingPlan):
         return deps
 
     def init_optimizer(self, optimizer_args: dict) -> optim.Optimizer:
+        learning_rate = optimizer_args.get("lr", 0.01)
         if optimizer_args.get("aggregator_name") == "scaffold":
             optimizer = Optimizer(
-                lr=optimizer_args.get("lr", 0.01),
+                lr=learning_rate,
                 modules=[AdamModule(), ScaffoldClientModule()],
                 regularizers=[RidgeRegularizer()],
             )
         else:
             optimizer = optim.Adam(
                 list(self.model().parameters()),
-                lr=optimizer_args.get("lr", 0.01),
+                lr=learning_rate,
             )
         return optimizer
 

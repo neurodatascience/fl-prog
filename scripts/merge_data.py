@@ -38,7 +38,9 @@ def merge_data(dpath_data, tag):
         for fpath in sorted(dpath_out.glob(f"{tag}*.tsv"))
         if fpath.name != fname_merged
     ]
-    dfs = [pd.read_csv(fpath, sep="\t") for fpath in fpaths_tsv]
+    dfs = [
+        pd.read_csv(fpath, sep="\t", dtype={col_subject: str}) for fpath in fpaths_tsv
+    ]
     df = pd.concat(dfs)
 
     subjects = df[col_subject].unique().tolist()

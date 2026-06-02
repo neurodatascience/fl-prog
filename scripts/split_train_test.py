@@ -16,7 +16,7 @@ def split_train_test(
     dpath_data: Path,
     min_n_timepoints: int = DEFAULT_MIN_N_TIMEPOINTS,
 ):
-    new_tag = f"{tag}-train"
+    new_tag = f"{tag}_train"
     dpath_out_old = get_dpath_latest(dpath_data) / tag
     fpath_json_old = dpath_out_old / f"{tag}.json"
     dpath_out_new = get_dpath_latest(dpath_data, use_today=True) / new_tag
@@ -28,6 +28,9 @@ def split_train_test(
     node_id_map_old = json_data_old["node_id_map"]
     col_subject = json_data_old["cols"]["col_subject"]
     col_timepoint = json_data_old["cols"]["col_timepoint"]
+    col_subject_index = json_data_old["cols"]["col_subject_index"]
+    config_old = json_data_old["settings"]["config"]
+    settings["config"] = config_old
 
     dfs_test = []
     node_id_map_new = {}
@@ -43,7 +46,8 @@ def split_train_test(
         df_site = pd.read_csv(fpath_site, sep="\t", dtype={col_subject: str})
 
         dfs_train = []
-        for subject, df_subject in df_site.groupby(col_subject):
+        subjects = []
+        for subject, df_subject in df_site.groupby(col_subject, sort=False):
 
             if len(df_subject) >= min_n_timepoints:
                 df_subject = df_subject.sort_values(col_timepoint, ascending=True)
@@ -52,9 +56,13 @@ def split_train_test(
             else:
                 dfs_train.append(df_subject)
 
-            subjects_by_node[node_id].append(subject)
+            subjects.append(subject)
 
+        subjects_by_node[node_id] = subjects
         df_train = pd.concat(dfs_train)
+        df_train[col_subject_index] = df_train[col_subject].map(
+            lambda x: subjects.index(x)
+        )
 
         fname_site_new = fname_site.replace(tag, new_tag)
         node_id_map_new[fname_site_new] = node_id_map_old[fname_site]

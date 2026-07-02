@@ -25,9 +25,8 @@ FEDERATION_ARGS=$3
 SCRIPTS_DIR=`dirname "$0"`
 
 echo "===== ${TAG} ====="
-run_command "${SCRIPTS_DIR}/simulate_data.py --tag ${TAG} $SIMULATION_ARGS"
+run_command "${SCRIPTS_DIR}/get_fs_data.py --tag ${TAG} $SIMULATION_ARGS"
 run_command "${SCRIPTS_DIR}/merge_data.py --tag ${TAG}"
 run_command "${SCRIPTS_DIR}/add_datasets_to_nodes.py --tag ${TAG}"
 run_command "${SCRIPTS_DIR}/run_fedbiomed.py --tag ${TAG} $FEDERATION_ARGS"
-
-
+run_command "${SCRIPTS_DIR}/get_metrics.py --tag ${TAG}"

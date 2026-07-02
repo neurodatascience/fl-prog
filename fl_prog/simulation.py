@@ -48,6 +48,8 @@ def simulate_all_subjects(
     vertical_shifts: Iterable[float],
     scaling_factors: Iterable[float],
     max_n_timepoints: int = 3,
+    n_timepoints_distribution: dict[str | int, float] | None = None,
+    time_at_timepoint: list[float] | None = None,
     shift_time: bool = False,
     t0_min: float = 0.0,
     t0_max: float = 1.0,
@@ -71,6 +73,11 @@ def simulate_all_subjects(
     scaling_factors : Iterable[np.ndarray]
         Scaling factors for each biomarker. Must have the same length as k_values.
     max_n_timepoints : int, optional
+        Maximum number of timepoints for each subject. Ignored if n_timepoints_distribution and time_at_timepoint are provided.
+    n_timepoints_distribution : dict[str | int, float] | None, optional
+        A dictionary specifying the distribution of the number of timepoints per subject. time_at_timepoint must also be provided.
+    time_at_timepoint : list[float] | None, optional
+        A list of time values corresponding to each timepoint index. n_timepoints_distribution must also be provided.
     shift_time : bool, optional
         If True, shift timepoints so that the first timepoint for each subject is at 0.
     t0_min : float, optional
@@ -95,13 +102,34 @@ def simulate_all_subjects(
             f"Got {len(k_values)} and {len(x0_values)}."
         )
 
+    if (n_timepoints_distribution is not None and time_at_timepoint is None) or (
+        n_timepoints_distribution is None and time_at_timepoint is not None
+    ):
+        raise ValueError(
+            "n_timepoints_distribution and time_at_timepoint must both be provided."
+        )
     timepoints_all = []
     biomarkers_all = []
     for _ in range(n_subjects):
-        n_timepoints = rng.integers(1, max_n_timepoints + 1)
-        timepoints = generate_timepoints(
-            n_timepoints, t0_min=t0_min, t0_max=t0_max, rng=rng
-        )
+        if n_timepoints_distribution is not None:
+            n_timepoints = int(
+                rng.choice(
+                    list(n_timepoints_distribution.keys()),
+                    p=(
+                        np.asarray(
+                            list(n_timepoints_distribution.values()), dtype=float
+                        )
+                        / sum(n_timepoints_distribution.values())
+                    ),
+                )
+            )
+            t0_for_subject = rng.uniform(t0_min, t0_max)
+            timepoints = np.array(time_at_timepoint)[:n_timepoints] + t0_for_subject
+        else:
+            n_timepoints = rng.integers(1, max_n_timepoints + 1)
+            timepoints = generate_timepoints(
+                n_timepoints, t0_min=t0_min, t0_max=t0_max, rng=rng
+            )
 
         biomarkers = multivariate_logistic(
             timepoints, k_values, x0_values, vertical_shifts, scaling_factors

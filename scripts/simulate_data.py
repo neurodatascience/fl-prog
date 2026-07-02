@@ -9,7 +9,7 @@ import pandas as pd
 
 from fl_prog.simulation import simulate_all_subjects
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import save_json, get_dpath_latest, DEFAULT_DPATH_DATA
+from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
 DEFAULT_N_BIOMARKERS = 5
 DEFAULT_SHIFT_TIME = True
@@ -81,57 +81,10 @@ def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
     return f"{tag}{suffix}"
 
 
-@click.command(context_settings=CLICK_CONTEXT_SETTINGS)
-@click.option("--tag", type=str, required=True)
-@click.option(
-    "--data-dir",
-    "dpath_data",
-    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    default=DEFAULT_DPATH_DATA,
-)
-@click.option(
-    "--n-biomarkers", type=click.IntRange(min=1), default=DEFAULT_N_BIOMARKERS
-)
-@click.option("--shift-time/--no-shift-time", default=DEFAULT_SHIFT_TIME)
-@click.option(
-    "--n-subjects",
-    "n_subjects_all",
-    type=click.IntRange(min=1),
-    multiple=True,
-    default=DEFAULT_N_SUBJECTS_ALL,
-)
-@click.option(
-    "--n-max-timepoints",
-    "n_max_timepoints_all",
-    type=click.IntRange(min=1),
-    multiple=True,
-    default=DEFAULT_N_MAX_TIMEPOINTS_ALL,
-)
-@click.option(
-    "--t0-min", "t0_min_all", type=float, multiple=True, default=DEFAULT_T0_MIN_ALL
-)
-@click.option(
-    "--t0-max", "t0_max_all", type=float, multiple=True, default=DEFAULT_T0_MAX_ALL
-)
-@click.option(
-    "--sigma",
-    "sigma_all",
-    type=click.FloatRange(min=0, min_open=True),
-    multiple=True,
-    default=DEFAULT_SIGMA_ALL,
-)
-@click.option("--k-min", type=float, default=DEFAULT_K_MIN)
-@click.option("--k-max", type=float, default=DEFAULT_K_MAX)
-@click.option("--x0-min", type=float, default=DEFAULT_X0_MIN)
-@click.option("--x0-max", type=float, default=DEFAULT_X0_MAX)
-@click.option("--vertical-shift-min", type=float, default=DEFAULT_VERTICAL_SHIFT_MIN)
-@click.option("--vertical-shift-max", type=float, default=DEFAULT_VERTICAL_SHIFT_MAX)
-@click.option("--scaling-factor-min", type=float, default=DEFAULT_SCALING_FACTOR_MIN)
-@click.option("--scaling-factor-max", type=float, default=DEFAULT_SCALING_FACTOR_MAX)
-@click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
 def simulate_data(
     tag: str,
     dpath_data: Path,
+    fpath_config: Path | None = None,
     n_biomarkers: int = DEFAULT_N_BIOMARKERS,
     shift_time: bool = DEFAULT_SHIFT_TIME,
     n_subjects_all: int = DEFAULT_N_SUBJECTS_ALL,
@@ -159,6 +112,15 @@ def simulate_data(
     )
 
     json_data = {"settings": locals()}
+
+    if fpath_config is not None:
+        print(f"Loading config from {fpath_config}")
+        config = load_json(fpath_config)
+    else:
+        config = {}
+
+    n_timepoints_distribution = config.get("n_timepoints_distribution", None)
+    time_at_timepoint = config.get("time_at_timepoint", None)
 
     rng = np.random.default_rng(rng_seed)
     k_values = rng.uniform(k_min, k_max, size=n_biomarkers)
@@ -195,6 +157,8 @@ def simulate_data(
             vertical_shifts=vertical_shifts,
             scaling_factors=scaling_factors,
             max_n_timepoints=n_max_timepoints,
+            n_timepoints_distribution=n_timepoints_distribution,
+            time_at_timepoint=time_at_timepoint,
             shift_time=shift_time,
             t0_min=t0_min,
             t0_max=t0_max,
@@ -242,5 +206,63 @@ def simulate_data(
     print(f"Saved simulation settings, parameters and node ID map to {fpath_json}")
 
 
+@click.command(context_settings=CLICK_CONTEXT_SETTINGS)
+@click.option("--tag", type=str, required=True)
+@click.option(
+    "--data-dir",
+    "dpath_data",
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+    default=DEFAULT_DPATH_DATA,
+)
+@click.option(
+    "--config",
+    "fpath_config",
+    type=click.Path(path_type=Path, file_okay=True, dir_okay=False),
+    envvar="SIMULATION_CONFIG_FILE",
+)
+@click.option(
+    "--n-biomarkers", type=click.IntRange(min=1), default=DEFAULT_N_BIOMARKERS
+)
+@click.option("--shift-time/--no-shift-time", default=DEFAULT_SHIFT_TIME)
+@click.option(
+    "--n-subjects",
+    "n_subjects_all",
+    type=click.IntRange(min=1),
+    multiple=True,
+    default=DEFAULT_N_SUBJECTS_ALL,
+)
+@click.option(
+    "--n-max-timepoints",
+    "n_max_timepoints_all",
+    type=click.IntRange(min=1),
+    multiple=True,
+    default=DEFAULT_N_MAX_TIMEPOINTS_ALL,
+)
+@click.option(
+    "--t0-min", "t0_min_all", type=float, multiple=True, default=DEFAULT_T0_MIN_ALL
+)
+@click.option(
+    "--t0-max", "t0_max_all", type=float, multiple=True, default=DEFAULT_T0_MAX_ALL
+)
+@click.option(
+    "--sigma",
+    "sigma_all",
+    type=click.FloatRange(min=0, min_open=True),
+    multiple=True,
+    default=DEFAULT_SIGMA_ALL,
+)
+@click.option("--k-min", type=float, default=DEFAULT_K_MIN)
+@click.option("--k-max", type=float, default=DEFAULT_K_MAX)
+@click.option("--x0-min", type=float, default=DEFAULT_X0_MIN)
+@click.option("--x0-max", type=float, default=DEFAULT_X0_MAX)
+@click.option("--vertical-shift-min", type=float, default=DEFAULT_VERTICAL_SHIFT_MIN)
+@click.option("--vertical-shift-max", type=float, default=DEFAULT_VERTICAL_SHIFT_MAX)
+@click.option("--scaling-factor-min", type=float, default=DEFAULT_SCALING_FACTOR_MIN)
+@click.option("--scaling-factor-max", type=float, default=DEFAULT_SCALING_FACTOR_MAX)
+@click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
+def main(**params):
+    simulate_data(**params)
+
+
 if __name__ == "__main__":
-    simulate_data()
+    main()

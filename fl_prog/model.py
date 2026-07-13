@@ -102,18 +102,21 @@ class LogisticRegressionModelWithShift(nn.Module):
             if isinstance(getattr(self, param_name), nn.Parameter):
                 parametrize.register_parametrization(self, param_name, parametrization)
 
-    def get_k_values(self, unparametrized_k_values: torch.Tensor) -> torch.Tensor:
-        return self.parametrization_dict["k_values"](unparametrized_k_values)
+    @classmethod
+    def get_k_values(cls, unparametrized_k_values: torch.Tensor) -> torch.Tensor:
+        return cls.parametrization_dict["k_values"](unparametrized_k_values)
 
+    @classmethod
     def get_scaling_factors(
-        self, unparametrized_scaling_factors: torch.Tensor
+        cls, unparametrized_scaling_factors: torch.Tensor
     ) -> torch.Tensor:
-        return self.parametrization_dict["scaling_factors"](
+        return cls.parametrization_dict["scaling_factors"](
             unparametrized_scaling_factors
         )
 
-    def get_sigma(self, unparametrized_sigma: torch.Tensor) -> torch.Tensor:
-        return self.parametrization_dict["sigma"](unparametrized_sigma)
+    @classmethod
+    def get_sigma(cls, unparametrized_sigma: torch.Tensor) -> torch.Tensor:
+        return cls.parametrization_dict["sigma"](unparametrized_sigma)
 
     def forward(self, t: torch.Tensor, participant_ids: torch.Tensor):
         shift = self.time_shifts[participant_ids.to(torch.long)].squeeze(-1)

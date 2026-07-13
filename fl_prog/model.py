@@ -87,7 +87,7 @@ class LogisticRegressionModelWithShift(nn.Module):
             torch.randn(self.n_participants) + expected_time_shift_middle
         )
 
-        self.sigma = nn.Parameter(torch.tensor(0.5))
+        self.sigma = nn.Parameter(torch.ones(self.n_features) * 0.5)
 
         # does not work well
         self.vertical_shifts = torch.zeros(self.n_features)

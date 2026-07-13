@@ -47,13 +47,13 @@ def simulate_all_subjects(
     x0_values: Iterable[float],
     vertical_shifts: Iterable[float],
     scaling_factors: Iterable[float],
+    sigmas: Iterable[float],
     max_n_timepoints: int = 3,
     n_timepoints_distribution: dict[str | int, float] | None = None,
     time_at_timepoint: list[float] | None = None,
     shift_time: bool = False,
     t0_min: float = 0.0,
     t0_max: float = 1.0,
-    sigma: float = 0.1,
     rng: Optional[np.random.Generator] = None,
 ) -> Tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
     """Simulate timepoints and biomarkers for all subjects.
@@ -64,14 +64,16 @@ def simulate_all_subjects(
     Parameters
     ----------
     n_subjects : int
-    k_values : Iterable[np.ndarray]
+    k_values : Iterable[float]
         Logistic function steepness parameters.
-    x0_values : Iterable[np.ndarray]
+    x0_values : Iterable[float]
         Logistic function midpoint parameters. Must have the same length as k_values.
-    vertical_shifts : Iterable[np.ndarray]
+    vertical_shifts : Iterable[float]
         Vertical shift parameters for each biomarker. Must have the same length as k_values.
-    scaling_factors : Iterable[np.ndarray]
+    scaling_factors : Iterable[float]
         Scaling factors for each biomarker. Must have the same length as k_values.
+    sigmas : Iterable[float]
+        Standard deviations for Gaussian noise added to biomarkers
     max_n_timepoints : int, optional
         Maximum number of timepoints for each subject. Ignored if n_timepoints_distribution and time_at_timepoint are provided.
     n_timepoints_distribution : dict[str | int, float] | None, optional
@@ -84,8 +86,6 @@ def simulate_all_subjects(
         Minimum value for the first timepoint of each subject
     t0_max : float, optional
         Maximum value for the first timepoint of each subject
-    sigma : float, optional
-        Standard deviation for Gaussian noise added to biomarkers
     rng : Optional[np.random.Generator], optional
 
     Returns
@@ -96,10 +96,16 @@ def simulate_all_subjects(
                     n_biomarkers),
         Time shift values: (n_subjects,)
     """
-    if len(k_values) != len(x0_values):
+    if (
+        len(k_values) != len(x0_values)
+        or len(k_values) != len(vertical_shifts)
+        or len(k_values) != len(scaling_factors)
+        or len(k_values) != len(sigmas)
+    ):
         raise ValueError(
-            "k_values and x0_values must have the same length. "
-            f"Got {len(k_values)} and {len(x0_values)}."
+            "k_values, x0_values, vertical_shifts, scaling_factors, and sigmas must "
+            f"have the same length. Got {len(k_values)}, {len(x0_values)}, "
+            f"{len(vertical_shifts)}, {len(scaling_factors)}, and {len(sigmas)}."
         )
 
     if (n_timepoints_distribution is not None and time_at_timepoint is None) or (
@@ -108,6 +114,7 @@ def simulate_all_subjects(
         raise ValueError(
             "n_timepoints_distribution and time_at_timepoint must both be provided."
         )
+
     timepoints_all = []
     biomarkers_all = []
     for _ in range(n_subjects):
@@ -134,7 +141,8 @@ def simulate_all_subjects(
         biomarkers = multivariate_logistic(
             timepoints, k_values, x0_values, vertical_shifts, scaling_factors
         )
-        biomarkers += rng.normal(0, sigma, size=biomarkers.shape)
+        for i_biomarker, sigma in enumerate(sigmas):
+            biomarkers[:, i_biomarker] += rng.normal(0, sigma, size=biomarkers.shape[0])
 
         timepoints_all.append(timepoints)
         biomarkers_all.append(biomarkers)

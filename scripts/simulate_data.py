@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Optional
 
@@ -47,10 +48,7 @@ def _process_list_args(*list_args):
             list_args[i] = list_arg * max_list_length
 
     if len(set(_get_list_lengths(list_args))) != 1:
-        raise ValueError(
-            "Arguments --n-subjects, --n-max-timepoints, --t0-min, --t0-max, and "
-            f"--sigma must have the same number of values. Got {initial_list_lengths}."
-        )
+        raise ValueError("List length mismatch: " + str(initial_list_lengths))
 
     return list_args
 
@@ -87,11 +85,11 @@ def simulate_data(
     fpath_config: Path | None = None,
     n_biomarkers: int = DEFAULT_N_BIOMARKERS,
     shift_time: bool = DEFAULT_SHIFT_TIME,
-    n_subjects_all: int = DEFAULT_N_SUBJECTS_ALL,
-    n_max_timepoints_all: int = DEFAULT_N_MAX_TIMEPOINTS_ALL,
-    t0_min_all: float = DEFAULT_T0_MIN_ALL,
-    t0_max_all: float = DEFAULT_T0_MAX_ALL,
-    sigma_all: float = DEFAULT_SIGMA_ALL,
+    n_subjects_all: Iterable[int] = DEFAULT_N_SUBJECTS_ALL,
+    n_max_timepoints_all: Iterable[int] = DEFAULT_N_MAX_TIMEPOINTS_ALL,
+    t0_min_all: Iterable[float] = DEFAULT_T0_MIN_ALL,
+    t0_max_all: Iterable[float] = DEFAULT_T0_MAX_ALL,
+    sigma_all: Iterable[float] = DEFAULT_SIGMA_ALL,
     k_min: float = DEFAULT_K_MIN,
     k_max: float = DEFAULT_K_MAX,
     x0_min: float = DEFAULT_X0_MIN,
@@ -105,11 +103,25 @@ def simulate_data(
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
     dpath_out.mkdir(parents=True, exist_ok=True)
 
-    n_subjects_all, n_max_timepoints_all, t0_min_all, t0_max_all, sigma_all = (
-        _process_list_args(
-            n_subjects_all, n_max_timepoints_all, t0_min_all, t0_max_all, sigma_all
+    try:
+        n_subjects_all, n_max_timepoints_all, t0_min_all, t0_max_all = (
+            _process_list_args(
+                n_subjects_all, n_max_timepoints_all, t0_min_all, t0_max_all
+            )
         )
-    )
+    except ValueError as exception:
+        raise ValueError(
+            "Arguments --n-subjects, --n-max-timepoints, --t0-min, and --t0-max "
+            f"must have the same number of values: {exception}."
+        ) from exception
+
+    if len(sigma_all) == 1:
+        sigma_all = sigma_all * n_biomarkers
+    if len(sigma_all) != n_biomarkers:
+        raise ValueError(
+            "Argument --sigma must have either 1 value or the same number of values "
+            f"as --n-biomarkers ({n_biomarkers}), got {len(sigma_all)}."
+        )
 
     json_data = {"settings": locals()}
 
@@ -139,13 +151,12 @@ def simulate_data(
     n_subjects_so_far = 0
     node_id_map = {}
     subjects_by_node = {}
-    for i_dataset, (n_subjects, n_max_timepoints, t0_min, t0_max, sigma) in enumerate(
+    for i_dataset, (n_subjects, n_max_timepoints, t0_min, t0_max) in enumerate(
         zip(
             n_subjects_all,
             n_max_timepoints_all,
             t0_min_all,
             t0_max_all,
-            sigma_all,
             strict=True,
         )
     ):
@@ -156,13 +167,13 @@ def simulate_data(
             x0_values=x0_values,
             vertical_shifts=vertical_shifts,
             scaling_factors=scaling_factors,
+            sigmas=sigma_all,
             max_n_timepoints=n_max_timepoints,
             n_timepoints_distribution=n_timepoints_distribution,
             time_at_timepoint=time_at_timepoint,
             shift_time=shift_time,
             t0_min=t0_min,
             t0_max=t0_max,
-            sigma=sigma,
             rng=rng,
         )
         timepoints_all.append(timepoints)

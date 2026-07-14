@@ -50,7 +50,7 @@ class FLProgTrainingPlan(TorchTrainingPlan):
 
     def tag_parameters(self, name):
         tags = set()
-        if name == "time_shifts":
+        if name in ("time_shifts", "parametrizations.acceleration_factors.original"):
             tags.update({"local", "persistent"})
         return tags
 

@@ -54,6 +54,8 @@ def simulate_all_subjects(
     shift_time: bool = False,
     t0_min: float = 0.0,
     t0_max: float = 1.0,
+    acceleration_factor_min: float = 1.0,
+    acceleration_factor_max: float = 1.0,
     rng: Optional[np.random.Generator] = None,
 ) -> Tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
     """Simulate timepoints and biomarkers for all subjects.
@@ -73,7 +75,7 @@ def simulate_all_subjects(
     scaling_factors : Iterable[float]
         Scaling factors for each biomarker. Must have the same length as k_values.
     sigmas : Iterable[float]
-        Standard deviations for Gaussian noise added to biomarkers
+        Standard deviations for Gaussian noise added to biomarkers. Must have the same length as k_values.
     max_n_timepoints : int, optional
         Maximum number of timepoints for each subject. Ignored if n_timepoints_distribution and time_at_timepoint are provided.
     n_timepoints_distribution : dict[str | int, float] | None, optional
@@ -83,9 +85,13 @@ def simulate_all_subjects(
     shift_time : bool, optional
         If True, shift timepoints so that the first timepoint for each subject is at 0.
     t0_min : float, optional
-        Minimum value for the first timepoint of each subject
+        Minimum value for the first timepoint of each subject.
     t0_max : float, optional
-        Maximum value for the first timepoint of each subject
+        Maximum value for the first timepoint of each subject.
+    acceleration_factor_min : float, optional
+        Minimum value for the acceleration factor of each subject.
+    acceleration_factor_max : float, optional
+        Maximum value for the acceleration factor of each bsubject.
     rng : Optional[np.random.Generator], optional
 
     Returns
@@ -117,7 +123,11 @@ def simulate_all_subjects(
 
     timepoints_all = []
     biomarkers_all = []
+    acceleration_factors = []
     for _ in range(n_subjects):
+        acceleration_factor = rng.uniform(
+            acceleration_factor_min, acceleration_factor_max
+        )
         if n_timepoints_distribution is not None:
             n_timepoints = int(
                 rng.choice(
@@ -139,13 +149,18 @@ def simulate_all_subjects(
             )
 
         biomarkers = multivariate_logistic(
-            timepoints, k_values, x0_values, vertical_shifts, scaling_factors
+            timepoints * acceleration_factor,
+            k_values,
+            x0_values,
+            vertical_shifts,
+            scaling_factors,
         )
         for i_biomarker, sigma in enumerate(sigmas):
             biomarkers[:, i_biomarker] += rng.normal(0, sigma, size=biomarkers.shape[0])
 
         timepoints_all.append(timepoints)
         biomarkers_all.append(biomarkers)
+        acceleration_factors.append(acceleration_factor)
 
     if shift_time:
         # shift timepoints so that the first timepoint is at 0
@@ -154,4 +169,9 @@ def simulate_all_subjects(
     else:
         time_shifts = [0.0] * n_subjects
 
-    return (timepoints_all, biomarkers_all, np.array(time_shifts))
+    return (
+        timepoints_all,
+        biomarkers_all,
+        np.array(time_shifts),
+        np.array(acceleration_factors),
+    )

@@ -76,6 +76,7 @@ def _get_model_args(
             "n_features": len(cols_biomarker),
             "lambda_": lambda_,
             "expected_time_shift_range": estimated_time_shift_range,
+            # "with_acceleration": True,
         },
         "node_specific_args": {
             "n_participants": _get_n_participants_map(
@@ -163,8 +164,9 @@ def _run_experiment(
         "params"
     ]
 
-    # get node-side time shift values
+    # get node-side time shift and acceleration factorvalues
     time_shifts = {}
+    acceleration_factors = {}
     for node in nodes:
         node_state_file = experiment._node_state_agent.get_last_node_states()[node]
 
@@ -176,10 +178,17 @@ def _run_experiment(
             / f"experiment_id_{experiment.id}"
             / f"persistent_model_weights_{experiment.round_current() - 1}_{node_state_file}"
         )
-        print(f"Loading time shifts for node {node} from {fpath_persistent_params}")
+        print(f"Loading local params for node {node} from {fpath_persistent_params}")
 
         final_local_persistent = Serializer.load(fpath_persistent_params)
         time_shifts[node] = final_local_persistent["time_shifts"].data.numpy()
+
+        if "parametrizations.acceleration_factors.original" in final_local_persistent:
+            acceleration_factors[node] = fbm_model.get_acceleration_factors(
+                final_local_persistent["parametrizations.acceleration_factors.original"]
+            ).data.numpy()
+        else:
+            acceleration_factors[node] = np.ones_like(time_shifts[node])
 
     if "vertical_shifts" in final_params:
         vertical_shifts = final_params["vertical_shifts"].data.numpy()
@@ -203,6 +212,7 @@ def _run_experiment(
             final_params["parametrizations.sigma.original"]
         ).data.numpy(),
         "estimated_time_shifts": time_shifts,
+        "estimated_acceleration_factors": acceleration_factors,
     }
 
     if save_training_replies:

@@ -22,6 +22,7 @@ class LogisticRegressionModelWithShift(nn.Module):
         "k_values": Positive(),
         "sigma": Positive(),
         "scaling_factors": Positive(),
+        "acceleration_factors": Positive(),
     }
 
     sigmoid_levels = torch.tensor([0.05, 0.95])  # for computing initial k_values
@@ -35,6 +36,7 @@ class LogisticRegressionModelWithShift(nn.Module):
         n_features: int,
         expected_time_shift_range: Iterable[float] = (0.0, 0.0),
         lambda_: float = 1.0,
+        with_acceleration=False,
         with_shift=False,
         with_scaling=False,
     ):
@@ -70,6 +72,7 @@ class LogisticRegressionModelWithShift(nn.Module):
         self.n_features = n_features
         self.expected_time_shift_range = expected_time_shift_range
         self.lambda_ = lambda_
+        self.with_acceleration = with_acceleration
         self.with_shift = with_shift
         self.with_scaling = with_scaling
 
@@ -89,13 +92,16 @@ class LogisticRegressionModelWithShift(nn.Module):
 
         self.sigma = nn.Parameter(torch.ones(self.n_features) * 0.5)
 
-        # does not work well
+        # combining vertical_shifts and scaling_factors does not work well
         self.vertical_shifts = torch.zeros(self.n_features)
         self.scaling_factors = torch.ones(self.n_features)
+        self.acceleration_factors = torch.ones(self.n_participants)
         if with_shift:
             self.vertical_shifts = nn.Parameter(self.vertical_shifts)
         if with_scaling:
             self.scaling_factors = nn.Parameter(self.scaling_factors)
+        if with_acceleration:
+            self.acceleration_factors = nn.Parameter(self.acceleration_factors)
 
         # constrain some parameters
         for param_name, parametrization in self.parametrization_dict.items():
@@ -115,12 +121,23 @@ class LogisticRegressionModelWithShift(nn.Module):
         )
 
     @classmethod
+    def get_acceleration_factors(
+        cls, unparametrized_acceleration_factors: torch.Tensor
+    ) -> torch.Tensor:
+        return cls.parametrization_dict["acceleration_factors"](
+            unparametrized_acceleration_factors
+        )
+
+    @classmethod
     def get_sigma(cls, unparametrized_sigma: torch.Tensor) -> torch.Tensor:
         return cls.parametrization_dict["sigma"](unparametrized_sigma)
 
     def forward(self, t: torch.Tensor, participant_ids: torch.Tensor):
         shift = self.time_shifts[participant_ids.to(torch.long)].squeeze(-1)
-        shifted_t = t.view(-1) + shift
+        acceleration = self.acceleration_factors[
+            participant_ids.to(torch.long)
+        ].squeeze(-1)
+        shifted_t = (t.view(-1) + shift) * acceleration
 
         linear_combination = self.k_values * (shifted_t.view(-1, 1) - self.x0_values)
         output = torch.sigmoid(linear_combination)

@@ -23,6 +23,8 @@ DEFAULT_K_MIN = 5.0
 DEFAULT_K_MAX = 10.0
 DEFAULT_X0_MIN = 0.0
 DEFAULT_X0_MAX = 1.0
+DEFAULT_ACCELERATION_FACTOR_MIN = 1
+DEFAULT_ACCELERATION_FACTOR_MAX = 1
 DEFAULT_VERTICAL_SHIFT_MIN = 0
 DEFAULT_VERTICAL_SHIFT_MAX = 0
 DEFAULT_SCALING_FACTOR_MIN = 1
@@ -94,6 +96,8 @@ def simulate_data(
     k_max: float = DEFAULT_K_MAX,
     x0_min: float = DEFAULT_X0_MIN,
     x0_max: float = DEFAULT_X0_MAX,
+    acceleration_factor_min: float = DEFAULT_ACCELERATION_FACTOR_MIN,
+    acceleration_factor_max: float = DEFAULT_ACCELERATION_FACTOR_MAX,
     vertical_shift_min: float = DEFAULT_VERTICAL_SHIFT_MIN,
     vertical_shift_max: float = DEFAULT_VERTICAL_SHIFT_MAX,
     scaling_factor_min: float = DEFAULT_SCALING_FACTOR_MIN,
@@ -135,6 +139,8 @@ def simulate_data(
     time_at_timepoint = config.get("time_at_timepoint", None)
 
     rng = np.random.default_rng(rng_seed)
+
+    # biomarker-specific parameters
     k_values = rng.uniform(k_min, k_max, size=n_biomarkers)
     x0_values = rng.uniform(x0_min, x0_max, size=n_biomarkers)
     vertical_shifts = rng.uniform(
@@ -147,6 +153,7 @@ def simulate_data(
     timepoints_all = []
     biomarkers_all = []
     time_shifts_all = []
+    acceleration_factors_all = []
 
     n_subjects_so_far = 0
     node_id_map = {}
@@ -161,24 +168,29 @@ def simulate_data(
         )
     ):
         node_id = f"{i_dataset+1}"
-        timepoints, biomarkers, time_shifts = simulate_all_subjects(
-            n_subjects=n_subjects,
-            k_values=k_values,
-            x0_values=x0_values,
-            vertical_shifts=vertical_shifts,
-            scaling_factors=scaling_factors,
-            sigmas=sigma_all,
-            max_n_timepoints=n_max_timepoints,
-            n_timepoints_distribution=n_timepoints_distribution,
-            time_at_timepoint=time_at_timepoint,
-            shift_time=shift_time,
-            t0_min=t0_min,
-            t0_max=t0_max,
-            rng=rng,
+        timepoints, biomarkers, time_shifts, acceleration_factors = (
+            simulate_all_subjects(
+                n_subjects=n_subjects,
+                k_values=k_values,
+                x0_values=x0_values,
+                vertical_shifts=vertical_shifts,
+                scaling_factors=scaling_factors,
+                sigmas=sigma_all,
+                max_n_timepoints=n_max_timepoints,
+                n_timepoints_distribution=n_timepoints_distribution,
+                time_at_timepoint=time_at_timepoint,
+                shift_time=shift_time,
+                t0_min=t0_min,
+                t0_max=t0_max,
+                acceleration_factor_min=acceleration_factor_min,
+                acceleration_factor_max=acceleration_factor_max,
+                rng=rng,
+            )
         )
         timepoints_all.append(timepoints)
         biomarkers_all.append(biomarkers)
         time_shifts_all.append(time_shifts)
+        acceleration_factors_all.append(acceleration_factors)
 
         df_data = _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far)
 
@@ -194,6 +206,7 @@ def simulate_data(
 
     json_data["params"] = {
         "time_shifts": time_shifts_all,
+        "acceleration_factors": acceleration_factors_all,
         "k_values": k_values,
         "x0_values": x0_values,
         "vertical_shifts": vertical_shifts,
@@ -266,6 +279,12 @@ def simulate_data(
 @click.option("--k-max", type=float, default=DEFAULT_K_MAX)
 @click.option("--x0-min", type=float, default=DEFAULT_X0_MIN)
 @click.option("--x0-max", type=float, default=DEFAULT_X0_MAX)
+@click.option(
+    "--acceleration-factor-min", type=float, default=DEFAULT_ACCELERATION_FACTOR_MIN
+)
+@click.option(
+    "--acceleration-factor-max", type=float, default=DEFAULT_ACCELERATION_FACTOR_MAX
+)
 @click.option("--vertical-shift-min", type=float, default=DEFAULT_VERTICAL_SHIFT_MIN)
 @click.option("--vertical-shift-max", type=float, default=DEFAULT_VERTICAL_SHIFT_MAX)
 @click.option("--scaling-factor-min", type=float, default=DEFAULT_SCALING_FACTOR_MIN)

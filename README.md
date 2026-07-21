@@ -38,6 +38,7 @@ These scripts should be run sequentially.
 ```shell
 ./scripts/get_fs_data.py --tag adni_iid --iid
 ./scripts/get_fs_data.py --tag adni_noniid --non-iid
+./scripts/get_fs_data.py --tag adni_noniid_diag --non-iid --non-iid-strategy diagnosis
 ```
 
 <!-- ### Split into train and test sets
@@ -56,6 +57,7 @@ These scripts should be run sequentially.
 
 ./scripts/merge_data.py --tag adni_iid
 ./scripts/merge_data.py --tag adni_noniid
+./scripts/merge_data.py --tag adni_noniid_diag
 ```
 
 ### Create Fed-BioMed nodes and update their `config.ini`
@@ -69,6 +71,7 @@ This only needs to be run if some of the nodes haven't been created yet.
 
 ./scripts/create_nodes.py --tag adni_iid
 ./scripts/create_nodes.py --tag adni_noniid
+./scripts/create_nodes.py --tag adni_noniid_diag
 ```
 
 ### Add data to nodes
@@ -82,6 +85,7 @@ If needed, use `--wipe` to clear existing datasets from each node.
 
 ./scripts/add_datasets_to_nodes.py --tag adni_iid
 ./scripts/add_datasets_to_nodes.py --tag adni_noniid
+./scripts/add_datasets_to_nodes.py --tag adni_noniid_diag
 ```
 
 ### Start the nodes in separate processes
@@ -104,6 +108,7 @@ fedbiomed node -p ./fedbiomed/node-<NODE_ID> start
 
 ./scripts/run_fedbiomed.py --tag adni_iid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
 ./scripts/run_fedbiomed.py --tag adni_noniid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
+./scripts/run_fedbiomed.py --tag adni_noniid_diag --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
 ```
 
 ### Plot

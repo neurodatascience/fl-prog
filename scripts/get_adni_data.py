@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import enum
 from pathlib import Path
 from typing import Optional
 
@@ -12,8 +13,13 @@ from fl_prog.freesurfer import get_df_idp, COL_SUBJECT, COL_TIMEPOINT
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
+class NonIIDStrategy(enum.Enum):
+    SITE = 'site'
+    DIAGNOSIS = 'diagnosis'
+
 DEFAULT_N_SITES = 5
 DEFAULT_IID = True
+DEFAULT_NON_IID_STRATEGY = NonIIDStrategy.SITE
 
 
 def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
@@ -63,6 +69,7 @@ def get_fs_data(
     fpath_adni_merge: Path | None = None,
     iid: bool = DEFAULT_IID,
     rng_seed: int = None,
+    non_iid_strategy: str = DEFAULT_NON_IID_STRATEGY,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
     dpath_out.mkdir(parents=True, exist_ok=True)
@@ -96,11 +103,22 @@ def get_fs_data(
                 "fpath_adni_merge must be provided if requesting non-IID split"
             )
         df_adnimerge = pd.read_csv(fpath_adni_merge, dtype={"RID": str, "SITE": str})
-        site_map = (
-            df_adnimerge.drop_duplicates(["RID", "SITE"])
-            .set_index("RID")["SITE"]
-            .to_dict()
-        )
+        
+        match non_iid_strategy:
+            case NonIIDStrategy.SITE:
+                site_map = (
+                    df_adnimerge.drop_duplicates(["RID", "SITE"])
+                    .set_index("RID")["SITE"]
+                    .to_dict()
+                )
+            case NonIIDStrategy.DIAGNOSIS:
+                site_map = (
+                    df_adnimerge.drop_duplicates(["RID", "DX_bl"])
+                    .set_index("RID")["DX_bl"]
+                    .to_dict()
+                )
+            case _:
+                raise ValueError(f"Invalid non_iid_strategy: {non_iid_strategy}")
     else:
         site_map = None
 
@@ -201,6 +219,7 @@ def get_fs_data(
     envvar="ADNI_MERGE_FILE",
 )
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
+@click.option("--non-iid-strategy", type=click.Choice(NonIIDStrategy, case_sensitive=False), default=DEFAULT_NON_IID_STRATEGY)
 def main(*args, **kwargs):
     get_fs_data(*args, **kwargs)
 

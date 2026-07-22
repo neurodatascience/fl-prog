@@ -22,8 +22,10 @@ repos:
   rev: v0.15.22
   hooks:
     - id: ruff-check
+      types_or: [ python, pyi, pyproject ]
       args: [ --fix ]
     - id: ruff-format
+      types_or: [ python, pyi ]
 -   repo: https://github.com/codespell-project/codespell
     rev: v2.4.3
     hooks:

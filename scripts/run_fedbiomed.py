@@ -154,7 +154,6 @@ def _run_experiment(
     training_args = training_args.copy()
 
     with working_directory(dpath_fbm):
-
         from fedbiomed.researcher.federated_workflows import Experiment
 
         experiment = Experiment(

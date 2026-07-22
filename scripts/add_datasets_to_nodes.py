@@ -3,6 +3,7 @@ from pathlib import Path
 import configparser
 import json
 import subprocess
+import sys
 import tempfile
 import warnings
 
@@ -18,7 +19,9 @@ from fl_prog.utils.io import (
 )
 
 
-def _data_already_added(dpath_node: Path, fpath_tsv: Path, wipe: bool = False) -> bool:
+def _data_already_added(
+    dpath_node: Path, fpath_tsv: Path, tag: str, wipe: bool = False
+) -> bool:
     fpath_config = dpath_node / "etc" / "config.ini"
     if not fpath_config.exists():
         raise FileNotFoundError(
@@ -47,7 +50,17 @@ def _data_already_added(dpath_node: Path, fpath_tsv: Path, wipe: bool = False) -
     if df_datasets.empty:
         return False
 
-    return str(fpath_tsv) in df_datasets["path"].to_list()
+    if str(fpath_tsv) in df_datasets["path"].to_list():
+        return True
+    elif any(tag in tags for tags in df_datasets["tags"]):
+        click.secho(
+            "Error: Other dataset with the same tag already exists in the node. Use --wipe to overwrite.",
+            fg="red",
+            bold=True,
+        )
+        sys.exit(1)
+    else:
+        return False
 
 
 def _add_dataset_to_node(
@@ -56,7 +69,7 @@ def _add_dataset_to_node(
     tag: str,
     wipe: bool = False,
 ):
-    if _data_already_added(dpath_node, fpath_tsv, wipe=wipe):
+    if _data_already_added(dpath_node, fpath_tsv, tag, wipe=wipe):
         print(f"{fpath_tsv.name} is already in node {dpath_node.name}. Skipping")
         return
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import enum
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +24,10 @@ DEFAULT_N_SITES = 5
 DEFAULT_IID = True
 DEFAULT_NON_IID_STRATEGY = NonIIDStrategy.SITE
 
-COL_AGE = "AGE"
+COL_SUBJECT_ADNIMERGE = "RID"
+COL_SESSION_ADNIMERGE = "VISCODE"
+COL_SITE_ADNIMERGE = "SITE"
+COL_AGE_ADNIMERGE = "AGE"
 
 
 def _normalize_adni_rid(value) -> str:
@@ -76,6 +80,29 @@ def _split_participants_into_sites(
     return participant_ids_split
 
 
+def _add_adnimerge_measures(
+    df_idp: pd.DataFrame,
+    df_adnimerge: pd.DataFrame,
+    measures_adnimerge: Iterable[str],
+) -> pd.DataFrame:
+    original_index_names = df_idp.index.names
+    df_idp.index.names = [COL_SUBJECT_ADNIMERGE, COL_SESSION_ADNIMERGE]
+
+    df_adnimerge_subset = df_adnimerge.set_index(
+        [COL_SUBJECT_ADNIMERGE, COL_SESSION_ADNIMERGE]
+    )[list(measures_adnimerge)]
+
+    df_merged = df_idp.merge(
+        df_adnimerge_subset,
+        left_index=True,
+        right_index=True,
+        validate="1:1",
+    )
+    df_merged = df_merged.dropna(axis="index", how="any", subset=measures_adnimerge)
+    df_merged.index.names = original_index_names
+    return df_merged
+
+
 def _add_adni_age_column(
     df_idp: pd.DataFrame,
     fpath_adni_merge: Path | None,
@@ -92,21 +119,27 @@ def _add_adni_age_column(
             "AGE requires ADNIMERGE. Pass --adni-merge or set ADNI_MERGE_FILE."
         )
 
-    df_adnimerge = pd.read_csv(fpath_adni_merge, dtype={"RID": str})
+    df_adnimerge = pd.read_csv(fpath_adni_merge, dtype={COL_SUBJECT_ADNIMERGE: str})
 
-    required_cols = {"RID", "AGE"}
+    required_cols = {COL_SUBJECT_ADNIMERGE, COL_AGE_ADNIMERGE}
     missing_cols = required_cols - set(df_adnimerge.columns)
     if missing_cols:
         raise ValueError(
             f"{fpath_adni_merge} is missing columns: {sorted(missing_cols)}"
         )
 
-    df_age = df_adnimerge[["RID", "AGE"]].copy()
-    df_age["RID"] = df_age["RID"].map(_normalize_adni_rid)
-    df_age["AGE"] = pd.to_numeric(df_age["AGE"], errors="coerce")
+    df_age = df_adnimerge[[COL_SUBJECT_ADNIMERGE, COL_AGE_ADNIMERGE]].copy()
+    df_age[COL_SUBJECT_ADNIMERGE] = df_age[COL_SUBJECT_ADNIMERGE].map(
+        _normalize_adni_rid
+    )
+    df_age[COL_AGE_ADNIMERGE] = pd.to_numeric(
+        df_age[COL_AGE_ADNIMERGE], errors="coerce"
+    )
 
     # ADNIMERGE has repeated rows per RID. AGE should be constant within RID.
-    age_nunique = df_age.dropna().groupby("RID")["AGE"].nunique()
+    age_nunique = (
+        df_age.dropna().groupby(COL_SUBJECT_ADNIMERGE)[COL_AGE_ADNIMERGE].nunique()
+    )
     inconsistent_rids = age_nunique[age_nunique > 1].index.tolist()
     if inconsistent_rids:
         print(
@@ -115,9 +148,9 @@ def _add_adni_age_column(
         )
 
     age_by_rid = (
-        df_age.dropna(subset=["RID", "AGE"])
-        .drop_duplicates(subset=["RID"])
-        .set_index("RID")["AGE"]
+        df_age.dropna(subset=[COL_SUBJECT_ADNIMERGE, COL_AGE_ADNIMERGE])
+        .drop_duplicates(subset=[COL_SUBJECT_ADNIMERGE])
+        .set_index(COL_SUBJECT_ADNIMERGE)[COL_AGE_ADNIMERGE]
     )
 
     index_names = df_idp.index.names
@@ -129,16 +162,20 @@ def _add_adni_age_column(
             "in FreeSurfer dataframe."
         )
 
-    df[COL_AGE] = df[col_subject_original].map(_normalize_adni_rid).map(age_by_rid)
+    df[COL_AGE_ADNIMERGE] = (
+        df[col_subject_original].map(_normalize_adni_rid).map(age_by_rid)
+    )
 
-    n_missing = int(df[COL_AGE].isna().sum())
+    n_missing = int(df[COL_AGE_ADNIMERGE].isna().sum())
     if n_missing:
-        print(f"Warning: {n_missing} rows have missing {COL_AGE} after ADNIMERGE join.")
+        print(
+            f"Warning: {n_missing} rows have missing {COL_AGE_ADNIMERGE} after ADNIMERGE join."
+        )
 
     return df.set_index(index_names)
 
 
-def get_fs_data(
+def get_adni_data(
     tag: str,
     fpath_idps: Path,
     n_sites: int,
@@ -163,9 +200,25 @@ def get_fs_data(
     col_session_original: str = config["col_session_original"]
     session_timepoint_map: dict[str, float] = config["session_timepoint_map"]
     measures: list[str] = config["measures"]
+    measures_adnimerge: list[str] = config.get("measures_adnimerge", [])
     flip: bool = config.get("flip", False)
     max_time: float = config.get("max_time", None)
     min_max_by_measure: dict[list[float]] = config.get("min_max_by_measure", None)
+
+    if fpath_adni_merge is not None:
+        df_adnimerge = pd.read_csv(
+            fpath_adni_merge,
+            dtype={
+                COL_SUBJECT_ADNIMERGE: str,
+                COL_SESSION_ADNIMERGE: str,
+                COL_SITE_ADNIMERGE: str,
+            },
+        )
+        df_adnimerge[COL_SESSION_ADNIMERGE] = df_adnimerge[
+            COL_SESSION_ADNIMERGE
+        ].str.upper()
+    else:
+        df_adnimerge = None
 
     df_idp = get_df_idp(
         fpath_idps,
@@ -175,24 +228,38 @@ def get_fs_data(
         session_timepoint_map,
         measures,
     )
+    if measures_adnimerge:
+        if df_adnimerge is None:
+            raise ValueError(
+                "fpath_adni_merge must be provided if requesting ADNIMERGE measures"
+            )
+        df_idp = _add_adnimerge_measures(df_idp, df_adnimerge, measures_adnimerge)
+    # Add biological AGE information
+    df_idp = _add_adni_age_column(
+        df_idp=df_idp,
+        fpath_adni_merge=fpath_adni_merge,
+        col_subject_original=col_subject_original,
+    )
+
     if not iid:
-        if fpath_adni_merge is None:
+        if df_adnimerge is None:
             raise ValueError(
                 "fpath_adni_merge must be provided if requesting non-IID split"
             )
-        df_adnimerge = pd.read_csv(fpath_adni_merge, dtype={"RID": str, "SITE": str})
 
         match non_iid_strategy:
             case NonIIDStrategy.SITE:
                 site_map = (
-                    df_adnimerge.drop_duplicates(["RID", "SITE"])
-                    .set_index("RID")["SITE"]
+                    df_adnimerge.drop_duplicates(
+                        [COL_SUBJECT_ADNIMERGE, COL_SITE_ADNIMERGE]
+                    )
+                    .set_index(COL_SUBJECT_ADNIMERGE)[COL_SITE_ADNIMERGE]
                     .to_dict()
                 )
             case NonIIDStrategy.DIAGNOSIS:
                 site_map = (
-                    df_adnimerge.drop_duplicates(["RID", "DX_bl"])
-                    .set_index("RID")["DX_bl"]
+                    df_adnimerge.drop_duplicates([COL_SUBJECT_ADNIMERGE, "DX_bl"])
+                    .set_index(COL_SUBJECT_ADNIMERGE)["DX_bl"]
                     .to_dict()
                 )
             case _:
@@ -200,14 +267,9 @@ def get_fs_data(
     else:
         site_map = None
 
-    # Add biological AGE informationbefore site splitting.
-    df_idp = _add_adni_age_column(
-        df_idp=df_idp,
-        fpath_adni_merge=fpath_adni_merge,
-        col_subject_original=col_subject_original,
+    cols_biomarkers = list(
+        set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_AGE_ADNIMERGE}
     )
-
-    cols_biomarkers = list(set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_AGE})
 
     if min_max_by_measure is not None:
         min_values = pd.DataFrame(
@@ -261,7 +323,7 @@ def get_fs_data(
         "col_subject": col_subject_original,
         "col_subject_index": COL_SUBJECT,
         "col_timepoint": COL_TIMEPOINT,
-        "col_age": COL_AGE,
+        "col_age": COL_AGE_ADNIMERGE,
         "cols_biomarker": sorted(
             cols_biomarkers,
         ),
@@ -311,7 +373,7 @@ def get_fs_data(
     default=DEFAULT_NON_IID_STRATEGY,
 )
 def main(*args, **kwargs):
-    get_fs_data(*args, **kwargs)
+    get_adni_data(*args, **kwargs)
 
 
 if __name__ == "__main__":

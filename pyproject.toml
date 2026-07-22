@@ -133,3 +133,8 @@ dependencies = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["fl_prog"]
+
+[dependency-groups]
+dev = [
+    "pre-commit",
+]

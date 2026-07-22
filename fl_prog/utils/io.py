@@ -1,4 +1,5 @@
 import datetime
+import enum
 import json
 import os
 from contextlib import contextmanager
@@ -100,6 +101,8 @@ def serialize_data(obj: object):
         return obj.data.numpy().tolist()
     elif isinstance(obj, Path):
         return str(obj)
+    elif isinstance(obj, enum.Enum):
+        return obj.name
     raise TypeError(f"Type {type(obj)} not serializable")
 
 

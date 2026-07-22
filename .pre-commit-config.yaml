@@ -30,5 +30,5 @@ repos:
     rev: v2.4.3
     hooks:
     -   id: codespell
-        args: [--toml=pyproject.toml]
+        args: [--toml=pyproject.toml, --skip=*.ipynb ]
         additional_dependencies: [tomli]

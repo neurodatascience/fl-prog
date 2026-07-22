@@ -38,14 +38,16 @@ def _replace_tag_prefix(fname: str, tag: str, out_tag: str) -> str:
     """Rename adni_iid-1.tsv to adni_iid_age_adjusted-1.tsv."""
     if not fname.startswith(tag):
         raise ValueError(f"Expected filename {fname!r} to start with tag {tag!r}")
-    return f"{out_tag}{fname[len(tag):]}"
+    return f"{out_tag}{fname[len(tag) :]}"
 
 
 def _get_input_files(dpath_in: Path, tag: str, mode: str) -> list[Path]:
     """Select TSV files to process."""
     fname_merged = f"{tag}-merged.tsv"
 
-    if mode == "merged":    # if just want to regress on the merged file (centralized), if it exists
+    if (
+        mode == "merged"
+    ):  # if just want to regress on the merged file (centralized), if it exists
         fpath_merged = dpath_in / fname_merged
         if not fpath_merged.exists():
             raise FileNotFoundError(
@@ -61,7 +63,9 @@ def _get_input_files(dpath_in: Path, tag: str, mode: str) -> list[Path]:
     ]
 
     if not fpaths:
-        raise FileNotFoundError(f"No site TSV files found for tag {tag!r} in {dpath_in}")
+        raise FileNotFoundError(
+            f"No site TSV files found for tag {tag!r} in {dpath_in}"
+        )
 
     return fpaths
 
@@ -238,8 +242,11 @@ def _apply_min_max(
 )
 @click.option("--age-col", type=str, default=None)
 @click.option("--keep-age/--drop-age", default=True, show_default=True)
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> 0f41859478a9c80d141c71860dac5fc8dd75e6ff
 def regress_age_out(
     tag: str,
     out_tag: str | None,
@@ -356,7 +363,13 @@ def regress_age_out(
         out_json["node_id_map"][fname_out] = node_id
 
         if node_id in json_data.get("subjects_by_node", {}):
+<<<<<<< HEAD
             out_json["subjects_by_node"][node_id] = json_data["subjects_by_node"][node_id]
+=======
+            out_json["subjects_by_node"][node_id] = json_data["subjects_by_node"][
+                node_id
+            ]
+>>>>>>> 0f41859478a9c80d141c71860dac5fc8dd75e6ff
 
         print(f"Saved age-adjusted data to {fpath_out}")
 
@@ -375,7 +388,10 @@ def regress_age_out(
 
 if __name__ == "__main__":
     regress_age_out()
+<<<<<<< HEAD
 
 
 
 
+=======
+>>>>>>> 0f41859478a9c80d141c71860dac5fc8dd75e6ff

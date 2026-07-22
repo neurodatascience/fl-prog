@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 from pathlib import Path
-import configparser
 import json
 import subprocess
+import sys
 import tempfile
 import warnings
 
 import click
-import pandas as pd
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
+from fl_prog.utils.fbm_node import get_fpath_db, load_node_db
 from fl_prog.utils.io import (
     get_dpath_latest,
     get_node_id_map,
@@ -18,36 +18,35 @@ from fl_prog.utils.io import (
 )
 
 
-def _data_already_added(dpath_node: Path, fpath_tsv: Path, wipe: bool = False) -> bool:
-    fpath_config = dpath_node / "etc" / "config.ini"
-    if not fpath_config.exists():
-        raise FileNotFoundError(
-            f"Node config file not found: {fpath_config}"
-            ". Make sure node has been initialized."
-        )
-
-    config = configparser.ConfigParser()
-    config.read(str(fpath_config))
-    fpath_db = (fpath_config.parent / config["default"]["db"]).resolve()
-    if not fpath_db.exists():
-        warnings.warn(f"Node database file not found: {fpath_db}")
-        return False
+def _data_already_added(
+    dpath_node: Path, fpath_tsv: Path, tag: str, wipe: bool = False
+) -> bool:
+    fpath_db = get_fpath_db(dpath_node)
 
     if wipe:
         fpath_db.unlink()
         return False
 
     try:
-        db_json = json.loads(fpath_db.read_text())
-        df_datasets = pd.DataFrame(db_json["Datasets"]).T
-    except (json.JSONDecodeError, KeyError):
-        warnings.warn(f"Error parsing the database file: {fpath_db}")
+        df_datasets = load_node_db(fpath_db=fpath_db)
+    except RuntimeError as exception:
+        warnings.warn(exception)
         return False
 
     if df_datasets.empty:
         return False
 
-    return str(fpath_tsv) in df_datasets["path"].to_list()
+    if str(fpath_tsv) in df_datasets["path"].to_list():
+        return True
+    elif any(tag in tags for tags in df_datasets["tags"]):
+        click.secho(
+            "Error: Other dataset with the same tag already exists in the node. Use --wipe to overwrite.",
+            fg="red",
+            bold=True,
+        )
+        sys.exit(1)
+    else:
+        return False
 
 
 def _add_dataset_to_node(
@@ -56,7 +55,7 @@ def _add_dataset_to_node(
     tag: str,
     wipe: bool = False,
 ):
-    if _data_already_added(dpath_node, fpath_tsv, wipe=wipe):
+    if _data_already_added(dpath_node, fpath_tsv, tag, wipe=wipe):
         print(f"{fpath_tsv.name} is already in node {dpath_node.name}. Skipping")
         return
 

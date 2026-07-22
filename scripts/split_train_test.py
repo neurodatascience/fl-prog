@@ -36,7 +36,6 @@ def split_train_test(
     node_id_map_new = {}
     subjects_by_node = {}
     for fname_site, node_id in node_id_map_old.items():
-
         if fname_site.endswith("-merged.tsv"):
             continue
 
@@ -48,7 +47,6 @@ def split_train_test(
         dfs_train = []
         subjects = []
         for subject, df_subject in df_site.groupby(col_subject, sort=False):
-
             if len(df_subject) >= min_n_timepoints:
                 df_subject = df_subject.sort_values(col_timepoint, ascending=True)
                 dfs_test.append(df_subject.iloc[[-1]])

@@ -17,7 +17,6 @@ class Positive(nn.Module):
 
 
 class LogisticRegressionModelWithShift(nn.Module):
-
     parametrization_dict = {
         "k_values": Positive(),
         "sigma": Positive(),

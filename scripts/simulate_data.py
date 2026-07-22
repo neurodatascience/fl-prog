@@ -77,7 +77,7 @@ def _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far) -> pd.Dat
 
 def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
     if i is not None:
-        tag = f"{tag}-{i+1}"
+        tag = f"{tag}-{i + 1}"
     return f"{tag}{suffix}"
 
 
@@ -167,7 +167,7 @@ def simulate_data(
             strict=True,
         )
     ):
-        node_id = f"{i_dataset+1}"
+        node_id = f"{i_dataset + 1}"
         timepoints, biomarkers, time_shifts, acceleration_factors = (
             simulate_all_subjects(
                 n_subjects=n_subjects,

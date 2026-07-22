@@ -38,7 +38,7 @@ These scripts should be run sequentially.
 ```shell
 ./scripts/get_fs_data.py --tag adni_iid --iid
 ./scripts/get_fs_data.py --tag adni_noniid --non-iid
-./scripts/get_fs_data.py --tag adni_noniid_diag --non-iid --non-iid-strategy diagnosis
+./scripts/get_adni_data.py --tag adni_noniid_diag --non-iid --non-iid-strategy diagnosis
 ```
 
 <!-- ### Split into train and test sets

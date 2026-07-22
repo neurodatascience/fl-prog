@@ -13,13 +13,29 @@ from fl_prog.freesurfer import get_df_idp, COL_SUBJECT, COL_TIMEPOINT
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
 
+
 class NonIIDStrategy(enum.Enum):
-    SITE = 'site'
-    DIAGNOSIS = 'diagnosis'
+    SITE = "site"
+    DIAGNOSIS = "diagnosis"
+
 
 DEFAULT_N_SITES = 5
 DEFAULT_IID = True
 DEFAULT_NON_IID_STRATEGY = NonIIDStrategy.SITE
+
+COL_AGE = "AGE"
+
+
+def _normalize_adni_rid(value) -> str:
+    """Normalize ADNI RID values so CSV/string/int representations match."""
+    if pd.isna(value):
+        return value
+
+    value = str(value).strip()
+    if value.endswith(".0"):
+        value = value[:-2]
+
+    return value
 
 
 def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
@@ -58,6 +74,68 @@ def _split_participants_into_sites(
         participant_ids_split.append(participant_ids[idx_test])
 
     return participant_ids_split
+
+
+def _add_adni_age_column(
+    df_idp: pd.DataFrame,
+    fpath_adni_merge: Path | None,
+    col_subject_original: str,
+) -> pd.DataFrame:
+    """
+    Add biological AGE from ADNIMERGE to the FreeSurfer dataframe.
+
+    ADNIMERGE.AGE is constant across longitudinal rows for the same RID, so it is
+    treated as baseline chronological age and copied directly.
+    """
+    if fpath_adni_merge is None:
+        raise ValueError(
+            "AGE requires ADNIMERGE. Pass --adni-merge or set ADNI_MERGE_FILE."
+        )
+
+    df_adnimerge = pd.read_csv(fpath_adni_merge, dtype={"RID": str})
+
+    required_cols = {"RID", "AGE"}
+    missing_cols = required_cols - set(df_adnimerge.columns)
+    if missing_cols:
+        raise ValueError(
+            f"{fpath_adni_merge} is missing columns: {sorted(missing_cols)}"
+        )
+
+    df_age = df_adnimerge[["RID", "AGE"]].copy()
+    df_age["RID"] = df_age["RID"].map(_normalize_adni_rid)
+    df_age["AGE"] = pd.to_numeric(df_age["AGE"], errors="coerce")
+
+    # ADNIMERGE has repeated rows per RID. AGE should be constant within RID.
+    age_nunique = df_age.dropna().groupby("RID")["AGE"].nunique()
+    inconsistent_rids = age_nunique[age_nunique > 1].index.tolist()
+    if inconsistent_rids:
+        print(
+            "Warning: some RID values have multiple AGE values in ADNIMERGE. "
+            f"Using the first non-missing AGE. Example RIDs: {inconsistent_rids[:10]}"
+        )
+
+    age_by_rid = (
+        df_age.dropna(subset=["RID", "AGE"])
+        .drop_duplicates(subset=["RID"])
+        .set_index("RID")["AGE"]
+    )
+
+    index_names = df_idp.index.names
+    df = df_idp.reset_index()
+
+    if col_subject_original not in df.columns:
+        raise ValueError(
+            f"Expected subject column/index level {col_subject_original!r} "
+            "in FreeSurfer dataframe."
+        )
+
+    df[COL_AGE] = df[col_subject_original].map(_normalize_adni_rid).map(age_by_rid)
+
+    n_missing = int(df[COL_AGE].isna().sum())
+    if n_missing:
+        print(f"Warning: {n_missing} rows have missing {COL_AGE} after ADNIMERGE join.")
+
+    return df.set_index(index_names)
 
 
 def get_fs_data(
@@ -103,7 +181,7 @@ def get_fs_data(
                 "fpath_adni_merge must be provided if requesting non-IID split"
             )
         df_adnimerge = pd.read_csv(fpath_adni_merge, dtype={"RID": str, "SITE": str})
-        
+
         match non_iid_strategy:
             case NonIIDStrategy.SITE:
                 site_map = (
@@ -122,7 +200,14 @@ def get_fs_data(
     else:
         site_map = None
 
-    cols_biomarkers = list(set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT})
+    # Add biological AGE informationbefore site splitting.
+    df_idp = _add_adni_age_column(
+        df_idp=df_idp,
+        fpath_adni_merge=fpath_adni_merge,
+        col_subject_original=col_subject_original,
+    )
+
+    cols_biomarkers = list(set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_AGE})
 
     if min_max_by_measure is not None:
         min_values = pd.DataFrame(
@@ -176,6 +261,7 @@ def get_fs_data(
         "col_subject": col_subject_original,
         "col_subject_index": COL_SUBJECT,
         "col_timepoint": COL_TIMEPOINT,
+        "col_age": COL_AGE,
         "cols_biomarker": sorted(
             cols_biomarkers,
         ),
@@ -219,7 +305,11 @@ def get_fs_data(
     envvar="ADNI_MERGE_FILE",
 )
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
-@click.option("--non-iid-strategy", type=click.Choice(NonIIDStrategy, case_sensitive=False), default=DEFAULT_NON_IID_STRATEGY)
+@click.option(
+    "--non-iid-strategy",
+    type=click.Choice(NonIIDStrategy, case_sensitive=False),
+    default=DEFAULT_NON_IID_STRATEGY,
+)
 def main(*args, **kwargs):
     get_fs_data(*args, **kwargs)
 

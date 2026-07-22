@@ -36,8 +36,8 @@ These scripts should be run sequentially.
 #### ADNI
 
 ```shell
-./scripts/get_fs_data.py --tag adni_iid --iid
-./scripts/get_fs_data.py --tag adni_noniid --non-iid
+./scripts/get_adni_data.py --tag adni_iid --iid
+./scripts/get_adni_data.py --tag adni_noniid --non-iid
 ./scripts/get_adni_data.py --tag adni_noniid_diag --non-iid --non-iid-strategy diagnosis
 ```
 
@@ -47,6 +47,17 @@ These scripts should be run sequentially.
 ./scripts/split_train_test.py --tag adni_iid
 ./scripts/split_train_test.py --tag adni_noniid
 ``` -->
+
+### Optional: Regress biological age out from biomarkers
+
+```shell
+./scripts/regress_age_out.py --tag adni_iid --mode pooled-sites
+
+./scripts/regress_age_out.py --tag adni_noniid --mode site
+# with optional --min-max
+```
+Then, must run all downstream scripts (e.g., merge_data.py, create_nodes.py, etc.)
+with --tag adni_\<iid / non_iid\>_age_adjusted_\<minmax / NOTHING\>
 
 ### Merge data for centralized case
 

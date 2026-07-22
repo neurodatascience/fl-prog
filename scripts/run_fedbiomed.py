@@ -21,6 +21,7 @@ from fl_prog.utils.constants import (
     NODE_ID_CENTRALIZED,
     NODE_PREFIX,
 )
+from fl_prog.utils.fbm_node import load_node_db
 from fl_prog.utils.io import (
     get_dpath_latest,
     get_node_id_map,
@@ -41,6 +42,21 @@ DEFAULT_AGGREGATOR_NAME = "fedavg"
 
 VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
 DNAME_TENSORBOARD = "tensorboard"
+
+
+def _check_node_datasets(
+    dpath_fbm: Path, dpath_data: Path, node_id_map: dict[str, str], /
+):
+    for filename_tsv, node_id in node_id_map.items():
+        dpath_node = dpath_fbm / f"{NODE_PREFIX}{node_id}".replace("_", "-")
+        fpath_tsv = (dpath_data / filename_tsv).resolve()
+        df_datasets = load_node_db(dpath_node=dpath_node)
+
+        if str(fpath_tsv) not in df_datasets["path"].to_list():
+            raise RuntimeError(
+                f"Dataset {fpath_tsv} not found in node {dpath_node}. "
+                "Please add the dataset to the node before running this script."
+            )
 
 
 def _get_n_participants_map(
@@ -345,6 +361,8 @@ def run_fedbiomed(
             f'{fpath_config} should have a "cols" entry with keys: '
             '"col_subject" (str), "col_timepoint" (str), "cols_biomarker" (list[str])'
         )
+
+    _check_node_datasets(dpath_fbm, dpath_data, node_id_map)
 
     training_args = _get_training_args(
         n_updates, batch_size, learning_rate, aggregator_name, random_seed

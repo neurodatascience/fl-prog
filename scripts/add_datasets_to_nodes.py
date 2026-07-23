@@ -29,8 +29,8 @@ def _data_already_added(
 
     try:
         df_datasets = load_node_db(fpath_db=fpath_db)
-    except RuntimeError as exception:
-        warnings.warn(exception)
+    except Exception as exception:
+        warnings.warn(str(exception))
         return False
 
     if df_datasets.empty:

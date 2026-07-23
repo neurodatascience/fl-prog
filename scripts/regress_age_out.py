@@ -242,11 +242,6 @@ def _apply_min_max(
 )
 @click.option("--age-col", type=str, default=None)
 @click.option("--keep-age/--drop-age", default=True, show_default=True)
-<<<<<<< HEAD
-
-
-=======
->>>>>>> 0f41859478a9c80d141c71860dac5fc8dd75e6ff
 def regress_age_out(
     tag: str,
     out_tag: str | None,
@@ -363,13 +358,9 @@ def regress_age_out(
         out_json["node_id_map"][fname_out] = node_id
 
         if node_id in json_data.get("subjects_by_node", {}):
-<<<<<<< HEAD
-            out_json["subjects_by_node"][node_id] = json_data["subjects_by_node"][node_id]
-=======
             out_json["subjects_by_node"][node_id] = json_data["subjects_by_node"][
                 node_id
             ]
->>>>>>> 0f41859478a9c80d141c71860dac5fc8dd75e6ff
 
         print(f"Saved age-adjusted data to {fpath_out}")
 
@@ -388,10 +379,3 @@ def regress_age_out(
 
 if __name__ == "__main__":
     regress_age_out()
-<<<<<<< HEAD
-
-
-
-
-=======
->>>>>>> 0f41859478a9c80d141c71860dac5fc8dd75e6ff

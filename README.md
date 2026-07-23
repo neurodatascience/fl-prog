@@ -51,13 +51,12 @@ These scripts should be run sequentially.
 ### Optional: Regress biological age out from biomarkers
 
 ```shell
-./scripts/regress_age_out.py --tag adni_iid --mode pooled-sites
+./scripts/regress_age_out.py --tag adni_iid --mode pooled-sites --min-max
 
-./scripts/regress_age_out.py --tag adni_noniid --mode site
-# with optional --min-max
+./scripts/regress_age_out.py --tag adni_noniid --mode site --min-max
 ```
 Then, must run all downstream scripts (e.g., merge_data.py, create_nodes.py, etc.)
-with --tag adni_\<iid / non_iid\>_age_adjusted_\<minmax / NOTHING\>
+with --tag adni_\<iid / non_iid\>\_age_adjusted\_\<minmax / NOTHING\>
 
 ### Merge data for centralized case
 

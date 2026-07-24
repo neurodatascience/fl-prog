@@ -119,7 +119,9 @@ def _add_adni_age_column(
             "AGE requires ADNIMERGE. Pass --adni-merge or set ADNI_MERGE_FILE."
         )
 
-    df_adnimerge = pd.read_csv(fpath_adni_merge, dtype={COL_SUBJECT_ADNIMERGE: str})
+    df_adnimerge = pd.read_csv(
+        fpath_adni_merge, dtype={COL_SUBJECT_ADNIMERGE: str}, low_memory=False
+    )
 
     required_cols = {COL_SUBJECT_ADNIMERGE, COL_AGE_ADNIMERGE}
     missing_cols = required_cols - set(df_adnimerge.columns)
@@ -213,6 +215,7 @@ def get_adni_data(
                 COL_SESSION_ADNIMERGE: str,
                 COL_SITE_ADNIMERGE: str,
             },
+            low_memory=False,
         )
         df_adnimerge[COL_SESSION_ADNIMERGE] = df_adnimerge[
             COL_SESSION_ADNIMERGE

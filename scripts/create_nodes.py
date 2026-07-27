@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-from pathlib import Path
 import configparser
+import subprocess
+from pathlib import Path
 
 import click
-import subprocess
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_PREFIX
 from fl_prog.utils.io import (

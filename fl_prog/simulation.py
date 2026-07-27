@@ -1,5 +1,6 @@
+from collections.abc import Iterable
+
 import numpy as np
-from typing import Iterable, Optional, Tuple
 
 from fl_prog.utils.math import multivariate_logistic
 from fl_prog.utils.validation import check_rng
@@ -10,7 +11,7 @@ def generate_timepoints(
     n_timepoints: int,
     t0_min: float = 0.0,
     t0_max: float = 1.0,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Generate timepoints for a subject.
 
@@ -56,8 +57,8 @@ def simulate_all_subjects(
     t0_max: float = 1.0,
     acceleration_factor_min: float = 1.0,
     acceleration_factor_max: float = 1.0,
-    rng: Optional[np.random.Generator] = None,
-) -> Tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
+    rng: np.random.Generator | None = None,
+) -> tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
     """Simulate timepoints and biomarkers for all subjects.
 
     Subjects can have multiple timepoints, but they are concatenated into a single

@@ -1,9 +1,9 @@
 from collections.abc import Iterable
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.utils.parametrize as parametrize
+from torch import nn
+from torch.nn.utils import parametrize
 
 
 class Positive(nn.Module):

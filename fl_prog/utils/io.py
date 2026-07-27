@@ -5,10 +5,10 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 
-import torch
 import numpy as np
+import torch
 
-from fl_prog.utils.constants import DNAME_LATEST, DATE_FORMAT
+from fl_prog.utils.constants import DATE_FORMAT, DNAME_LATEST
 
 DPATH_PROJECT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_DPATH_DATA = DPATH_PROJECT / "data"

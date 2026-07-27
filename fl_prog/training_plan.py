@@ -1,16 +1,15 @@
 from functools import wraps
 
-import torch.optim as optim
 from fedbiomed.common.datamanager import DataManager
 from fedbiomed.common.dataset import TabularDataset
-from fedbiomed.common.optimizers.optimizer import Optimizer
 from fedbiomed.common.optimizers.declearn import (
     AdamModule,
     RidgeRegularizer,
     ScaffoldClientModule,
 )
+from fedbiomed.common.optimizers.optimizer import Optimizer
 from fedbiomed.common.training_plans import TorchTrainingPlan
-
+from torch import optim
 
 from fl_prog.model import LogisticRegressionModelWithShift
 

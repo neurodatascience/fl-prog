@@ -22,13 +22,18 @@ import pandas as pd
 import seaborn as sns
 
 from fl_prog.utils.constants import DNAME_LATEST
-from fl_prog.utils.io import DEFAULT_DPATH_DATA, DEFAULT_DPATH_RESULTS
+from fl_prog.utils.io import DEFAULT_DPATH_DATA, DEFAULT_DPATH_RESULTS, DPATH_PROJECT
 
 # ===== Select results to plot =====
-# change these as needed
-TAG = "iid_with_acceleration"
-dname_data_date = DNAME_LATEST
-dname_results_date = DNAME_LATEST
+# change config file instead of editing this notebook directly
+fpath_notebook_config = DPATH_PROJECT / "notebooks" / "model_fits_synthetic.json"
+if fpath_notebook_config.exists():
+    notebook_config = json.loads(fpath_notebook_config.read_text())
+else:
+    notebook_config = {}
+TAG = notebook_config.get("tag", "iid_with_acceleration")
+dname_data_date = notebook_config.get("dname_data_date", DNAME_LATEST)
+dname_results_date = notebook_config.get("dname_results_date", DNAME_LATEST)
 
 THEME = "paper"  # paper, talk
 
@@ -364,51 +369,3 @@ fig_fit_data.tight_layout()
 
 for ax in axes:
     ax.set_xlim(-0, 0.5)
-
-# %%
-df.query("subject == 1")
-
-# %%
-print(acceleration_factors[0])
-print(
-    np.hstack(
-        list(
-            results_dict["results"]["centralized"][
-                "estimated_acceleration_factors"
-            ].values()
-        )
-    )[0]
-)
-
-# %%
-print(
-    np.corrcoef(
-        np.hstack(
-            list(
-                results_dict["results"]["centralized"]["estimated_time_shifts"].values()
-            )
-        ),
-        np.hstack(
-            list(results_dict["results"]["federated"]["estimated_time_shifts"].values())
-        ),
-    )[0, 1]
-)
-
-print(
-    np.corrcoef(
-        np.hstack(
-            list(
-                results_dict["results"]["centralized"][
-                    "estimated_acceleration_factors"
-                ].values()
-            )
-        ),
-        np.hstack(
-            list(
-                results_dict["results"]["federated"][
-                    "estimated_acceleration_factors"
-                ].values()
-            )
-        ),
-    )[0, 1]
-)

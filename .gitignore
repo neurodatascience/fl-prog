@@ -12,6 +12,5 @@ __pycache__
 data
 results
 fedbiomed
-
-# notebooks (synced with jupytext)
 notebooks/*.ipynb
+notebooks/*.json

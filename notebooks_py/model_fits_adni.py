@@ -18,12 +18,18 @@ import os
 from pathlib import Path
 
 from fl_prog.utils.constants import DNAME_LATEST
-from fl_prog.utils.io import DEFAULT_DPATH_RESULTS
+from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, DPATH_PROJECT
 
 # ===== Select results to plot =====
-# change these as needed
-TAG = "adni_noniid_diag_new_biomarkers"
-dname_results_date = DNAME_LATEST
+# change config file instead of editing this notebook directly
+fpath_notebook_config = DPATH_PROJECT / "notebooks" / "model_fits_adni.json"
+if fpath_notebook_config.exists():
+    notebook_config = json.loads(fpath_notebook_config.read_text())
+else:
+    notebook_config = {}
+
+TAG = notebook_config.get("tag", "adni_iid")
+dname_results_date = notebook_config.get("dname_results_date", DNAME_LATEST)
 fpath_adni_merge = Path(os.environ.get("ADNI_MERGE_FILE"))
 
 fpath_json = Path(

@@ -12,3 +12,5 @@ __pycache__
 data
 results
 fedbiomed
+notebooks/*.ipynb
+notebooks/*.json

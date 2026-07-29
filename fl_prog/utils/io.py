@@ -23,13 +23,17 @@ def get_dpath_latest(dpath_parent, use_today=False):
     dpath_today = dpath_parent / datetime.datetime.now().astimezone().strftime(
         DATE_FORMAT
     )
-    if dpath_latest.exists():
-        if use_today and dpath_latest.resolve() != dpath_today.resolve():
-            if dpath_latest.is_symlink():
-                dpath_latest.unlink()
-            else:
-                raise RuntimeError(f"{dpath_latest=} exists but is not a symlink")
-    else:
+    if (
+        dpath_latest.exists()
+        and use_today
+        and dpath_latest.resolve() != dpath_today.resolve()
+    ):
+        if dpath_latest.is_symlink():
+            dpath_latest.unlink()
+        else:
+            raise RuntimeError(f"{dpath_latest=} exists but is not a symlink")
+
+    if not dpath_latest.exists():
         if dpath_latest.is_symlink():
             dpath_latest.unlink()
         dpath_today.mkdir(parents=True, exist_ok=True)

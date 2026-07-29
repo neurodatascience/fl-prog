@@ -3,16 +3,15 @@
 import enum
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Optional
 
 import click
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupKFold
 
-from fl_prog.freesurfer import get_df_idp, COL_SUBJECT, COL_TIMEPOINT
+from fl_prog.freesurfer import COL_SUBJECT, COL_TIMEPOINT, get_df_idp
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
+from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, load_json, save_json
 
 
 class NonIIDStrategy(enum.Enum):
@@ -36,13 +35,12 @@ def _normalize_adni_rid(value) -> str:
         return value
 
     value = str(value).strip()
-    if value.endswith(".0"):
-        value = value[:-2]
+    value = value.removesuffix(".0")
 
     return value
 
 
-def _get_fname_out(tag, i: Optional[int] = None, suffix: str = ".tsv") -> str:
+def _get_fname_out(tag, i: int | None = None, suffix: str = ".tsv") -> str:
     if i is not None:
         tag = f"{tag}-{i}"
     return f"{tag}{suffix}"
@@ -185,7 +183,7 @@ def get_adni_data(
     fpath_config: Path,
     fpath_adni_merge: Path | None = None,
     iid: bool = DEFAULT_IID,
-    rng_seed: int = None,
+    rng_seed: int | None = None,
     non_iid_strategy: str = DEFAULT_NON_IID_STRATEGY,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag

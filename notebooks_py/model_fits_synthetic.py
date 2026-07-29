@@ -50,12 +50,12 @@ results_dir = DEFAULT_DPATH_RESULTS / dname_results_date / TAG
 
 fpath_json_data = data_dir / f"{TAG}.json"
 json_data = json.loads(fpath_json_data.read_text())
-print(f"fpath_json_data: {fpath_json_data!s}")
+print(f"fpath_json_data: {fpath_json_data}")
 
 try:
     fpath_json_results = results_dir / f"{TAG}-estimated_params.json"
     results_dict = json.loads(fpath_json_results.read_text())
-    print(f"fpath_json_results: {fpath_json_results!s}")
+    print(f"fpath_json_results: {fpath_json_results}")
 except FileNotFoundError:
     print("Results not available")
 

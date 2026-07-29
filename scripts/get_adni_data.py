@@ -183,7 +183,7 @@ def get_adni_data(
     fpath_config: Path,
     fpath_adni_merge: Path | None = None,
     iid: bool = DEFAULT_IID,
-    rng_seed: int = None,
+    rng_seed: int | None = None,
     non_iid_strategy: str = DEFAULT_NON_IID_STRATEGY,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag

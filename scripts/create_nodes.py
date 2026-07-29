@@ -69,7 +69,7 @@ def create_nodes(tag: str, dpath_data: Path, dpath_nodes: Path):
     fpath_json: Path = get_dpath_latest(dpath_data) / tag / f"{tag}.json"
     node_id_map = get_node_id_map(fpath_json)
 
-    for _, node_id in node_id_map.items():
+    for node_id in node_id_map.values():
         _create_node(dpath_nodes, node_id)
 
 

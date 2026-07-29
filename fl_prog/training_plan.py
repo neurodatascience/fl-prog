@@ -1,4 +1,5 @@
 from functools import wraps
+from typing import ClassVar
 
 from fedbiomed.common.datamanager import DataManager
 from fedbiomed.common.dataset import TabularDataset
@@ -19,7 +20,7 @@ class FLProgTrainingPlan(TorchTrainingPlan):
     col_time: str
     cols_biomarker: list[str]
 
-    default_config = {"n_participants": 0}
+    default_config: ClassVar = {"n_participants": 0}
 
     @staticmethod
     def set_colnames(func):

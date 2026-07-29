@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from typing import ClassVar
 
 import torch
 import torch.nn.functional as F
@@ -17,7 +18,7 @@ class Positive(nn.Module):
 
 
 class LogisticRegressionModelWithShift(nn.Module):
-    parametrization_dict = {
+    parametrization_dict: ClassVar = {
         "k_values": Positive(),
         "sigma": Positive(),
         "scaling_factors": Positive(),

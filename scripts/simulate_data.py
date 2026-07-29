@@ -101,7 +101,7 @@ def simulate_data(
     vertical_shift_max: float = DEFAULT_VERTICAL_SHIFT_MAX,
     scaling_factor_min: float = DEFAULT_SCALING_FACTOR_MIN,
     scaling_factor_max: float = DEFAULT_SCALING_FACTOR_MAX,
-    rng_seed: int = None,
+    rng_seed: int | None = None,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
     dpath_out.mkdir(parents=True, exist_ok=True)
@@ -219,7 +219,7 @@ def simulate_data(
         "col_subject_index": COL_SUBJECT_INDEX,
         "col_timepoint": COL_TIMEPOINT,
         "cols_biomarker": sorted(
-            list(set(df_data.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_SUBJECT_INDEX})
+            set(df_data.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_SUBJECT_INDEX}
         ),
     }
     json_data["subjects_by_node"] = subjects_by_node

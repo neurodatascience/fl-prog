@@ -96,14 +96,16 @@ def load_json(fpath_json: Path) -> dict | list:
 
 def save_json(fpath: Path, data: dict, indent: int = 4):
     with open(fpath, "w") as file_json:
-        json.dump(data, file_json, indent=indent, default=serialize_data)
+        json.dump(
+            data, file_json, indent=indent, allow_nan=False, default=serialize_data
+        )
 
 
 def serialize_data(obj: object):
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     elif isinstance(obj, torch.Tensor):
-        return obj.data.numpy().tolist()
+        return serialize_data(obj.data.numpy())
     elif isinstance(obj, Path):
         return str(obj)
     elif isinstance(obj, enum.Enum):

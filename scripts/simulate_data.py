@@ -22,12 +22,12 @@ DEFAULT_K_MIN = 5.0
 DEFAULT_K_MAX = 10.0
 DEFAULT_X0_MIN = 0.0
 DEFAULT_X0_MAX = 1.0
-DEFAULT_ACCELERATION_FACTOR_MIN = 1
-DEFAULT_ACCELERATION_FACTOR_MAX = 1
+DEFAULT_ACCELERATION_FACTOR_STD = 0
 DEFAULT_VERTICAL_SHIFT_MIN = 0
 DEFAULT_VERTICAL_SHIFT_MAX = 0
 DEFAULT_SCALING_FACTOR_MIN = 1
 DEFAULT_SCALING_FACTOR_MAX = 1
+DEFAULT_NA_RATIO = 0.0
 
 COL_SUBJECT = "subject"
 COL_SUBJECT_INDEX = "subject_index"
@@ -54,20 +54,33 @@ def _process_list_args(*list_args):
     return list_args
 
 
-def _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far) -> pd.DataFrame:
+def _build_df(
+    timepoints, biomarkers, n_biomarkers, n_subjects_so_far, na_ratio: float = 0.0
+) -> pd.DataFrame:
     subjects = np.repeat(
         np.arange(len(biomarkers)) + n_subjects_so_far, [len(bm) for bm in biomarkers]
     )
+
+    biomarkers_dict = {
+        f"{COL_BIOMARKER_PREFIX}{i}": np.concatenate(biomarkers)[:, i]
+        for i in range(n_biomarkers)
+    }
+
+    # inject missing values
+    if na_ratio > 0:
+        for biomarker_name, biomarker_values in biomarkers_dict.items():
+            n_missing = int(len(biomarker_values) * na_ratio)
+            missing_indices = np.random.choice(
+                len(biomarker_values), size=n_missing, replace=False
+            )
+            biomarkers_dict[biomarker_name][missing_indices] = np.nan
 
     df_data = pd.DataFrame(
         data={
             COL_SUBJECT: subjects,
             COL_SUBJECT_INDEX: subjects - n_subjects_so_far,
             COL_TIMEPOINT: np.concatenate(timepoints),
-            **{
-                f"{COL_BIOMARKER_PREFIX}{i}": np.concatenate(biomarkers)[:, i]
-                for i in range(n_biomarkers)
-            },
+            **biomarkers_dict,
         }
     )
 
@@ -95,12 +108,12 @@ def simulate_data(
     k_max: float = DEFAULT_K_MAX,
     x0_min: float = DEFAULT_X0_MIN,
     x0_max: float = DEFAULT_X0_MAX,
-    acceleration_factor_min: float = DEFAULT_ACCELERATION_FACTOR_MIN,
-    acceleration_factor_max: float = DEFAULT_ACCELERATION_FACTOR_MAX,
+    acceleration_factor_std: float = DEFAULT_ACCELERATION_FACTOR_STD,
     vertical_shift_min: float = DEFAULT_VERTICAL_SHIFT_MIN,
     vertical_shift_max: float = DEFAULT_VERTICAL_SHIFT_MAX,
     scaling_factor_min: float = DEFAULT_SCALING_FACTOR_MIN,
     scaling_factor_max: float = DEFAULT_SCALING_FACTOR_MAX,
+    na_ratio: float = DEFAULT_NA_RATIO,
     rng_seed: int | None = None,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
@@ -181,8 +194,7 @@ def simulate_data(
                 shift_time=shift_time,
                 t0_min=t0_min,
                 t0_max=t0_max,
-                acceleration_factor_min=acceleration_factor_min,
-                acceleration_factor_max=acceleration_factor_max,
+                acceleration_factor_std=acceleration_factor_std,
                 rng=rng,
             )
         )
@@ -191,7 +203,9 @@ def simulate_data(
         time_shifts_all.append(time_shifts)
         acceleration_factors_all.append(acceleration_factors)
 
-        df_data = _build_df(timepoints, biomarkers, n_biomarkers, n_subjects_so_far)
+        df_data = _build_df(
+            timepoints, biomarkers, n_biomarkers, n_subjects_so_far, na_ratio=na_ratio
+        )
 
         subjects_by_node[node_id] = df_data[COL_SUBJECT].unique().tolist()
 
@@ -279,16 +293,18 @@ def simulate_data(
 @click.option("--x0-min", type=float, default=DEFAULT_X0_MIN)
 @click.option("--x0-max", type=float, default=DEFAULT_X0_MAX)
 @click.option(
-    "--acceleration-factor-min", type=float, default=DEFAULT_ACCELERATION_FACTOR_MIN
-)
-@click.option(
-    "--acceleration-factor-max", type=float, default=DEFAULT_ACCELERATION_FACTOR_MAX
+    "--acceleration-factor-std", type=float, default=DEFAULT_ACCELERATION_FACTOR_STD
 )
 @click.option("--vertical-shift-min", type=float, default=DEFAULT_VERTICAL_SHIFT_MIN)
 @click.option("--vertical-shift-max", type=float, default=DEFAULT_VERTICAL_SHIFT_MAX)
 @click.option("--scaling-factor-min", type=float, default=DEFAULT_SCALING_FACTOR_MIN)
 @click.option("--scaling-factor-max", type=float, default=DEFAULT_SCALING_FACTOR_MAX)
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")
+@click.option(
+    "--na-ratio",
+    type=click.FloatRange(min=0, max=1, max_open=True),
+    default=DEFAULT_NA_RATIO,
+)
 def main(**params):
     simulate_data(**params)
 

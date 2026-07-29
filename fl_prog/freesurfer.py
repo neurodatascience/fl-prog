@@ -43,7 +43,6 @@ def get_df_idp(
         index_col=[col_subject_original, col_session_original],
         dtype={col_subject_original: str, col_session_original: str},
     )
-    df_idp = df_idp.dropna(axis="index", how="any")
     df_idp = df_idp.sort_index()
     if measures is not None:
         df_idp = df_idp.loc[:, measures]

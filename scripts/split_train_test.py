@@ -59,7 +59,7 @@ def split_train_test(
         subjects_by_node[node_id] = subjects
         df_train = pd.concat(dfs_train)
         df_train[col_subject_index] = df_train[col_subject].map(
-            lambda x: subjects.index(x)
+            lambda x, subjects=subjects: subjects.index(x)
         )
 
         fname_site_new = fname_site.replace(tag, new_tag)

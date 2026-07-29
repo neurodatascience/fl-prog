@@ -96,7 +96,6 @@ def _add_adnimerge_measures(
         right_index=True,
         validate="1:1",
     )
-    df_merged = df_merged.dropna(axis="index", how="any", subset=measures_adnimerge)
     df_merged.index.names = original_index_names
     return df_merged
 
@@ -271,6 +270,7 @@ def get_adni_data(
     cols_biomarkers = list(
         set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_AGE_ADNIMERGE}
     )
+    df_idp = df_idp.dropna(axis="index", subset=cols_biomarkers, how="all")
 
     if min_max_by_measure is not None:
         min_values = pd.DataFrame(
@@ -307,7 +307,7 @@ def get_adni_data(
 
         # reindex
         df_site[COL_SUBJECT] = df_site.index.get_level_values(col_subject_original).map(
-            lambda x: subjects_by_node[node_id].index(x)
+            lambda x, node_id=node_id: subjects_by_node[node_id].index(x)
         )
 
         fname_tsv = _get_fname_out(tag, i=i_site)

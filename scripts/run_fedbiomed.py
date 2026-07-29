@@ -332,14 +332,18 @@ def run_fedbiomed(
     dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
     fpath_out = dpath_out / f"{tag}-estimated_params.json"
     if fpath_out.exists() and not overwrite:
-        print(f"{fpath_out} already exists. Use --overwrite to overwrite.")
+        click.secho(
+            f"{fpath_out} already exists. Use --overwrite to overwrite.",
+            fg="red",
+            bold=True,
+        )
         return
 
     dpath_data = get_dpath_latest(dpath_data) / tag
     fpath_config = dpath_data / f"{tag}.json"
     try:
         config = json.loads(fpath_config.read_text())
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError):
         raise RuntimeError(f"Expected a JSON file at {fpath_config}")
 
     node_id_map = get_node_id_map(fpath_config)

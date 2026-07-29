@@ -136,5 +136,6 @@ packages = ["fl_prog"]
 
 [dependency-groups]
 dev = [
+    "jupytext",
     "pre-commit",
 ]

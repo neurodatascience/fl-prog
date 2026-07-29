@@ -108,7 +108,7 @@ def _fit_age_model(
                 "method": "huber",
                 "n_rows": len(valid),
             }
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             print(
                 f"Warning: Huber regression failed for {biomarker_col!r}; "
                 f"falling back to OLS. Error: {err}"

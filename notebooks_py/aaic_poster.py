@@ -1091,7 +1091,7 @@ print("ADAS-related columns:", adas_cols)
 # with baseline demographics and MMSE / ADAS scores at baseline and last visit
 
 # Get all participant IDs from timeshift analysis (from previous cell)
-all_participant_ids = list(participant_ids_in_analysis)
+all_participant_ids = list(participant_ids_in_analysis)  # noqa F821
 
 # Create base dataframe
 df_subjects = pd.DataFrame({"participant_id": all_participant_ids})

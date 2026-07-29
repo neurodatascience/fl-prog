@@ -29,7 +29,7 @@ def _data_already_added(
 
     try:
         df_datasets = load_node_db(fpath_db=fpath_db)
-    except Exception as exception:
+    except Exception as exception:  # noqa: BLE001
         warnings.warn(str(exception))
         return False
 

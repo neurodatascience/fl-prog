@@ -1,5 +1,6 @@
+from collections.abc import Iterable
+
 import numpy as np
-from typing import Iterable, Optional, Tuple
 
 from fl_prog.utils.math import multivariate_logistic
 from fl_prog.utils.validation import check_rng
@@ -10,7 +11,7 @@ def generate_timepoints(
     n_timepoints: int,
     t0_min: float = 0.0,
     t0_max: float = 1.0,
-    rng: Optional[np.random.Generator] = None,
+    rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Generate timepoints for a subject.
 
@@ -21,7 +22,7 @@ def generate_timepoints(
         Minimum value for the first timepoint, by default 0.0
     t0_max : float, optional
         Maximum value for the first timepoint, by default 1.0
-    rng : Optional[np.random.Generator], optional
+    rng : np.random.Generator, optional
 
     Returns
     -------
@@ -54,10 +55,9 @@ def simulate_all_subjects(
     shift_time: bool = False,
     t0_min: float = 0.0,
     t0_max: float = 1.0,
-    acceleration_factor_min: float = 1.0,
-    acceleration_factor_max: float = 1.0,
-    rng: Optional[np.random.Generator] = None,
-) -> Tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
+    acceleration_factor_std: float = 0.0,
+    rng: np.random.Generator | None = None,
+) -> tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
     """Simulate timepoints and biomarkers for all subjects.
 
     Subjects can have multiple timepoints, but they are concatenated into a single
@@ -88,11 +88,9 @@ def simulate_all_subjects(
         Minimum value for the first timepoint of each subject.
     t0_max : float, optional
         Maximum value for the first timepoint of each subject.
-    acceleration_factor_min : float, optional
-        Minimum value for the acceleration factor of each subject.
-    acceleration_factor_max : float, optional
-        Maximum value for the acceleration factor of each bsubject.
-    rng : Optional[np.random.Generator], optional
+    acceleration_factor_std : float, optional
+        Standard deviation for the acceleration factor of each subject.
+    rng : np.random.Generator, optional
 
     Returns
     -------
@@ -125,9 +123,9 @@ def simulate_all_subjects(
     biomarkers_all = []
     acceleration_factors = []
     for _ in range(n_subjects):
-        acceleration_factor = rng.uniform(
-            acceleration_factor_min, acceleration_factor_max
-        )
+        acceleration_factor = -1
+        while acceleration_factor <= 0:
+            acceleration_factor = rng.normal(1.0, acceleration_factor_std)
         if n_timepoints_distribution is not None:
             n_timepoints = int(
                 rng.choice(

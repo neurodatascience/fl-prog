@@ -23,8 +23,7 @@ DEFAULT_K_MIN = 5.0
 DEFAULT_K_MAX = 10.0
 DEFAULT_X0_MIN = 0.0
 DEFAULT_X0_MAX = 1.0
-DEFAULT_ACCELERATION_FACTOR_MIN = 1
-DEFAULT_ACCELERATION_FACTOR_MAX = 1
+DEFAULT_ACCELERATION_FACTOR_STD = 1
 DEFAULT_VERTICAL_SHIFT_MIN = 0
 DEFAULT_VERTICAL_SHIFT_MAX = 0
 DEFAULT_SCALING_FACTOR_MIN = 1
@@ -96,13 +95,12 @@ def simulate_data(
     k_max: float = DEFAULT_K_MAX,
     x0_min: float = DEFAULT_X0_MIN,
     x0_max: float = DEFAULT_X0_MAX,
-    acceleration_factor_min: float = DEFAULT_ACCELERATION_FACTOR_MIN,
-    acceleration_factor_max: float = DEFAULT_ACCELERATION_FACTOR_MAX,
+    acceleration_factor_std: float = DEFAULT_ACCELERATION_FACTOR_STD,
     vertical_shift_min: float = DEFAULT_VERTICAL_SHIFT_MIN,
     vertical_shift_max: float = DEFAULT_VERTICAL_SHIFT_MAX,
     scaling_factor_min: float = DEFAULT_SCALING_FACTOR_MIN,
     scaling_factor_max: float = DEFAULT_SCALING_FACTOR_MAX,
-    rng_seed: int = None,
+    rng_seed: int | None = None,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
     dpath_out.mkdir(parents=True, exist_ok=True)
@@ -182,8 +180,7 @@ def simulate_data(
                 shift_time=shift_time,
                 t0_min=t0_min,
                 t0_max=t0_max,
-                acceleration_factor_min=acceleration_factor_min,
-                acceleration_factor_max=acceleration_factor_max,
+                acceleration_factor_std=acceleration_factor_std,
                 rng=rng,
             )
         )
@@ -220,7 +217,7 @@ def simulate_data(
         "col_subject_index": COL_SUBJECT_INDEX,
         "col_timepoint": COL_TIMEPOINT,
         "cols_biomarker": sorted(
-            list(set(df_data.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_SUBJECT_INDEX})
+            set(df_data.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_SUBJECT_INDEX}
         ),
     }
     json_data["subjects_by_node"] = subjects_by_node
@@ -280,10 +277,7 @@ def simulate_data(
 @click.option("--x0-min", type=float, default=DEFAULT_X0_MIN)
 @click.option("--x0-max", type=float, default=DEFAULT_X0_MAX)
 @click.option(
-    "--acceleration-factor-min", type=float, default=DEFAULT_ACCELERATION_FACTOR_MIN
-)
-@click.option(
-    "--acceleration-factor-max", type=float, default=DEFAULT_ACCELERATION_FACTOR_MAX
+    "--acceleration-factor-std", type=float, default=DEFAULT_ACCELERATION_FACTOR_STD
 )
 @click.option("--vertical-shift-min", type=float, default=DEFAULT_VERTICAL_SHIFT_MIN)
 @click.option("--vertical-shift-max", type=float, default=DEFAULT_VERTICAL_SHIFT_MAX)

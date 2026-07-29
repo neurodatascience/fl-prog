@@ -18,9 +18,9 @@ If --min-max is used, y_adj is globally (all sites) min-max scaled per biomarker
 adjustment, which is useful for compatibility with the current sigmoid downstream model.
 """
 
-from pathlib import Path
 import copy
 import json
+from pathlib import Path
 
 import click
 import numpy as np
@@ -29,7 +29,6 @@ from sklearn.linear_model import HuberRegressor
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, save_json
-
 
 DEFAULT_AGE_COL = "AGE"
 
@@ -107,7 +106,7 @@ def _fit_age_model(
                 "beta_age": float(model.coef_[0]),
                 "beta_time": float(model.coef_[1]),
                 "method": "huber",
-                "n_rows": int(len(valid)),
+                "n_rows": len(valid),
             }
         except Exception as err:
             print(
@@ -126,7 +125,7 @@ def _fit_age_model(
         "beta_age": float(beta_age),
         "beta_time": float(beta_time),
         "method": "ols",
-        "n_rows": int(len(valid)),
+        "n_rows": len(valid),
     }
 
 

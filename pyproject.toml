@@ -145,7 +145,7 @@ dev = [
 "notebooks_py/" = "py:percent"
 
 [tool.ruff.lint.per-file-ignores]
-"notebooks_py/*.py" = ["E402"]
+"notebooks_py/*.py" = ["E402", "B018"]
 
 [tool.ruff]
 builtins = ["display"]

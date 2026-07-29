@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 import json
 import shutil
-from pathlib import Path
 from collections.abc import Iterable
+from pathlib import Path
 
 import click
 import numpy as np
@@ -10,7 +10,6 @@ import pandas as pd
 from declearn.optimizer.modules import ScaffoldServerModule
 from fedbiomed.common.optimizers.optimizer import Optimizer
 from fedbiomed.common.serializer import Serializer
-
 from fedbiomed.researcher.aggregators.fedavg import FedAverage
 from fedbiomed.researcher.aggregators.scaffold import Scaffold
 
@@ -23,13 +22,13 @@ from fl_prog.utils.constants import (
 )
 from fl_prog.utils.fbm_node import load_node_db
 from fl_prog.utils.io import (
+    DEFAULT_DPATH_DATA,
+    DEFAULT_DPATH_FEDBIOMED,
+    DEFAULT_DPATH_RESULTS,
     get_dpath_latest,
     get_node_id_map,
     save_json,
     working_directory,
-    DEFAULT_DPATH_DATA,
-    DEFAULT_DPATH_FEDBIOMED,
-    DEFAULT_DPATH_RESULTS,
 )
 
 DEFAULT_N_ROUNDS = 10

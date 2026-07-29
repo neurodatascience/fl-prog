@@ -59,11 +59,11 @@ def plot_simulated_data(tag, ax, with_legend=False):
 
     fpath_json_data = data_dir / f"{tag}.json"
     json_data = json.loads(fpath_json_data.read_text())
-    print(f"fpath_json_data: {str(fpath_json_data)}")
+    print(f"fpath_json_data: {fpath_json_data!s}")
 
     try:
         fpath_json_results = results_dir / f"{tag}-estimated_params.json"
-        print(f"fpath_json_results: {str(fpath_json_results)}")
+        print(f"fpath_json_results: {fpath_json_results!s}")
     except FileNotFoundError:
         print("Results not available")
 
@@ -194,15 +194,12 @@ fig_data.savefig("simulation_data.svg", bbox_inches="tight", transparent=True)
 # ## Synthetic data model fits
 
 # %%
-from typing import Optional
-
-import seaborn as sns
-import scipy
-
 
 import numpy as np
-import torch
+import scipy
 import scipy.stats
+import seaborn as sns
+import torch
 from sklearn.metrics import mean_squared_error
 
 sns.set_theme(context="poster", style="ticks")
@@ -212,7 +209,7 @@ def check_model_fit(
     tag: str,
     setup: str,
     align_x=False,
-    ax: Optional[plt.Axes] = None,
+    ax: plt.Axes | None = None,
     **kwargs,
 ):
 
@@ -230,12 +227,12 @@ def check_model_fit(
 
     fpath_json_data = data_dir / f"{tag}.json"
     json_data = json.loads(fpath_json_data.read_text())
-    print(f"fpath_json_data: {str(fpath_json_data)}")
+    print(f"fpath_json_data: {fpath_json_data!s}")
 
     try:
         fpath_json_results = results_dir / f"{tag}-estimated_params.json"
         results_dict = json.loads(fpath_json_results.read_text())
-        print(f"fpath_json_results: {str(fpath_json_results)}")
+        print(f"fpath_json_results: {fpath_json_results!s}")
     except FileNotFoundError:
         print("Results not available")
 
@@ -369,7 +366,7 @@ def get_df_results(CONDITIONS, N_ITERATIONS, DPATH_DATA, DPATH_RESULTS):
             )
 
             for i_biomarker, col_biomarker in enumerate(cols_biomarker):
-                for setup in results.keys():
+                for setup in results:
                     estimated_k_values = np.array(results[setup]["estimated_k_values"])
                     estimated_x0_values = np.array(
                         results[setup]["estimated_x0_values"]
@@ -736,12 +733,11 @@ fig_age.savefig("adni_age_groups.svg", bbox_inches="tight", transparent=True)
 # ## Model fits and time shifts
 
 # %%
-from fl_prog.utils.constants import NODE_PREFIX
-import pandas as pd
-
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+from fl_prog.utils.constants import NODE_PREFIX
 
 sns.set_theme(context="poster", style="ticks")
 
@@ -964,9 +960,10 @@ for ax_idx, biomarker in enumerate(cols_biomarker):
 fig.tight_layout()
 
 # %%
-import matplotlib.pyplot as plt
 import json
 from pathlib import Path
+
+import matplotlib.pyplot as plt
 
 tag = "adni_noniid"
 dname_date = "2026_06_02"
@@ -1032,10 +1029,9 @@ for ax_idx, biomarker in enumerate(cols_biomarker[:5]):
                 and setup != "centralized"
                 or ax_idx == 0
                 and setup == "centralized"
-            ):
-                if setup.capitalize() not in legend_labels:
-                    legend_handles.append(line[0])
-                    legend_labels.append(setup.capitalize())
+            ) and setup.capitalize() not in legend_labels:
+                legend_handles.append(line[0])
+                legend_labels.append(setup.capitalize())
 
     ax.set_title(biomarker.replace("_thickness", ""), fontweight="bold")
     ax.set_ylabel("Biomarker value")

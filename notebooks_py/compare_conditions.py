@@ -17,8 +17,8 @@ import json
 
 import numpy as np
 import pandas as pd
-import torch
 import scipy.stats
+import torch
 from sklearn.metrics import mean_squared_error
 
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, DEFAULT_DPATH_RESULTS
@@ -113,7 +113,7 @@ for condition in CONDITIONS:
         shifted_time = df_merged[col_timepoint] + time_shifts[df_merged[col_subject]]
 
         for i_biomarker, col_biomarker in enumerate(cols_biomarker):
-            for setup in results.keys():
+            for setup in results:
                 estimated_k_values = np.array(results[setup]["estimated_k_values"])
                 estimated_x0_values = np.array(results[setup]["estimated_x0_values"])
 
@@ -187,8 +187,8 @@ display(df_results)
 # scipy.stats.kendalltau(np.argsort([1, 2, 3, 4, 5]), np.argsort([1, 3, 2, 4, 5]))
 
 # %%
-import seaborn as sns
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 plt.rcParams["svg.fonttype"] = "none"
 
@@ -352,7 +352,7 @@ for metric in [
             condition_label = LABEL_MAP[condition]
             mean_score = df_results_avg_metric[condition].mean()
             std_score = df_results_avg_metric[condition].std()
-            cells.append(f"${mean_score:.3f} \pm {std_score:.3f}$")
+            cells.append(rf"${mean_score:.3f} \pm {std_score:.3f}$")
 
         table_lines.append(" & ".join(cells) + r" \\")
 

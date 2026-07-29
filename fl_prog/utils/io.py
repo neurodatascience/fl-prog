@@ -5,10 +5,10 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 
-import torch
 import numpy as np
+import torch
 
-from fl_prog.utils.constants import DNAME_LATEST, DATE_FORMAT
+from fl_prog.utils.constants import DATE_FORMAT, DNAME_LATEST
 
 DPATH_PROJECT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_DPATH_DATA = DPATH_PROJECT / "data"
@@ -20,15 +20,16 @@ def get_dpath_latest(dpath_parent, use_today=False):
     dpath_parent = Path(dpath_parent)
     dpath_latest = dpath_parent / DNAME_LATEST
 
-    dpath_today = dpath_parent / datetime.datetime.today().strftime(DATE_FORMAT)
+    dpath_today = dpath_parent / datetime.datetime.now().astimezone().strftime(
+        DATE_FORMAT
+    )
     if dpath_latest.exists():
         if use_today and dpath_latest.resolve() != dpath_today.resolve():
             if dpath_latest.is_symlink():
                 dpath_latest.unlink()
             else:
                 raise RuntimeError(f"{dpath_latest=} exists but is not a symlink")
-
-    if not dpath_latest.exists():
+    else:
         if dpath_latest.is_symlink():
             dpath_latest.unlink()
         dpath_today.mkdir(parents=True, exist_ok=True)

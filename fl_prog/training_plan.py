@@ -57,6 +57,7 @@ class FLProgTrainingPlan(TorchTrainingPlan):
     def init_dependencies(self):
         deps = [
             "from functools import wraps",
+            "from typing import ClassVar",
             "import torch.optim as optim",
             "from fedbiomed.common.datamanager import DataManager",
             "from fedbiomed.common.dataset import TabularDataset",

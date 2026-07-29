@@ -17,6 +17,9 @@ import json
 import os
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 from fl_prog.utils.constants import DNAME_LATEST
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, DPATH_PROJECT
 
@@ -32,10 +35,10 @@ TAG = notebook_config.get("tag", "adni_iid")
 dname_results_date = notebook_config.get("dname_results_date", DNAME_LATEST)
 fpath_adni_merge = Path(os.environ.get("ADNI_MERGE_FILE"))
 
-fpath_json = Path(
-    f"{DEFAULT_DPATH_RESULTS}/{dname_results_date}/{TAG}/{TAG}-estimated_params.json"
-)
+dpath_results = DEFAULT_DPATH_RESULTS / dname_results_date / TAG
+fpath_json = dpath_results / f"{TAG}-estimated_params.json"
 print(fpath_json)
+
 json_content = json.loads(fpath_json.read_text())
 col_subject = json_content["settings"]["config"]["cols"]["col_subject"]
 cols_biomarker = json_content["settings"]["config"]["cols"]["cols_biomarker"]
@@ -51,6 +54,18 @@ min_max_by_measure = json_content["settings"]["config"]["settings"]["config"][
 flipped = json_content["settings"]["config"]["settings"]["config"].get("flip", True)
 results = json_content["results"]
 # results
+
+
+def save_fig(fig: sns.FacetGrid | plt.Figure, fname, extension="svg", **kwargs):
+    kwargs_default = {"bbox_inches": "tight", "dpi": 300}
+    kwargs_default.update(kwargs)
+
+    fpath: Path = (dpath_results / fname).with_suffix(f".{extension}")
+    fpath.parent.mkdir(parents=True, exist_ok=True)
+
+    fig.savefig(fpath, **kwargs_default)
+    print(f"Saved figure to {fpath}")
+
 
 # %%
 import pandas as pd
@@ -191,6 +206,9 @@ for ax in fig_models.axes.flatten():
     ax.set_xlabel("Months")
 
 # %%
+save_fig(fig_models, "group_trajectories")
+
+# %%
 import pandas as pd
 
 if fpath_adni_merge is None or not fpath_adni_merge.exists():
@@ -271,6 +289,7 @@ for i_ax, (biomarker, ax) in enumerate(fig_model_fits.axes_dict.items()):
         alpha=0.2,
         ax=ax,
         legend=False,
+        rasterized=True,
     )
 
     ax.set_ylabel("Biomarker value")
@@ -279,6 +298,9 @@ for i_ax, (biomarker, ax) in enumerate(fig_model_fits.axes_dict.items()):
     # xticks = ax.get_xticks()
     # ax.set_xticks(xticks)
     # ax.set_xticklabels(xticks * time_scaling_factor)
+
+# %%
+save_fig(fig_model_fits, "biomarker_fits")
 
 # %%
 import numpy as np

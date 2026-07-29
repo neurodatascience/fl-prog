@@ -139,3 +139,7 @@ dev = [
     "jupytext",
     "pre-commit",
 ]
+
+[tool.jupytext.formats]
+"notebooks/" = "ipynb"
+"notebooks_py/" = "py:percent"

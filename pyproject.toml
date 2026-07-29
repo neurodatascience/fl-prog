@@ -136,5 +136,16 @@ packages = ["fl_prog"]
 
 [dependency-groups]
 dev = [
+    "jupytext",
     "pre-commit",
 ]
+
+[tool.jupytext.formats]
+"notebooks/" = "ipynb"
+"notebooks_py/" = "py:percent"
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks_py/*.py" = ["E402"]
+
+[tool.ruff]
+builtins = ["display"]

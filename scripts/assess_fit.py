@@ -7,7 +7,7 @@ import click
 import numpy as np
 import pandas as pd
 
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_PREFIX
 from fl_prog.utils.io import (
     DEFAULT_DPATH_RESULTS,
     get_dpath_latest,
@@ -111,6 +111,61 @@ def _true_params_by_subject(subjects_by_node: dict, params: dict) -> ModelParams
     )
 
 
+def _estimated_params_by_setup(
+    json_results: dict, subjects_by_node: dict
+) -> dict[str, ModelParams]:
+    """Align estimated parameters to the canonical subject order, per setup.
+
+    Estimated per-subject parameters are keyed by node (``node_1``, ...,
+    ``node_centralized``); subjects are listed in ``subjects_by_node`` in the
+    same order as in the estimated arrays. Node keys are processed in JSON
+    order, which matches the merged data's subject order.
+    """
+    params_by_setup = {}
+    for setup, result in json_results["results"].items():
+        per_feature = {
+            "k_values": np.asarray(result["estimated_k_values"], dtype=float),
+            "x0_values": np.asarray(result["estimated_x0_values"], dtype=float),
+            "vertical_shifts": np.asarray(
+                result["estimated_vertical_shifts"], dtype=float
+            ),
+            "scaling_factors": np.asarray(
+                result["estimated_scaling_factors"], dtype=float
+            ),
+            "sigma": np.asarray(result["estimated_sigma"], dtype=float),
+        }
+
+        estimated_time_shifts = result["estimated_time_shifts"]
+        estimated_acceleration_factors = result["estimated_acceleration_factors"]
+
+        time_shifts = []
+        acceleration_factors = []
+        for node_id, shifts in estimated_time_shifts.items():
+            subjects = subjects_by_node[node_id.removeprefix(NODE_PREFIX)]
+            if len(shifts) != len(subjects):
+                raise ValueError(
+                    f"estimated time_shifts for {node_id} have length "
+                    f"{len(shifts)} but {len(subjects)} subjects"
+                )
+            acceleration_factors_node = estimated_acceleration_factors[node_id]
+            if len(acceleration_factors_node) != len(subjects):
+                raise ValueError(
+                    f"estimated acceleration_factors for {node_id} have length "
+                    f"{len(acceleration_factors_node)} but {len(subjects)} subjects"
+                )
+            time_shifts.append(np.asarray(shifts, dtype=float))
+            acceleration_factors.append(
+                np.asarray(acceleration_factors_node, dtype=float)
+            )
+
+        params_by_setup[setup] = ModelParams(
+            **per_feature,
+            time_shifts=np.concatenate(time_shifts),
+            acceleration_factors=np.concatenate(acceleration_factors),
+        )
+    return params_by_setup
+
+
 def _load_df_data(json_data: dict, dpath_data: Path, tag: str) -> pd.DataFrame:
     cols = _get_cols(json_data)
     fpath_data = dpath_data / f"{tag}-merged.tsv"
@@ -180,6 +235,19 @@ def assess_fit(
         f"true acceleration_factors range: [{true_params_by_subject.acceleration_factors.min():.3f}, "
         f"{true_params_by_subject.acceleration_factors.max():.3f}]"
     )
+
+    estimated_by_setup = _estimated_params_by_setup(json_results, subjects_by_node)
+    for setup, estimated_params in estimated_by_setup.items():
+        assert estimated_params.time_shifts.shape == (n_subjects,)
+        assert estimated_params.acceleration_factors.shape == (n_subjects,)
+        print(
+            f"{setup}: estimated time_shifts range: "
+            f"[{estimated_params.time_shifts.min():.3f}, "
+            f"{estimated_params.time_shifts.max():.3f}], "
+            f"estimated acceleration_factors range: "
+            f"[{estimated_params.acceleration_factors.min():.3f}, "
+            f"{estimated_params.acceleration_factors.max():.3f}]"
+        )
 
     df_metrics = pd.DataFrame(
         columns=["setup", "set_name", "col_biomarker", "metric", "value"]

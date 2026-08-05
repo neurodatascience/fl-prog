@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import click
+import numpy as np
 import pandas as pd
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
@@ -11,6 +13,23 @@ from fl_prog.utils.io import (
     get_dpath_latest,
     load_json,
 )
+
+
+@dataclass
+class ModelParams:
+    """Parameters aligned to a canonical subject order.
+
+    Per-feature arrays have shape (n_features,); per-subject arrays have
+    shape (n_subjects,), aligned to the merged data's subject order.
+    """
+
+    k_values: np.ndarray
+    x0_values: np.ndarray
+    vertical_shifts: np.ndarray
+    scaling_factors: np.ndarray
+    sigma: np.ndarray
+    time_shifts: np.ndarray
+    acceleration_factors: np.ndarray
 
 
 def _get_fpath_json_results(tag: str, dpath_results: Path) -> Path:
@@ -44,6 +63,52 @@ def _get_subjects_by_node(json_data: dict) -> dict:
 
 def _get_true_params(json_data: dict) -> dict:
     return json_data["params"]
+
+
+def _true_params_by_subject(subjects_by_node: dict, params: dict) -> ModelParams:
+    """Align true simulation parameters to the canonical subject order.
+
+    True per-subject parameters are stored as lists per site in file order.
+    Site ``i`` (0-indexed) corresponds to node ``str(i + 1)``, whose subjects
+    are listed in ``subjects_by_node`` in the same order as in the site TSV.
+    """
+    per_feature = {
+        "k_values": np.asarray(params["k_values"], dtype=float),
+        "x0_values": np.asarray(params["x0_values"], dtype=float),
+        "vertical_shifts": np.asarray(params["vertical_shifts"], dtype=float),
+        "scaling_factors": np.asarray(params["scaling_factors"], dtype=float),
+        "sigma": np.asarray(params["sigmas"], dtype=float),
+    }
+
+    time_shifts = []
+    acceleration_factors = []
+    for i_site, (time_shifts_site, acc_site) in enumerate(
+        zip(
+            params["time_shifts"],
+            params["acceleration_factors"],
+            strict=True,
+        )
+    ):
+        node_id = str(i_site + 1)
+        subjects = subjects_by_node[node_id]
+        if len(time_shifts_site) != len(subjects):
+            raise ValueError(
+                f"true time_shifts for node {node_id} have length "
+                f"{len(time_shifts_site)} but {len(subjects)} subjects"
+            )
+        if len(acc_site) != len(subjects):
+            raise ValueError(
+                f"true acceleration_factors for node {node_id} have length "
+                f"{len(acc_site)} but {len(subjects)} subjects"
+            )
+        time_shifts.append(np.asarray(time_shifts_site, dtype=float))
+        acceleration_factors.append(np.asarray(acc_site, dtype=float))
+
+    return ModelParams(
+        **per_feature,
+        time_shifts=np.concatenate(time_shifts),
+        acceleration_factors=np.concatenate(acceleration_factors),
+    )
 
 
 def _load_df_data(json_data: dict, dpath_data: Path, tag: str) -> pd.DataFrame:
@@ -102,6 +167,18 @@ def assess_fit(
     )
     assert subjects_in_nodes == sorted(df_data[col_subject].unique()), (
         "subjects_by_node does not match subjects in merged data"
+    )
+
+    true_params_by_subject = _true_params_by_subject(subjects_by_node, true_params)
+    assert true_params_by_subject.time_shifts.shape == (n_subjects,)
+    assert true_params_by_subject.acceleration_factors.shape == (n_subjects,)
+    print(
+        f"true time_shifts range: [{true_params_by_subject.time_shifts.min():.3f}, "
+        f"{true_params_by_subject.time_shifts.max():.3f}]"
+    )
+    print(
+        f"true acceleration_factors range: [{true_params_by_subject.acceleration_factors.min():.3f}, "
+        f"{true_params_by_subject.acceleration_factors.max():.3f}]"
     )
 
     df_metrics = pd.DataFrame(

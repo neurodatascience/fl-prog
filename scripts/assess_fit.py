@@ -65,6 +65,56 @@ def _get_true_params(json_data: dict) -> dict:
     return json_data["params"]
 
 
+TRUE_FEATURE_KEYS = {
+    "k_values": "k_values",
+    "x0_values": "x0_values",
+    "vertical_shifts": "vertical_shifts",
+    "scaling_factors": "scaling_factors",
+    "sigma": "sigmas",
+}
+
+ESTIMATED_FEATURE_KEYS = {
+    "k_values": "estimated_k_values",
+    "x0_values": "estimated_x0_values",
+    "vertical_shifts": "estimated_vertical_shifts",
+    "scaling_factors": "estimated_scaling_factors",
+    "sigma": "estimated_sigma",
+}
+
+
+def _build_model_params(
+    feature_arrays: dict, per_node: dict[str, dict], subjects_by_node: dict
+) -> ModelParams:
+    """Assemble a ModelParams from per-feature arrays and per-node lists.
+
+    ``per_node`` maps node ids (without the ``node_`` prefix) to dicts with
+    ``time_shifts`` and ``acceleration_factors`` lists, each aligned to
+    ``subjects_by_node[node_id]``. Nodes must be given in merged-data subject
+    order (site order); their lists are validated and concatenated in that
+    order.
+    """
+    time_shifts = []
+    acceleration_factors = []
+    for node_id, node_params in per_node.items():
+        subjects = subjects_by_node[node_id]
+        for param_name in ("time_shifts", "acceleration_factors"):
+            if len(node_params[param_name]) != len(subjects):
+                raise ValueError(
+                    f"{param_name} for node {node_id} have length "
+                    f"{len(node_params[param_name])} but {len(subjects)} subjects"
+                )
+        time_shifts.append(np.asarray(node_params["time_shifts"], dtype=float))
+        acceleration_factors.append(
+            np.asarray(node_params["acceleration_factors"], dtype=float)
+        )
+
+    return ModelParams(
+        **feature_arrays,
+        time_shifts=np.concatenate(time_shifts),
+        acceleration_factors=np.concatenate(acceleration_factors),
+    )
+
+
 def _true_params_by_subject(subjects_by_node: dict, params: dict) -> ModelParams:
     """Align true simulation parameters to the canonical subject order.
 
@@ -72,43 +122,22 @@ def _true_params_by_subject(subjects_by_node: dict, params: dict) -> ModelParams
     Site ``i`` (0-indexed) corresponds to node ``str(i + 1)``, whose subjects
     are listed in ``subjects_by_node`` in the same order as in the site TSV.
     """
-    per_feature = {
-        "k_values": np.asarray(params["k_values"], dtype=float),
-        "x0_values": np.asarray(params["x0_values"], dtype=float),
-        "vertical_shifts": np.asarray(params["vertical_shifts"], dtype=float),
-        "scaling_factors": np.asarray(params["scaling_factors"], dtype=float),
-        "sigma": np.asarray(params["sigmas"], dtype=float),
+    feature_arrays = {
+        field: np.asarray(params[source_key], dtype=float)
+        for field, source_key in TRUE_FEATURE_KEYS.items()
     }
 
-    time_shifts = []
-    acceleration_factors = []
-    for i_site, (time_shifts_site, acc_site) in enumerate(
-        zip(
-            params["time_shifts"],
-            params["acceleration_factors"],
-            strict=True,
+    per_node = {
+        str(i_site + 1): {
+            "time_shifts": time_shifts_site,
+            "acceleration_factors": acc_site,
+        }
+        for i_site, (time_shifts_site, acc_site) in enumerate(
+            zip(params["time_shifts"], params["acceleration_factors"], strict=True)
         )
-    ):
-        node_id = str(i_site + 1)
-        subjects = subjects_by_node[node_id]
-        if len(time_shifts_site) != len(subjects):
-            raise ValueError(
-                f"true time_shifts for node {node_id} have length "
-                f"{len(time_shifts_site)} but {len(subjects)} subjects"
-            )
-        if len(acc_site) != len(subjects):
-            raise ValueError(
-                f"true acceleration_factors for node {node_id} have length "
-                f"{len(acc_site)} but {len(subjects)} subjects"
-            )
-        time_shifts.append(np.asarray(time_shifts_site, dtype=float))
-        acceleration_factors.append(np.asarray(acc_site, dtype=float))
+    }
 
-    return ModelParams(
-        **per_feature,
-        time_shifts=np.concatenate(time_shifts),
-        acceleration_factors=np.concatenate(acceleration_factors),
-    )
+    return _build_model_params(feature_arrays, per_node, subjects_by_node)
 
 
 def _estimated_params_by_setup(
@@ -123,45 +152,23 @@ def _estimated_params_by_setup(
     """
     params_by_setup = {}
     for setup, result in json_results["results"].items():
-        per_feature = {
-            "k_values": np.asarray(result["estimated_k_values"], dtype=float),
-            "x0_values": np.asarray(result["estimated_x0_values"], dtype=float),
-            "vertical_shifts": np.asarray(
-                result["estimated_vertical_shifts"], dtype=float
-            ),
-            "scaling_factors": np.asarray(
-                result["estimated_scaling_factors"], dtype=float
-            ),
-            "sigma": np.asarray(result["estimated_sigma"], dtype=float),
+        feature_arrays = {
+            field: np.asarray(result[source_key], dtype=float)
+            for field, source_key in ESTIMATED_FEATURE_KEYS.items()
         }
 
         estimated_time_shifts = result["estimated_time_shifts"]
         estimated_acceleration_factors = result["estimated_acceleration_factors"]
+        per_node = {
+            node_id.removeprefix(NODE_PREFIX): {
+                "time_shifts": shifts,
+                "acceleration_factors": estimated_acceleration_factors[node_id],
+            }
+            for node_id, shifts in estimated_time_shifts.items()
+        }
 
-        time_shifts = []
-        acceleration_factors = []
-        for node_id, shifts in estimated_time_shifts.items():
-            subjects = subjects_by_node[node_id.removeprefix(NODE_PREFIX)]
-            if len(shifts) != len(subjects):
-                raise ValueError(
-                    f"estimated time_shifts for {node_id} have length "
-                    f"{len(shifts)} but {len(subjects)} subjects"
-                )
-            acceleration_factors_node = estimated_acceleration_factors[node_id]
-            if len(acceleration_factors_node) != len(subjects):
-                raise ValueError(
-                    f"estimated acceleration_factors for {node_id} have length "
-                    f"{len(acceleration_factors_node)} but {len(subjects)} subjects"
-                )
-            time_shifts.append(np.asarray(shifts, dtype=float))
-            acceleration_factors.append(
-                np.asarray(acceleration_factors_node, dtype=float)
-            )
-
-        params_by_setup[setup] = ModelParams(
-            **per_feature,
-            time_shifts=np.concatenate(time_shifts),
-            acceleration_factors=np.concatenate(acceleration_factors),
+        params_by_setup[setup] = _build_model_params(
+            feature_arrays, per_node, subjects_by_node
         )
     return params_by_setup
 

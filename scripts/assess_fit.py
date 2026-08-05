@@ -6,6 +6,7 @@ from pathlib import Path
 import click
 import numpy as np
 import pandas as pd
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_PREFIX
 from fl_prog.utils.io import (
@@ -179,6 +180,94 @@ def _load_df_data(json_data: dict, dpath_data: Path, tag: str) -> pd.DataFrame:
     return pd.read_csv(fpath_data, sep="\t", dtype={cols["col_subject"]: str})
 
 
+def _predict(p: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.ndarray:
+    """Model forward pass, vectorized over entries.
+
+    Returns predictions of shape (n_entries, n_features), matching
+    LogisticRegressionModelWithShift.forward::
+        pred = scaling * sigmoid(k * ((t + shift) * acc - x0)) + vertical
+    """
+    t = np.asarray(t, dtype=float)
+    subject_ids = np.asarray(subject_ids, dtype=int)
+
+    shift = p.time_shifts[subject_ids]
+    acceleration = p.acceleration_factors[subject_ids]
+    shifted_t = (t + shift) * acceleration
+
+    linear_combination = p.k_values * (shifted_t[:, np.newaxis] - p.x0_values)
+    output = p.scaling_factors * (1 / (1 + np.exp(-linear_combination)))
+    output += p.vertical_shifts
+    return output
+
+
+def _compute_predictive_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    cols_biomarker: list[str],
+    setup: str,
+) -> list[dict]:
+    """Predictive fit metrics on observed data, per biomarker.
+
+    Rows with a NaN in ``y_true`` are masked out per biomarker, mirroring the
+    missing-data handling in the model loss.
+    """
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+
+    rows = []
+    y_true_all = []
+    y_pred_all = []
+    for i_biomarker, col_biomarker in enumerate(cols_biomarker):
+        mask = ~np.isnan(y_true[:, i_biomarker])
+        y_true_biomarker = y_true[mask, i_biomarker]
+        y_pred_biomarker = y_pred[mask, i_biomarker]
+        residuals = y_true_biomarker - y_pred_biomarker
+
+        y_true_all.append(y_true_biomarker)
+        y_pred_all.append(y_pred_biomarker)
+
+        for metric, value in [
+            ("r2_score", r2_score(y_true_biomarker, y_pred_biomarker)),
+            (
+                "mean_squared_error",
+                mean_squared_error(y_true_biomarker, y_pred_biomarker),
+            ),
+            (
+                "mean_absolute_error",
+                mean_absolute_error(y_true_biomarker, y_pred_biomarker),
+            ),
+            ("residual_mean", residuals.mean()),
+            ("residual_std", residuals.std()),
+        ]:
+            rows.append(
+                {
+                    "setup": setup,
+                    "set_name": "data",
+                    "col_biomarker": col_biomarker,
+                    "metric": metric,
+                    "value": value,
+                }
+            )
+
+    y_true_all = np.concatenate(y_true_all)
+    y_pred_all = np.concatenate(y_pred_all)
+    for metric, value in [
+        ("r2_score", r2_score(y_true_all, y_pred_all)),
+        ("mean_squared_error", mean_squared_error(y_true_all, y_pred_all)),
+        ("mean_absolute_error", mean_absolute_error(y_true_all, y_pred_all)),
+    ]:
+        rows.append(
+            {
+                "setup": setup,
+                "set_name": "data",
+                "col_biomarker": "all",
+                "metric": metric,
+                "value": value,
+            }
+        )
+    return rows
+
+
 def _save_tsv(df_metrics: pd.DataFrame, fpath_out: Path):
     fpath_out.parent.mkdir(parents=True, exist_ok=True)
     df_metrics.to_csv(fpath_out, sep="\t", index=False)
@@ -256,8 +345,20 @@ def assess_fit(
             f"{estimated_params.acceleration_factors.max():.3f}]"
         )
 
+    cols_biomarker = cols["cols_biomarker"]
+    t = df_data[cols["col_timepoint"]].to_numpy(dtype=float)
+    subject_ids = df_data[cols["col_subject_index"]].to_numpy(dtype=int)
+    y_true = df_data[cols_biomarker].to_numpy(dtype=float)
+
+    rows = []
+    for setup, estimated_params in estimated_by_setup.items():
+        y_pred = _predict(estimated_params, t, subject_ids)
+        rows.extend(
+            _compute_predictive_metrics(y_true, y_pred, cols_biomarker, setup=setup)
+        )
+
     df_metrics = pd.DataFrame(
-        columns=["setup", "set_name", "col_biomarker", "metric", "value"]
+        rows, columns=["setup", "set_name", "col_biomarker", "metric", "value"]
     )
 
     fpath_out = fpath_json_results.with_name(f"{tag}-fit_quality.tsv")

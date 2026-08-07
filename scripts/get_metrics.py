@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 
+from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from pathlib import Path
+from typing import Any
 
 import click
 import numpy as np
@@ -15,6 +17,26 @@ from fl_prog.utils.io import (
     get_dpath_latest,
     load_json,
 )
+
+TRUE_FEATURE_KEYS = {
+    "k_values": "k_values",
+    "x0_values": "x0_values",
+    "vertical_shifts": "vertical_shifts",
+    "scaling_factors": "scaling_factors",
+    "sigma": "sigmas",
+}
+
+ESTIMATED_FEATURE_KEYS = {
+    "k_values": "estimated_k_values",
+    "x0_values": "estimated_x0_values",
+    "vertical_shifts": "estimated_vertical_shifts",
+    "scaling_factors": "estimated_scaling_factors",
+    "sigma": "estimated_sigma",
+}
+
+PER_SUBJECT_FIELDS = ("time_shifts", "acceleration_factors")
+CORRELATED_FIELDS = ("k_values", "x0_values")
+CENTRALIZED_NODE = "centralized"
 
 
 @dataclass
@@ -39,55 +61,31 @@ def _get_fpath_json_results(tag: str, dpath_results: Path) -> Path:
     return dpath_results_latest / tag / f"{tag}-estimated_params.json"
 
 
-def _load_json_results(fpath_json_results: Path) -> dict:
-    return load_json(fpath_json_results)
-
-
 def _get_dpath_data(json_results: dict) -> Path:
     return Path(json_results["settings"]["dpath_data"])
 
 
-def _get_fpath_json_data(json_results: dict) -> Path:
-    return Path(json_results["settings"]["fpath_config"])
-
-
 def _load_json_data(json_results: dict) -> dict:
-    return load_json(_get_fpath_json_data(json_results))
+    fpath_json_data = Path(json_results["settings"]["fpath_config"])
+    return load_json(fpath_json_data)
 
 
-def _get_cols(json_data: dict) -> dict:
+def _get_cols(json_data: dict) -> dict[str, Any]:
     return json_data["cols"]
 
 
-def _get_subjects_by_node(json_data: dict) -> dict:
+def _get_subjects_by_node(json_data: dict) -> dict[str, list[str]]:
     return json_data["subjects_by_node"]
 
 
-def _get_true_params(json_data: dict) -> dict:
+def _get_true_params(json_data: dict) -> dict[str, Any]:
     return json_data["params"]
 
 
-TRUE_FEATURE_KEYS = {
-    "k_values": "k_values",
-    "x0_values": "x0_values",
-    "vertical_shifts": "vertical_shifts",
-    "scaling_factors": "scaling_factors",
-    "sigma": "sigmas",
-}
-
-ESTIMATED_FEATURE_KEYS = {
-    "k_values": "estimated_k_values",
-    "x0_values": "estimated_x0_values",
-    "vertical_shifts": "estimated_vertical_shifts",
-    "scaling_factors": "estimated_scaling_factors",
-    "sigma": "estimated_sigma",
-}
-
-PER_SUBJECT_FIELDS = ("time_shifts", "acceleration_factors")
-
-
 def _build_model_params(
-    feature_arrays: dict, per_node: dict[str, dict], subjects_by_node: dict
+    feature_arrays: dict[str, np.ndarray],
+    per_node: dict[str, dict[str, list[float]]],
+    subjects_by_node: dict[str, list[str]],
 ) -> ModelParams:
     """Assemble a ModelParams from per-feature arrays and per-node lists.
 
@@ -101,7 +99,7 @@ def _build_model_params(
     acceleration_factors = []
     for node_id, node_params in per_node.items():
         subjects = subjects_by_node[node_id]
-        for param_name in ("time_shifts", "acceleration_factors"):
+        for param_name in PER_SUBJECT_FIELDS:
             if len(node_params[param_name]) != len(subjects):
                 raise ValueError(
                     f"{param_name} for node {node_id} have length "
@@ -119,7 +117,9 @@ def _build_model_params(
     )
 
 
-def _true_params_by_subject(subjects_by_node: dict, params: dict) -> ModelParams:
+def _true_params_by_subject(
+    subjects_by_node: dict[str, list[str]], params: dict[str, Any]
+) -> ModelParams:
     """Align true simulation parameters to the canonical subject order.
 
     True per-subject parameters are stored as lists per site in file order.
@@ -145,7 +145,7 @@ def _true_params_by_subject(subjects_by_node: dict, params: dict) -> ModelParams
 
 
 def _estimated_params_by_setup(
-    json_results: dict, subjects_by_node: dict
+    json_results: dict, subjects_by_node: dict[str, list[str]]
 ) -> dict[str, ModelParams]:
     """Align estimated parameters to the canonical subject order, per setup.
 
@@ -154,7 +154,7 @@ def _estimated_params_by_setup(
     same order as in the estimated arrays. Node keys are processed in JSON
     order, which matches the merged data's subject order.
     """
-    params_by_setup = {}
+    params_by_setup: dict[str, ModelParams] = {}
     for setup, result in json_results["results"].items():
         feature_arrays = {
             field: np.asarray(result[source_key], dtype=float)
@@ -203,12 +203,31 @@ def _predict(p: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.ndarr
     return output
 
 
+def _metric_rows(
+    setup: str,
+    set_name: str,
+    col_biomarker: str,
+    items: Iterable[tuple[str, float]],
+) -> list[dict[str, str | float]]:
+    """Build metric rows carrying the shared output schema."""
+    return [
+        {
+            "setup": setup,
+            "set_name": set_name,
+            "col_biomarker": col_biomarker,
+            "metric": metric,
+            "value": value,
+        }
+        for metric, value in items
+    ]
+
+
 def _compute_predictive_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     cols_biomarker: list[str],
     setup: str,
-) -> list[dict]:
+) -> list[dict[str, str | float]]:
     """Predictive fit metrics on observed data, per biomarker.
 
     Rows with a NaN in ``y_true`` are masked out per biomarker, mirroring the
@@ -217,7 +236,7 @@ def _compute_predictive_metrics(
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
 
-    rows = []
+    rows: list[dict[str, str | float]] = []
     y_true_all = []
     y_pred_all = []
     for i_biomarker, col_biomarker in enumerate(cols_biomarker):
@@ -229,45 +248,41 @@ def _compute_predictive_metrics(
         y_true_all.append(y_true_biomarker)
         y_pred_all.append(y_pred_biomarker)
 
-        for metric, value in [
-            ("r2_score", r2_score(y_true_biomarker, y_pred_biomarker)),
-            (
-                "mean_squared_error",
-                mean_squared_error(y_true_biomarker, y_pred_biomarker),
-            ),
-            (
-                "mean_absolute_error",
-                mean_absolute_error(y_true_biomarker, y_pred_biomarker),
-            ),
-            ("residual_mean", residuals.mean()),
-            ("residual_std", residuals.std()),
-        ]:
-            rows.append(
-                {
-                    "setup": setup,
-                    "set_name": "data",
-                    "col_biomarker": col_biomarker,
-                    "metric": metric,
-                    "value": value,
-                }
+        rows.extend(
+            _metric_rows(
+                setup,
+                "data",
+                col_biomarker,
+                [
+                    ("r2_score", r2_score(y_true_biomarker, y_pred_biomarker)),
+                    (
+                        "mean_squared_error",
+                        mean_squared_error(y_true_biomarker, y_pred_biomarker),
+                    ),
+                    (
+                        "mean_absolute_error",
+                        mean_absolute_error(y_true_biomarker, y_pred_biomarker),
+                    ),
+                    ("residual_mean", residuals.mean()),
+                    ("residual_std", residuals.std()),
+                ],
             )
+        )
 
     y_true_all = np.concatenate(y_true_all)
     y_pred_all = np.concatenate(y_pred_all)
-    for metric, value in [
-        ("r2_score", r2_score(y_true_all, y_pred_all)),
-        ("mean_squared_error", mean_squared_error(y_true_all, y_pred_all)),
-        ("mean_absolute_error", mean_absolute_error(y_true_all, y_pred_all)),
-    ]:
-        rows.append(
-            {
-                "setup": setup,
-                "set_name": "data",
-                "col_biomarker": "all",
-                "metric": metric,
-                "value": value,
-            }
+    rows.extend(
+        _metric_rows(
+            setup,
+            "data",
+            "all",
+            [
+                ("r2_score", r2_score(y_true_all, y_pred_all)),
+                ("mean_squared_error", mean_squared_error(y_true_all, y_pred_all)),
+                ("mean_absolute_error", mean_absolute_error(y_true_all, y_pred_all)),
+            ],
         )
+    )
     return rows
 
 
@@ -291,7 +306,7 @@ def _compute_recovery_metrics(
     param_estimated: ModelParams,
     cols_biomarker: list[str],
     setup: str,
-) -> list[dict]:
+) -> list[dict[str, str | float]]:
     """Per-feature recovery errors between true and estimated parameters.
 
     For each feature, pooled ``all`` rows carry mean-abs-relative/mean-abs
@@ -299,12 +314,18 @@ def _compute_recovery_metrics(
     and a nested per-biomarker part adds relative and absolute errors per
     biomarker. Relative errors are NaN where the true value is zero.
     """
-    rows = []
+    rows: list[dict[str, str | float]] = []
     for field in fields(ModelParams):
         if field.name in PER_SUBJECT_FIELDS:
             continue
         true_values = np.asarray(getattr(param_true, field.name), dtype=float)
         est_values = np.asarray(getattr(param_estimated, field.name), dtype=float)
+
+        if len(true_values) != len(cols_biomarker):
+            raise ValueError(
+                f"{field.name} has {len(true_values)} values but "
+                f"{len(cols_biomarker)} biomarkers"
+            )
 
         mask = true_values != 0
         relative_errors = np.full(true_values.shape, np.nan)
@@ -313,59 +334,36 @@ def _compute_recovery_metrics(
         ]
         absolute_errors = est_values - true_values
 
-        for metric, value in [
+        pooled_items = [
             (
                 f"{field.name}_mean_abs_relative_error",
                 np.nanmean(np.abs(relative_errors)),
             ),
             (f"{field.name}_mae", np.mean(np.abs(absolute_errors))),
-        ]:
-            rows.append(
-                {
-                    "setup": setup,
-                    "set_name": "recovery_per_biomarker",
-                    "col_biomarker": "all",
-                    "metric": metric,
-                    "value": value,
-                }
+        ]
+        if field.name in CORRELATED_FIELDS:
+            pooled_items.extend(
+                [
+                    (f"{field.name}_pearson_r", _pearson_r(true_values, est_values)),
+                    (
+                        f"{field.name}_spearman_r",
+                        _spearman_r(true_values, est_values),
+                    ),
+                ]
             )
-
-        if field.name in ("k_values", "x0_values"):
-            for metric, value in [
-                (f"{field.name}_pearson_r", _pearson_r(true_values, est_values)),
-                (
-                    f"{field.name}_spearman_r",
-                    _spearman_r(true_values, est_values),
-                ),
-            ]:
-                rows.append(
-                    {
-                        "setup": setup,
-                        "set_name": "recovery_per_biomarker",
-                        "col_biomarker": "all",
-                        "metric": metric,
-                        "value": value,
-                    }
-                )
+        rows.extend(_metric_rows(setup, "recovery_per_biomarker", "all", pooled_items))
 
         for i_biomarker, col_biomarker in enumerate(cols_biomarker):
-            rows.append(
-                {
-                    "setup": setup,
-                    "set_name": "recovery_per_biomarker",
-                    "col_biomarker": col_biomarker,
-                    "metric": f"{field.name}_relative_error",
-                    "value": relative_errors[i_biomarker],
-                }
-            )
-            rows.append(
-                {
-                    "setup": setup,
-                    "set_name": "recovery_per_biomarker",
-                    "col_biomarker": col_biomarker,
-                    "metric": f"{field.name}_absolute_error",
-                    "value": absolute_errors[i_biomarker],
-                }
+            rows.extend(
+                _metric_rows(
+                    setup,
+                    "recovery_per_biomarker",
+                    col_biomarker,
+                    [
+                        (f"{field.name}_relative_error", relative_errors[i_biomarker]),
+                        (f"{field.name}_absolute_error", absolute_errors[i_biomarker]),
+                    ],
+                )
             )
     return rows
 
@@ -374,7 +372,7 @@ def _compute_per_subject_recovery(
     param_true: ModelParams,
     param_estimated: ModelParams,
     setup: str,
-) -> list[dict]:
+) -> list[dict[str, str | float]]:
     """Per-subject recovery metrics for time shifts and acceleration factors.
 
     Correlations isolate ordering (gauge-robust); the slope (est vs true)
@@ -382,12 +380,12 @@ def _compute_per_subject_recovery(
     Acceleration factors additionally get a scale median (median est/true) and
     a mean-abs-relative error, since they are multiplicative and positive.
     """
-    rows = []
+    rows: list[dict[str, str | float]] = []
     for field_name in PER_SUBJECT_FIELDS:
         true_values = np.asarray(getattr(param_true, field_name), dtype=float)
         est_values = np.asarray(getattr(param_estimated, field_name), dtype=float)
 
-        metrics = [
+        items = [
             (f"{field_name}_pearson_r", _pearson_r(true_values, est_values)),
             (f"{field_name}_spearman_r", _spearman_r(true_values, est_values)),
             (f"{field_name}_slope", _slope(true_values, est_values)),
@@ -397,7 +395,7 @@ def _compute_per_subject_recovery(
             mask = true_values != 0
             ratios = np.full(true_values.shape, np.nan)
             ratios[mask] = est_values[mask] / true_values[mask]
-            metrics.extend(
+            items.extend(
                 [
                     (f"{field_name}_scale_median", np.nanmedian(ratios)),
                     (
@@ -407,16 +405,7 @@ def _compute_per_subject_recovery(
                 ]
             )
 
-        for metric, value in metrics:
-            rows.append(
-                {
-                    "setup": setup,
-                    "set_name": "recovery_per_subject",
-                    "col_biomarker": "all",
-                    "metric": metric,
-                    "value": value,
-                }
-            )
+        rows.extend(_metric_rows(setup, "recovery_per_subject", "all", items))
     return rows
 
 
@@ -433,7 +422,7 @@ def assess_fit(
     fpath_json_results = _get_fpath_json_results(tag, dpath_results)
     print(f"fpath_json_results: {fpath_json_results}")
 
-    json_results = _load_json_results(fpath_json_results)
+    json_results = load_json(fpath_json_results)
 
     dpath_data = _get_dpath_data(json_results)
     print(f"dpath_data: {dpath_data}")
@@ -459,22 +448,33 @@ def assess_fit(
         )
     )
 
-    assert set(cols["cols_biomarker"]).issubset(df_data.columns)
+    if not set(cols["cols_biomarker"]).issubset(df_data.columns):
+        raise ValueError(
+            "cols_biomarker contains columns not present in the merged data"
+        )
     subjects_in_nodes = sorted(
         {
             str(subject)
             for node_id, subjects in subjects_by_node.items()
-            if node_id != "centralized"
+            if node_id != CENTRALIZED_NODE
             for subject in subjects
         },
     )
-    assert subjects_in_nodes == sorted(df_data[col_subject].unique()), (
-        "subjects_by_node does not match subjects in merged data"
-    )
+    if subjects_in_nodes != sorted(df_data[col_subject].unique()):
+        raise ValueError("subjects_by_node does not match subjects in merged data")
 
     true_params_by_subject = _true_params_by_subject(subjects_by_node, true_params)
-    assert true_params_by_subject.time_shifts.shape == (n_subjects,)
-    assert true_params_by_subject.acceleration_factors.shape == (n_subjects,)
+    if true_params_by_subject.time_shifts.shape != (n_subjects,):
+        raise ValueError(
+            f"true time_shifts have shape {true_params_by_subject.time_shifts.shape} "
+            f"but expected ({n_subjects},)"
+        )
+    if true_params_by_subject.acceleration_factors.shape != (n_subjects,):
+        raise ValueError(
+            f"true acceleration_factors have shape "
+            f"{true_params_by_subject.acceleration_factors.shape} "
+            f"but expected ({n_subjects},)"
+        )
     print(
         f"true time_shifts range: [{true_params_by_subject.time_shifts.min():.3f}, "
         f"{true_params_by_subject.time_shifts.max():.3f}]"
@@ -486,8 +486,17 @@ def assess_fit(
 
     estimated_by_setup = _estimated_params_by_setup(json_results, subjects_by_node)
     for setup, estimated_params in estimated_by_setup.items():
-        assert estimated_params.time_shifts.shape == (n_subjects,)
-        assert estimated_params.acceleration_factors.shape == (n_subjects,)
+        if estimated_params.time_shifts.shape != (n_subjects,):
+            raise ValueError(
+                f"{setup}: estimated time_shifts have shape "
+                f"{estimated_params.time_shifts.shape} but expected ({n_subjects},)"
+            )
+        if estimated_params.acceleration_factors.shape != (n_subjects,):
+            raise ValueError(
+                f"{setup}: estimated acceleration_factors have shape "
+                f"{estimated_params.acceleration_factors.shape} but expected "
+                f"({n_subjects},)"
+            )
         print(
             f"{setup}: estimated time_shifts range: "
             f"[{estimated_params.time_shifts.min():.3f}, "
@@ -502,8 +511,14 @@ def assess_fit(
     subject_ids = df_data[cols["col_subject_index"]].to_numpy(dtype=int)
     y_true = df_data[cols_biomarker].to_numpy(dtype=float)
 
-    rows = []
-    rows_recovery = []
+    if subject_ids.size and (subject_ids.min() < 0 or subject_ids.max() >= n_subjects):
+        raise ValueError(
+            "subject indices fall outside the merged data's subject range "
+            f"[0, {n_subjects})"
+        )
+
+    rows: list[dict[str, str | float]] = []
+    rows_recovery: list[dict[str, str | float]] = []
     for setup, estimated_params in estimated_by_setup.items():
         y_pred = _predict(estimated_params, t, subject_ids)
         rows.extend(
@@ -537,7 +552,7 @@ def assess_fit(
     fpath_recovery_out = fpath_json_results.with_name(f"{tag}-param_recovery.tsv")
     _save_tsv(df_recovery, fpath_recovery_out)
 
-    return df_metrics
+    return df_metrics, df_recovery
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)

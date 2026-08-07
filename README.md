@@ -33,6 +33,28 @@ These scripts should be run sequentially.
 ./scripts/simulate_data.py --sigma 0.05 --sigma 0.1 --sigma 0.15 --tag unequal_sigma
 ```
 
+#### ADNI-calibrated simulated data
+
+First, save the diagnosis-specific time-shift distributions from the fitted model
+by running `model_fits_adni.ipynb`, making sure to uncomment the cell titled
+"For ADNI-Calibrated Simulator". Then:
+
+```shell
+./scripts/simulate_data_adni_timeshift.py --tag simulated_adni_timeshift
+```
+
+This will generate a ./data/simulated_adni_onset/ folder containing three simulated
+files that have the same names as their real ADNI counterparts and one metadata .json file.
+
+Run the following command, passing the three simulated files' paths as CLI arguments:
+
+```shell
+./scripts/get_adni_data.py --tag simulated_adni_timeshift --iid/non-iid \
+--idps \<SIMULATED FREESURFER CSV PATH\> \
+--config \<SIMULATED CONFIG JSON PATH\> \
+-adni-merge \<SIMULATED ADNIMERGE CSV PATH\>
+```
+
 #### ADNI
 
 ```shell
@@ -48,9 +70,14 @@ These scripts should be run sequentially.
 ./scripts/split_train_test.py --tag adni_noniid
 ``` -->
 
-### Optional: Regress biological age out from biomarkers
+### Optional: Regress chronological age out from biomarkers
+
+Only for datasets with age information.
 
 ```shell
+# Future option if injected artificial age effects into ADNI-calibrated simulated data
+# ./scripts/regress_age_out.py --tag simulated_adni_timeshift
+
 ./scripts/regress_age_out.py --tag adni_iid --mode pooled-sites --min-max
 
 ./scripts/regress_age_out.py --tag adni_noniid --mode site --min-max
@@ -64,6 +91,8 @@ with --tag adni_\<iid / non_iid\>\_age_adjusted\_\<minmax / NOTHING\>
 ./scripts/merge_data.py --tag iid
 ./scripts/merge_data.py --tag non_overlapping_t0
 ./scripts/merge_data.py --tag unequal_sigma
+
+./scripts/merge_data.py --tag simulated_adni_timeshift
 
 ./scripts/merge_data.py --tag adni_iid
 ./scripts/merge_data.py --tag adni_noniid
@@ -79,6 +108,8 @@ This only needs to be run if some of the nodes haven't been created yet.
 ./scripts/create_nodes.py --tag non_overlapping_t0
 ./scripts/create_nodes.py --tag unequal_sigma
 
+./scripts/create_nodes.py --tag simulated_adni_timeshift
+
 ./scripts/create_nodes.py --tag adni_iid
 ./scripts/create_nodes.py --tag adni_noniid
 ./scripts/create_nodes.py --tag adni_noniid_diag
@@ -92,6 +123,8 @@ If needed, use `--wipe` to clear existing datasets from each node.
 ./scripts/add_datasets_to_nodes.py --tag iid
 ./scripts/add_datasets_to_nodes.py --tag non_overlapping_t0
 ./scripts/add_datasets_to_nodes.py --tag unequal_sigma
+
+./scripts/add_datasets_to_nodes.py --tag simulated_adni_timeshift
 
 ./scripts/add_datasets_to_nodes.py --tag adni_iid
 ./scripts/add_datasets_to_nodes.py --tag adni_noniid
@@ -116,6 +149,8 @@ fedbiomed node -p ./fedbiomed/node-<NODE_ID> start
 ./scripts/run_fedbiomed.py --tag non_overlapping_t0 --n-rounds 5 --n-updates 100 --learning-rate 0.05 --time-shift-range 0 1
 ./scripts/run_fedbiomed.py --tag unequal_sigma --n-rounds 5 --n-updates 100 --learning-rate 0.05 --time-shift-range 0 1
 
+./scripts/run_fedbiomed.py --tag simulated_adni_timeshift --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
+
 ./scripts/run_fedbiomed.py --tag adni_iid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
 ./scripts/run_fedbiomed.py --tag adni_noniid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
 ./scripts/run_fedbiomed.py --tag adni_noniid_diag --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
@@ -126,6 +161,10 @@ fedbiomed node -p ./fedbiomed/node-<NODE_ID> start
 #### Synthetic data experiments
 
 Run cells in `./notebooks/model_fits_synthetic.ipynb`
+
+#### ADNI-calibrated simulated data experiments
+
+Run cells in `./notebooks/model_fits_simulated_adni_timeshift.ipynb`
 
 #### ADNI data experiments
 

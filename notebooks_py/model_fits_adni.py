@@ -7,7 +7,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.19.5
 #   kernelspec:
-#     display_name: fl-prog (3.10.18)
+#     display_name: fl-prog (3.10.18.final.0)
 #     language: python
 #     name: python3
 # ---
@@ -320,6 +320,91 @@ fig_time_shift_box = sns.catplot(
 # yticks = np.asarray(ax.get_yticks())
 # ax.set_yticks(yticks)
 # ax.set_yticklabels(yticks * time_scaling_factor)
+
+# %%
+"""
+################# For ADNI-Calibrated Simulator ########################
+#### UNCOMMENT CELL and RUN ONCE #####
+
+# Save diagnosis-specific centralized time-shift distributions so the ADNI
+# simulator (simulate_data_disease_onset.py) can use them as empirical priors.
+
+if "centralized" in results:
+    df_time_shifts_centralized = estimated_time_shifts_centralized.reset_index(
+        name="estimated_time_shift"
+    )
+
+    # Match each fitted subject to their baseline ADNI diagnosis.
+    df_time_shifts_centralized["DX_bl"] = df_time_shifts_centralized["index"].map(
+        df_demographics_baseline.set_index("RID")["DX_bl"].to_dict()
+    )
+
+    df_time_shifts_centralized = df_time_shifts_centralized.dropna(
+        subset=["estimated_time_shift", "DX_bl"]
+    )
+
+    ''' Sanity check
+    hue_order = ["CN", "SMC", "EMCI", "LMCI", "AD"]
+
+    fig_time_shift_kde = sns.displot(
+        data=df_time_shifts_centralized,
+        x="estimated_time_shift",
+        hue="DX_bl",
+        kind="kde",
+        hue_order=hue_order,
+    )
+
+    fig_time_shift_box = sns.catplot(
+        data=df_time_shifts_centralized.sort_values(
+            "DX_bl", key=lambda x: x.map({group: i for i, group in enumerate(hue_order)})
+        ),
+        y="estimated_time_shift",
+        x="DX_bl",
+        kind="box",
+        hue="DX_bl",
+        hue_order=hue_order,
+    )
+    '''
+
+    distributions_by_dx = {}
+
+    for diagnosis, group in df_time_shifts_centralized.groupby("DX_bl"):
+        samples = group["estimated_time_shift"].astype(float).tolist()
+
+        distributions_by_dx[str(diagnosis)] = {
+            # Keeping the empirical samples allows the simulator to preserve
+            # skewness or multimodality
+            "samples": samples,
+            "n": len(samples),
+            "mean": float(np.mean(samples)),
+            "sd": float(np.std(samples, ddof=1)) if len(samples) > 1 else 0.0,
+        }
+        print(
+            f"{diagnosis}: mean={distributions_by_dx[diagnosis]['mean']:.1f}, \
+                sd={distributions_by_dx[diagnosis]['sd']:.1f}"
+        )
+
+    time_shift_prior_data = {
+        "description": (
+            "Diagnosis-specific time-shift distributions estimated "
+            "by the DPMoSt fit."
+        ),
+        "source_tag": TAG,
+        "source_setup": "centralized",
+        "units": "months",
+        "distributions_by_dx": distributions_by_dx,
+    }
+
+    fpath_time_shift_priors = (
+        DPATH_PROJECT / "data" / "adni" / f"time_shift_priors_centralized_{TAG}.json"
+    )
+    fpath_time_shift_priors.parent.mkdir(parents=True, exist_ok=True)
+    fpath_time_shift_priors.write_text(
+        json.dumps(time_shift_prior_data, indent=2)
+    )
+
+    print(f"Saved centralized time-shift priors to {fpath_time_shift_priors}")
+    """
 
 # %%
 data_for_df_params = []

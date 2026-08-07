@@ -43,10 +43,15 @@ def get_df_idp(
         index_col=[col_subject_original, col_session_original],
         dtype={col_subject_original: str, col_session_original: str},
     )
-    df_idp = df_idp.dropna(axis="index", how="any")
+
+    selected_measures = list(measures) if measures is not None else None
+    if selected_measures is not None:
+        df_idp = df_idp.loc[:, selected_measures]
+        df_idp = df_idp.dropna(axis="index", how="any", subset=selected_measures)
+    else:
+        df_idp = df_idp.dropna(axis="index", how="any")
+
     df_idp = df_idp.sort_index()
-    if measures is not None:
-        df_idp = df_idp.loc[:, measures]
 
     if merge_hemispheres:
         df_idp = _merge_hemispheres(df_idp)

@@ -6,7 +6,7 @@ import click
 import pandas as pd
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import load_json, save_json, get_dpath_latest, DEFAULT_DPATH_DATA
+from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, load_json, save_json
 
 DEFAULT_MIN_N_TIMEPOINTS = 2
 
@@ -59,11 +59,11 @@ def split_train_test(
         subjects_by_node[node_id] = subjects
         df_train = pd.concat(dfs_train)
         df_train[col_subject_index] = df_train[col_subject].map(
-            lambda x: subjects.index(x)
+            lambda x, subjects=subjects: subjects.index(x)
         )
 
         fname_site_new = fname_site.replace(tag, new_tag)
-        node_id_map_new[fname_site_new] = node_id_map_old[fname_site]
+        node_id_map_new[fname_site_new] = node_id
 
         fpath_site_new = dpath_out_new / fname_site_new
         df_train.to_csv(fpath_site_new, sep="\t", index=False)

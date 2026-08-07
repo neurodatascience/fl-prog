@@ -1,20 +1,20 @@
 #!/usr/bin/env python
-from pathlib import Path
 import json
 import subprocess
 import sys
 import tempfile
 import warnings
+from pathlib import Path
 
 import click
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.fbm_node import get_fpath_db, load_node_db
 from fl_prog.utils.io import (
-    get_dpath_latest,
-    get_node_id_map,
     DEFAULT_DPATH_DATA,
     DEFAULT_DPATH_FEDBIOMED,
+    get_dpath_latest,
+    get_node_id_map,
 )
 
 
@@ -29,7 +29,7 @@ def _data_already_added(
 
     try:
         df_datasets = load_node_db(fpath_db=fpath_db)
-    except Exception as exception:
+    except Exception as exception:  # noqa: BLE001
         warnings.warn(str(exception))
         return False
 

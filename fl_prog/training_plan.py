@@ -1,16 +1,16 @@
 from functools import wraps
+from typing import ClassVar
 
-import torch.optim as optim
 from fedbiomed.common.datamanager import DataManager
 from fedbiomed.common.dataset import TabularDataset
-from fedbiomed.common.optimizers.optimizer import Optimizer
 from fedbiomed.common.optimizers.declearn import (
     AdamModule,
     RidgeRegularizer,
     ScaffoldClientModule,
 )
+from fedbiomed.common.optimizers.optimizer import Optimizer
 from fedbiomed.common.training_plans import TorchTrainingPlan
-
+from torch import optim
 
 from fl_prog.model import LogisticRegressionModelWithShift
 
@@ -20,7 +20,7 @@ class FLProgTrainingPlan(TorchTrainingPlan):
     col_time: str
     cols_biomarker: list[str]
 
-    default_config = {"n_participants": 0}
+    default_config: ClassVar = {"n_participants": 0}
 
     @staticmethod
     def set_colnames(func):
@@ -57,6 +57,7 @@ class FLProgTrainingPlan(TorchTrainingPlan):
     def init_dependencies(self):
         deps = [
             "from functools import wraps",
+            "from typing import ClassVar",
             "import torch.optim as optim",
             "from fedbiomed.common.datamanager import DataManager",
             "from fedbiomed.common.dataset import TabularDataset",

@@ -1,9 +1,10 @@
 from collections.abc import Iterable
+from typing import ClassVar
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.utils.parametrize as parametrize
+from torch import nn
+from torch.nn.utils import parametrize
 
 
 class Positive(nn.Module):
@@ -17,7 +18,7 @@ class Positive(nn.Module):
 
 
 class LogisticRegressionModelWithShift(nn.Module):
-    parametrization_dict = {
+    parametrization_dict: ClassVar = {
         "k_values": Positive(),
         "sigma": Positive(),
         "scaling_factors": Positive(),
@@ -147,12 +148,18 @@ class LogisticRegressionModelWithShift(nn.Module):
             output = output + self.vertical_shifts
         return output
 
-    def get_loss(self, predicted, actual):
+    def get_loss(self, predicted: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:
+
         sigma_sq = self.sigma**2
+
+        # trick to handle missing data (NAs)
+        # replace missing values by the predicted values, so that the loss is 0 for those entries
+        actual_mask = ~torch.isnan(actual)
+        actual_no_na = torch.where(actual_mask, actual, predicted)
 
         # negative Gaussian log-likelihood
         loss = torch.sum(
-            (actual - predicted) ** 2 / (2 * sigma_sq)
+            (actual_no_na - predicted) ** 2 / (2 * sigma_sq)
             + 0.5 * torch.log(2 * torch.pi * sigma_sq)
         )
 

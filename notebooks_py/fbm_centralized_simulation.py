@@ -121,12 +121,13 @@ def check_model_fit(
 
 
 # %%
-from fl_prog.utils.io import working_directory
-from fl_prog.training_plan import FLProgTrainingPlan
+import importlib
+
 from fl_prog.aggregator import SelectiveFedAverage
 
-import importlib
 import fl_prog.training_plan
+from fl_prog.training_plan import FLProgTrainingPlan
+from fl_prog.utils.io import working_directory
 
 importlib.reload(fl_prog.training_plan)
 
@@ -172,8 +173,9 @@ check_model_fit(
 )
 
 # %%
+from torch import optim
+
 from fl_prog.model import LogisticRegressionModelWithShift
-import torch.optim as optim
 
 model = LogisticRegressionModelWithShift(
     len(set(df["subject"])), n_features=n_biomarkers

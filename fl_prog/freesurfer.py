@@ -8,7 +8,7 @@ COL_TIMEPOINT = "months_scaled"
 
 
 def _merge_hemispheres(df: pd.DataFrame) -> pd.DataFrame:
-    measures = set(col.removeprefix("rh_").removeprefix("lh_") for col in df.columns)
+    measures = {col.removeprefix("rh_").removeprefix("lh_") for col in df.columns}
     for measure in sorted(measures):
         col_rh = f"rh_{measure}"
         col_lh = f"lh_{measure}"

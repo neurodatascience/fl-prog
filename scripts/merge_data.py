@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
+import json
 from pathlib import Path
 
 import click
-import json
 import pandas as pd
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_ID_CENTRALIZED
-from fl_prog.utils.io import get_dpath_latest, save_json, DEFAULT_DPATH_DATA
+from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, save_json
 
 
 def _get_fname_merged(tag: str) -> str:

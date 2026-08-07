@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-from pathlib import Path
 import configparser
+import subprocess
+from pathlib import Path
 
 import click
-import subprocess
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_PREFIX
 from fl_prog.utils.io import (
@@ -69,7 +69,7 @@ def create_nodes(tag: str, dpath_data: Path, dpath_nodes: Path):
     fpath_json: Path = get_dpath_latest(dpath_data) / tag / f"{tag}.json"
     node_id_map = get_node_id_map(fpath_json)
 
-    for _, node_id in node_id_map.items():
+    for node_id in node_id_map.values():
         _create_node(dpath_nodes, node_id)
 
 

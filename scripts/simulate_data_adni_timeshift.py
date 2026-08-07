@@ -14,7 +14,6 @@ from scipy.optimize import curve_fit
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, load_json, save_json
 
-
 DEFAULT_ADNI_DIR = Path("data/adni")
 DEFAULT_ADNI_CONFIG = DEFAULT_ADNI_DIR / "config.json"
 DEFAULT_ADNI_MERGE_CSV = DEFAULT_ADNI_DIR / "ADNIMERGE.csv"

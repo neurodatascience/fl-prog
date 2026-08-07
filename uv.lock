@@ -475,6 +475,7 @@ dependencies = [
     { name = "ipykernel" },
     { name = "numpy" },
     { name = "scikit-learn" },
+    { name = "scipy" },
     { name = "seaborn" },
     { name = "torch" },
 ]
@@ -492,6 +493,7 @@ requires-dist = [
     { name = "ipykernel" },
     { name = "numpy" },
     { name = "scikit-learn" },
+    { name = "scipy" },
     { name = "seaborn" },
     { name = "torch" },
 ]

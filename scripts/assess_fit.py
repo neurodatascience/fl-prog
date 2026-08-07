@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import click
 import numpy as np
 import pandas as pd
+from scipy.stats import linregress, spearmanr
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_PREFIX
@@ -81,6 +82,8 @@ ESTIMATED_FEATURE_KEYS = {
     "scaling_factors": "estimated_scaling_factors",
     "sigma": "estimated_sigma",
 }
+
+PER_SUBJECT_FIELDS = ("time_shifts", "acceleration_factors")
 
 
 def _build_model_params(
@@ -268,6 +271,155 @@ def _compute_predictive_metrics(
     return rows
 
 
+def _pearson_r(x: np.ndarray, y: np.ndarray) -> float:
+    return np.corrcoef(x, y)[0, 1]
+
+
+def _spearman_r(x: np.ndarray, y: np.ndarray) -> float:
+    return spearmanr(x, y).statistic
+
+
+def _slope(x: np.ndarray, y: np.ndarray) -> float:
+    try:
+        return linregress(x, y).slope
+    except ValueError:
+        return np.nan
+
+
+def _compute_recovery_metrics(
+    param_true: ModelParams,
+    param_estimated: ModelParams,
+    cols_biomarker: list[str],
+    setup: str,
+) -> list[dict]:
+    """Per-feature recovery errors between true and estimated parameters.
+
+    For each feature, pooled ``all`` rows carry mean-abs-relative/mean-abs
+    errors (plus pearson/spearman correlations for k_values and x0_values),
+    and a nested per-biomarker part adds relative and absolute errors per
+    biomarker. Relative errors are NaN where the true value is zero.
+    """
+    rows = []
+    for field in fields(ModelParams):
+        if field.name in PER_SUBJECT_FIELDS:
+            continue
+        true_values = np.asarray(getattr(param_true, field.name), dtype=float)
+        est_values = np.asarray(getattr(param_estimated, field.name), dtype=float)
+
+        mask = true_values != 0
+        relative_errors = np.full(true_values.shape, np.nan)
+        relative_errors[mask] = (est_values[mask] - true_values[mask]) / true_values[
+            mask
+        ]
+        absolute_errors = est_values - true_values
+
+        for metric, value in [
+            (
+                f"{field.name}_mean_abs_relative_error",
+                np.nanmean(np.abs(relative_errors)),
+            ),
+            (f"{field.name}_mae", np.mean(np.abs(absolute_errors))),
+        ]:
+            rows.append(
+                {
+                    "setup": setup,
+                    "set_name": "recovery_per_biomarker",
+                    "col_biomarker": "all",
+                    "metric": metric,
+                    "value": value,
+                }
+            )
+
+        if field.name in ("k_values", "x0_values"):
+            for metric, value in [
+                (f"{field.name}_pearson_r", _pearson_r(true_values, est_values)),
+                (
+                    f"{field.name}_spearman_r",
+                    _spearman_r(true_values, est_values),
+                ),
+            ]:
+                rows.append(
+                    {
+                        "setup": setup,
+                        "set_name": "recovery_per_biomarker",
+                        "col_biomarker": "all",
+                        "metric": metric,
+                        "value": value,
+                    }
+                )
+
+        for i_biomarker, col_biomarker in enumerate(cols_biomarker):
+            rows.append(
+                {
+                    "setup": setup,
+                    "set_name": "recovery_per_biomarker",
+                    "col_biomarker": col_biomarker,
+                    "metric": f"{field.name}_relative_error",
+                    "value": relative_errors[i_biomarker],
+                }
+            )
+            rows.append(
+                {
+                    "setup": setup,
+                    "set_name": "recovery_per_biomarker",
+                    "col_biomarker": col_biomarker,
+                    "metric": f"{field.name}_absolute_error",
+                    "value": absolute_errors[i_biomarker],
+                }
+            )
+    return rows
+
+
+def _compute_per_subject_recovery(
+    param_true: ModelParams,
+    param_estimated: ModelParams,
+    setup: str,
+) -> list[dict]:
+    """Per-subject recovery metrics for time shifts and acceleration factors.
+
+    Correlations isolate ordering (gauge-robust); the slope (est vs true)
+    shows magnitude recovery, with the intercept absorbing recentering.
+    Acceleration factors additionally get a scale median (median est/true) and
+    a mean-abs-relative error, since they are multiplicative and positive.
+    """
+    rows = []
+    for field_name in PER_SUBJECT_FIELDS:
+        true_values = np.asarray(getattr(param_true, field_name), dtype=float)
+        est_values = np.asarray(getattr(param_estimated, field_name), dtype=float)
+
+        metrics = [
+            (f"{field_name}_pearson_r", _pearson_r(true_values, est_values)),
+            (f"{field_name}_spearman_r", _spearman_r(true_values, est_values)),
+            (f"{field_name}_slope", _slope(true_values, est_values)),
+            (f"{field_name}_mae", np.mean(np.abs(est_values - true_values))),
+        ]
+        if field_name == "acceleration_factors":
+            mask = true_values != 0
+            ratios = np.full(true_values.shape, np.nan)
+            ratios[mask] = est_values[mask] / true_values[mask]
+            metrics.extend(
+                [
+                    (f"{field_name}_scale_median", np.nanmedian(ratios)),
+                    (
+                        f"{field_name}_mean_abs_relative_error",
+                        np.nanmean(np.abs(ratios - 1)),
+                    ),
+                ]
+            )
+
+        for metric, value in metrics:
+            rows.append(
+                {
+                    "setup": setup,
+                    "set_name": "recovery_per_subject",
+                    "col_biomarker": "all",
+                    "metric": metric,
+                    "value": value,
+                }
+            )
+    return rows
+
+
 def _save_tsv(df_metrics: pd.DataFrame, fpath_out: Path):
     fpath_out.parent.mkdir(parents=True, exist_ok=True)
     df_metrics.to_csv(fpath_out, sep="\t", index=False)
@@ -351,10 +503,24 @@ def assess_fit(
     y_true = df_data[cols_biomarker].to_numpy(dtype=float)
 
     rows = []
+    rows_recovery = []
     for setup, estimated_params in estimated_by_setup.items():
         y_pred = _predict(estimated_params, t, subject_ids)
         rows.extend(
             _compute_predictive_metrics(y_true, y_pred, cols_biomarker, setup=setup)
+        )
+        rows_recovery.extend(
+            _compute_recovery_metrics(
+                true_params_by_subject,
+                estimated_params,
+                cols_biomarker,
+                setup=setup,
+            )
+        )
+        rows_recovery.extend(
+            _compute_per_subject_recovery(
+                true_params_by_subject, estimated_params, setup=setup
+            )
         )
 
     df_metrics = pd.DataFrame(
@@ -363,6 +529,13 @@ def assess_fit(
 
     fpath_out = fpath_json_results.with_name(f"{tag}-fit_quality.tsv")
     _save_tsv(df_metrics, fpath_out)
+
+    df_recovery = pd.DataFrame(
+        rows_recovery,
+        columns=["setup", "set_name", "col_biomarker", "metric", "value"],
+    )
+    fpath_recovery_out = fpath_json_results.with_name(f"{tag}-param_recovery.tsv")
+    _save_tsv(df_recovery, fpath_recovery_out)
 
     return df_metrics
 

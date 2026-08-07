@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-Remove biological AGE effects from ADNI biomarker columns by regression.
+Remove chronological AGE effects from ADNI biomarker columns by regression.
 
 For each biomarker, fit:
 

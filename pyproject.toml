@@ -101,6 +101,7 @@ dependencies = [
   "numpy",
   "seaborn",
   "scikit-learn",
+  "scipy",
   "torch",
 ]
 # List additional groups of dependencies here (e.g. development

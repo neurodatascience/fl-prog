@@ -870,6 +870,62 @@ def _calibration_to_json(calibration: Calibration) -> dict[str, Any]:
     return _json_ready(data)
 
 
+def _build_mirrored_params(
+    calibration: Calibration,
+    config: dict[str, Any],
+    df_fs_sim: pd.DataFrame,
+) -> dict[str, Any]:
+    """Build a simulate_data.py-style ``params`` entry in model space.
+
+    Time is scaled by ``config['max_time']`` (months -> model time units),
+    matching the transform applied by get_adni_data.py. Per-biomarker arrays
+    follow sorted-measure order; time shifts and acceleration factors are
+    keyed by normalized RID. vertical_shifts and scaling_factors are fixed to
+    the model's parametrization (0 and 1). sigmas are the generative noise
+    standard deviations rescaled to the min-max-normalized observation space.
+    """
+    t_unit = config.get("max_time") or 1.0
+
+    time_shifts_months = (
+        df_fs_sim.groupby(FS_COL_SUBJECT)[COL_TRUE_TIME_SHIFT].first().astype(float)
+    )
+
+    params: dict[str, Any] = {
+        "time_shifts": {
+            str(rid): float(shift_months / t_unit)
+            for rid, shift_months in time_shifts_months.items()
+        },
+        "acceleration_factors": {str(rid): 1.0 for rid in time_shifts_months.index},
+        "k_values": [],
+        "x0_values": [],
+        "vertical_shifts": [],
+        "scaling_factors": [],
+        "sigmas": [],
+    }
+
+    min_max_by_measure = config.get("min_max_by_measure", {})
+
+    for measure in sorted(calibration.biomarkers):
+        biomarker = calibration.biomarkers[measure]
+
+        if measure not in min_max_by_measure:
+            raise ValueError(
+                f"config['min_max_by_measure'] is missing an entry for "
+                f"{measure!r}, which is required to express sigmas in model space."
+            )
+
+        value_min, value_max = min_max_by_measure[measure]
+        value_range = abs(value_max - value_min)
+
+        params["k_values"].append(biomarker.slope * t_unit / 12.0)
+        params["x0_values"].append(biomarker.midpoint * 12.0 / t_unit)
+        params["vertical_shifts"].append(0.0)
+        params["scaling_factors"].append(1.0)
+        params["sigmas"].append(biomarker.noise_sd / value_range)
+
+    return params
+
+
 def simulate_data_adni_timeshift(
     tag: str,
     dpath_data: Path,
@@ -913,13 +969,19 @@ def simulate_data_adni_timeshift(
     fpath_fs_out = dpath_out / Path(freesurfer_csv).name
     fpath_merge_out = dpath_out / Path(adni_merge_csv).name
     fpath_config_out = dpath_out / Path(config).name
-    fpath_metadata_out = dpath_out / f"{tag}_simulation_metadata.json"
+    fpath_metadata_out = dpath_out / "simulation_metadata.json"
 
     df_fs_sim.to_csv(fpath_fs_out, index=False)
     df_merge_sim.to_csv(fpath_merge_out, index=False)
 
     # Keep config unchanged so get_adni_data.py sees the same measure list.
     save_json(fpath_config_out, config_data)
+
+    mirrored_params = _build_mirrored_params(
+        calibration=calibration,
+        config=config_data,
+        df_fs_sim=df_fs_sim,
+    )
 
     metadata = {
         "description": (
@@ -942,6 +1004,7 @@ def simulate_data_adni_timeshift(
             COL_TRUE_DISEASE_STAGE,
             COL_TRUE_TIME_SHIFT,
         ],
+        "params": mirrored_params,
         "calibration": _calibration_to_json(calibration),
     }
     save_json(fpath_metadata_out, metadata)

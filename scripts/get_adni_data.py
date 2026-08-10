@@ -3,6 +3,7 @@
 import enum
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 import click
 import numpy as np
@@ -174,6 +175,57 @@ def _add_adni_age_column(
     return df.set_index(index_names)
 
 
+def _build_params_from_simulation(
+    simulation_metadata: dict[str, Any],
+    cols_biomarker: list[str],
+    subjects_by_node: dict[str, list[str]],
+) -> dict[str, Any]:
+    """Build a ground-truth parameter set from the simulation metadata."""
+    params = simulation_metadata["params"]
+
+    if sorted(cols_biomarker) != sorted(simulation_metadata["measures"]):
+        raise ValueError(
+            "cols_biomarker must match the simulated measures when "
+            "--simulation-metadata is provided. Got "
+            f"{sorted(cols_biomarker)}, expected "
+            f"{sorted(simulation_metadata['measures'])}."
+        )
+
+    shift_by_rid = {
+        _normalize_adni_rid(rid): float(shift)
+        for rid, shift in params["time_shifts"].items()
+    }
+    acceleration_by_rid = {
+        _normalize_adni_rid(rid): float(acceleration)
+        for rid, acceleration in params["acceleration_factors"].items()
+    }
+
+    time_shifts = []
+    acceleration_factors = []
+    for participant_ids in subjects_by_node.values():
+        normalized_rids = [_normalize_adni_rid(rid) for rid in participant_ids]
+        missing_rids = sorted(set(normalized_rids) - set(shift_by_rid))
+        if missing_rids:
+            raise ValueError(
+                "Simulation metadata is missing time shifts for RIDs: "
+                f"{missing_rids[:10]}"
+            )
+        time_shifts.append([shift_by_rid[rid] for rid in normalized_rids])
+        acceleration_factors.append(
+            [acceleration_by_rid[rid] for rid in normalized_rids]
+        )
+
+    return {
+        "time_shifts": time_shifts,
+        "acceleration_factors": acceleration_factors,
+        "k_values": params["k_values"],
+        "x0_values": params["x0_values"],
+        "vertical_shifts": params["vertical_shifts"],
+        "scaling_factors": params["scaling_factors"],
+        "sigmas": params["sigmas"],
+    }
+
+
 def get_adni_data(
     tag: str,
     fpath_idps: Path,
@@ -184,11 +236,17 @@ def get_adni_data(
     iid: bool = DEFAULT_IID,
     rng_seed: int | None = None,
     non_iid_strategy: str = DEFAULT_NON_IID_STRATEGY,
+    simulation_metadata: Path | None = None,
 ):
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
     dpath_out.mkdir(parents=True, exist_ok=True)
 
     config = load_json(fpath_config)
+
+    if simulation_metadata is not None:
+        sim_metadata = load_json(simulation_metadata)
+    else:
+        sim_metadata = None
 
     json_data = {"settings": locals().copy()}
 
@@ -332,6 +390,13 @@ def get_adni_data(
 
     json_data["subjects_by_node"] = subjects_by_node
 
+    if sim_metadata is not None:
+        json_data["params"] = _build_params_from_simulation(
+            simulation_metadata=sim_metadata,
+            cols_biomarker=sorted(cols_biomarkers),
+            subjects_by_node=subjects_by_node,
+        )
+
     fpath_json = dpath_out / _get_fname_out(tag, suffix=".json")
     save_json(fpath_json, json_data)
     print(f"Saved settings, col names, and node ID map to {fpath_json}")
@@ -372,6 +437,12 @@ def get_adni_data(
     "--non-iid-strategy",
     type=click.Choice(NonIIDStrategy, case_sensitive=False),
     default=DEFAULT_NON_IID_STRATEGY,
+)
+@click.option(
+    "--simulation-metadata",
+    type=click.Path(path_type=Path, file_okay=True, dir_okay=False),
+    default=None,
+    help="Path to the metadata JSON file. Specify when simulated ADNI data is used.",
 )
 def main(*args, **kwargs):
     get_adni_data(*args, **kwargs)

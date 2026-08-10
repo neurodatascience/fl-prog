@@ -59,7 +59,7 @@ try:
 except FileNotFoundError:
     print("Results not available")
 
-n_biomarkers = json_data["settings"]["n_biomarkers"]
+n_biomarkers = len(json_data["cols"]["cols_biomarker"])
 
 params = json_data["params"]
 k_values = np.array(params["k_values"])
@@ -70,7 +70,10 @@ time_shifts = np.concatenate(params["time_shifts"])
 acceleration_factors = np.concatenate(params["acceleration_factors"])
 sigmas = params["sigmas"]
 
-n_sites = len(json_data["settings"]["n_subjects_all"])
+col_subject = json_data["cols"]["col_subject"]
+
+# number of sites minus the centralized site
+n_sites = len(json_data["subjects_by_node"]) - 1
 
 df = pd.concat(
     {
@@ -104,7 +107,7 @@ def save_fig(fig: sns.FacetGrid | plt.Figure, fname, extension="svg", **kwargs):
 
 # vertical
 fig_data, axes = plt.subplots(
-    nrows=2, figsize={"paper": (2.5, 4), "talk": (4, 8)}[THEME]
+    nrows=3, figsize={"paper": (2.5, 6), "talk": (4, 12)}[THEME]
 )
 
 
@@ -112,7 +115,7 @@ for i_ax, ax in enumerate(axes):
     ax: plt.Axes
 
     n_subjects_per_site = {}
-    for i_subject, (subject, df_subject) in enumerate(df.groupby("subject")):
+    for i_subject, (subject, df_subject) in enumerate(df.groupby(col_subject)):
         site = df_subject["site"].unique().item()
         if site not in n_subjects_per_site:
             n_subjects_per_site[site] = 0
@@ -120,17 +123,17 @@ for i_ax, ax in enumerate(axes):
         if n_subjects_per_site[site] >= N_SUBJECTS:
             continue
 
+        timepoints = df_subject[json_data["cols"]["col_timepoint"]]
+        if i_ax == 0:
+            timepoints = (timepoints + time_shifts[i_subject]) * acceleration_factors[
+                i_subject
+            ]
+        elif i_ax == 1:
+            timepoints = timepoints * acceleration_factors[i_subject]
+
         for i_biomarker, biomarker in enumerate(json_data["cols"]["cols_biomarker"]):
             ax.plot(
-                (
-                    (
-                        df_subject[json_data["cols"]["col_timepoint"]]
-                        + time_shifts[i_subject]
-                    )
-                    * acceleration_factors[i_subject]
-                    if i_ax == 0
-                    else df_subject[json_data["cols"]["col_timepoint"]]
-                ),
+                timepoints,
                 df_subject[biomarker],
                 marker="oXxp*"[site - 1],
                 color=f"C{i_biomarker}",
@@ -150,7 +153,8 @@ for i_ax, ax in enumerate(axes):
     ax.set_ylabel(BIOMARKER_LABEL)
 
 axes[0].set_title("Before time shift and acceleration")
-axes[1].set_title("After time shift and acceleration")
+axes[1].set_title("After time shift")
+axes[2].set_title("After time shift and acceleration")
 fig_data.tight_layout()
 
 XLIM = axes[0].get_xlim()
@@ -278,94 +282,3 @@ for ax, setup in zip(axes.flatten(), results_dict["results"].keys()):
     ax.set_title(setup.capitalize())
 
 fig_model_fit.tight_layout()
-
-# %%
-save_fig(fig_model_fit, f"{TAG}-model_fit-{THEME}", extension="svg")
-
-# %%
-N_SUBJECTS_FITS = 2
-
-# vertical
-fig_fit_data, axes = plt.subplots(ncols=3, figsize=(8, 2))
-
-for i_ax, ax in enumerate(axes):
-    ax: plt.Axes
-
-    match i_ax:
-        case 0:
-            time_shifts_to_plot = time_shifts
-            acceleration_factors_to_plot = acceleration_factors
-        case 1:
-            time_shifts_to_plot = np.hstack(
-                list(
-                    results_dict["results"]["centralized"][
-                        "estimated_time_shifts"
-                    ].values()
-                )
-            )
-            acceleration_factors_to_plot = np.hstack(
-                list(
-                    results_dict["results"]["centralized"][
-                        "estimated_acceleration_factors"
-                    ].values()
-                )
-            )
-        case 2:
-            time_shifts_to_plot = np.hstack(
-                list(
-                    results_dict["results"]["federated"][
-                        "estimated_time_shifts"
-                    ].values()
-                )
-            )
-            acceleration_factors_to_plot = np.hstack(
-                list(
-                    results_dict["results"]["federated"][
-                        "estimated_acceleration_factors"
-                    ].values()
-                )
-            )
-
-    n_subjects = 0
-    for i_subject, (subject, df_subject) in enumerate(df.groupby("subject")):
-        site = df_subject["site"].unique().item()
-
-        if n_subjects >= N_SUBJECTS_FITS:
-            continue
-
-        print(subject)
-
-        for i_biomarker, biomarker in enumerate(json_data["cols"]["cols_biomarker"]):
-            ax.plot(
-                (
-                    (
-                        df_subject[json_data["cols"]["col_timepoint"]]
-                        + time_shifts_to_plot[i_subject]
-                    )
-                    * acceleration_factors_to_plot[i_subject]
-                ),
-                df_subject[biomarker],
-                marker="oXxp*"[site - 1],
-                color=f"C{i_biomarker}",
-                # alpha=0.1,
-                alpha=0.2,
-            )
-        n_subjects += 1
-
-    for i_biomarker, (k, x0, vertical_shift, scaling_factor) in enumerate(
-        zip(k_values, x0_values, vertical_shifts, scaling_factors)
-    ):
-        t = np.linspace(-0.5, 1.5, 100)
-        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor + vertical_shift
-        ax.plot(t, y, color=f"C{i_biomarker}", linestyle="--", alpha=1)
-
-    ax.set_xlabel(TIME_LABEL)
-    ax.set_ylabel(BIOMARKER_LABEL)
-
-axes[0].set_title("Ground truth")
-axes[1].set_title("Centralized")
-axes[2].set_title("Federated")
-fig_fit_data.tight_layout()
-
-for ax in axes:
-    ax.set_xlim(-0, 0.5)

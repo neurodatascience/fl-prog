@@ -35,13 +35,13 @@ DEFAULT_N_ROUNDS = 5
 DEFAULT_N_UPDATES = 100
 DEFAULT_BATCH_SIZE = 100000  # all data (no batching)
 DEFAULT_LEARNING_RATE = 0.1
-DEFAULT_LAMBDA_TIME_SHIFTS = 1
+DEFAULT_LAMBDA_TIME_SHIFTS = 0.1
 DEFAULT_LAMBDA_ACCELERATION_FACTORS = 0.1
 DEFAULT_EXPECTED_TIME_SHIFT_RANGE = (0.0, 0.0)
 DEFAULT_AGGREGATOR_NAME = "fedavg"
 
 VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
-DNAME_TENSORBOARD = "tensorboard"
+PREFIX_DNAME_TENSORBOARD = "tensorboard-"
 
 
 def _check_node_datasets(
@@ -343,7 +343,19 @@ def run_fedbiomed(
     overwrite: bool = False,
 ):
     dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
-    fpath_out = dpath_out / f"{tag}-estimated_params.json"
+    run_tag = "-".join(
+        [
+            f"{n_rounds}",
+            f"{n_updates}",
+            f"{batch_size}",
+            f"{learning_rate}",
+            f"{lambda_time_shifts}",
+            f"{lambda_acceleration_factors}",
+            f"{estimated_time_shift_range[0]}_{estimated_time_shift_range[1]}",
+            aggregator_name,
+        ]
+    )
+    fpath_out = dpath_out / f"{run_tag}-estimated_params.json"
     if fpath_out.exists() and not overwrite:
         click.secho(
             f"{fpath_out} already exists. Use --overwrite to overwrite.",
@@ -392,7 +404,7 @@ def run_fedbiomed(
     )
 
     if with_tensorboard:
-        dpath_tensorboard = dpath_out / DNAME_TENSORBOARD
+        dpath_tensorboard = dpath_out / f"{PREFIX_DNAME_TENSORBOARD}{run_tag}"
 
     json_data = {"settings": locals()}
 

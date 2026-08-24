@@ -284,7 +284,7 @@ def simulate_data(
 @click.option(
     "--sigma",
     "sigma_all",
-    type=click.FloatRange(min=0, min_open=True),
+    type=click.FloatRange(min=0, min_open=False),
     multiple=True,
     default=DEFAULT_SIGMA_ALL,
 )

@@ -17,23 +17,13 @@ class Positive(nn.Module):
         return constrained_param + torch.log(-torch.expm1(-constrained_param))
 
 
-class UnitGeometricMean(nn.Module):
-    """Constrain a parameter to have geometric mean exactly 1 (zero mean in log space)."""
-
-    def forward(self, param):
-        return torch.exp(param - param.mean())
-
-    def right_inverse(self, constrained_param):
-        return torch.log(constrained_param)
-
-
 class LogisticRegressionModelWithShift(nn.Module):
     parametrization_dict: ClassVar = {
         "k_values": (Positive(),),
         "sigma": (Positive(),),
         "time_shifts": (Positive(),),
         "scaling_factors": (Positive(),),
-        "acceleration_factors": (UnitGeometricMean(),),
+        "acceleration_factors": (Positive(),),
     }
 
     sigmoid_levels = torch.tensor([0.05, 0.95])  # for computing initial k_values

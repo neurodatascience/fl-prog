@@ -195,7 +195,7 @@ def _predict(p: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.ndarr
 
     shift = p.time_shifts[subject_ids]
     acceleration = p.acceleration_factors[subject_ids]
-    shifted_t = (t + shift) * acceleration
+    shifted_t = t * acceleration + shift
 
     linear_combination = p.k_values * (shifted_t[:, np.newaxis] - p.x0_values)
     output = p.scaling_factors * (1 / (1 + np.exp(-linear_combination)))

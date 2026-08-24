@@ -11,6 +11,7 @@ def generate_timepoints(
     n_timepoints: int,
     t0_min: float = 0.0,
     t0_max: float = 1.0,
+    acceleration_factor: float = 1.0,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Generate timepoints for a subject.
@@ -22,6 +23,8 @@ def generate_timepoints(
         Minimum value for the first timepoint, by default 0.0
     t0_max : float, optional
         Maximum value for the first timepoint, by default 1.0
+    acceleration_factor : float, optional
+        Acceleration factor for the subject, by default 1.0
     rng : np.random.Generator, optional
 
     Returns
@@ -34,11 +37,12 @@ def generate_timepoints(
     # start from t0 then uniform to t0_max
     timepoints = np.concatenate(
         (
-            [t0_for_subject],
-            rng.uniform(t0_for_subject, t0_max, size=n_timepoints - 1),
+            [0],
+            rng.uniform(0, t0_max - t0_for_subject, size=n_timepoints - 1)
+            * acceleration_factor,
         )
     )
-    return np.sort(timepoints)
+    return np.sort(timepoints) + t0_for_subject
 
 
 @check_rng
@@ -56,6 +60,7 @@ def simulate_all_subjects(
     t0_min: float = 0.0,
     t0_max: float = 1.0,
     acceleration_factor_std: float = 0.0,
+    acceleration_factor_mean: float = 1.0,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
     """Simulate timepoints and biomarkers for all subjects.
@@ -90,6 +95,9 @@ def simulate_all_subjects(
         Maximum value for the first timepoint of each subject.
     acceleration_factor_std : float, optional
         Standard deviation for the acceleration factor of each subject.
+    acceleration_factor_mean : float, optional
+        Mean of the normal distribution from which the acceleration factor of each
+        subject is sampled, by default 1.0.
     rng : np.random.Generator, optional
 
     Returns
@@ -125,7 +133,9 @@ def simulate_all_subjects(
     for _ in range(n_subjects):
         acceleration_factor = -1
         while acceleration_factor <= 0:
-            acceleration_factor = rng.normal(1.0, acceleration_factor_std)
+            acceleration_factor = rng.normal(
+                acceleration_factor_mean, acceleration_factor_std
+            )
         if n_timepoints_distribution is not None:
             n_timepoints = int(
                 rng.choice(
@@ -139,15 +149,22 @@ def simulate_all_subjects(
                 )
             )
             t0_for_subject = rng.uniform(t0_min, t0_max)
-            timepoints = np.array(time_at_timepoint)[:n_timepoints] + t0_for_subject
+            timepoints = (
+                np.array(time_at_timepoint)[:n_timepoints] * acceleration_factor
+                + t0_for_subject
+            )
         else:
             n_timepoints = rng.integers(1, max_n_timepoints + 1)
             timepoints = generate_timepoints(
-                n_timepoints, t0_min=t0_min, t0_max=t0_max, rng=rng
+                n_timepoints,
+                t0_min=t0_min,
+                t0_max=t0_max,
+                acceleration_factor=acceleration_factor,
+                rng=rng,
             )
 
         biomarkers = multivariate_logistic(
-            timepoints * acceleration_factor,
+            timepoints,
             k_values,
             x0_values,
             vertical_shifts,
@@ -163,7 +180,10 @@ def simulate_all_subjects(
     if shift_time:
         # shift timepoints so that the first timepoint is at 0
         time_shifts = [tp[0] for tp in timepoints_all]
-        timepoints_all = [tp - tp[0] for tp in timepoints_all]
+        timepoints_all = [
+            (tp - tp[0]) / acceleration_factor
+            for tp, acceleration_factor in zip(timepoints_all, acceleration_factors)
+        ]
     else:
         time_shifts = [0.0] * n_subjects
 

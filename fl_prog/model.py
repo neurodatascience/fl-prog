@@ -19,10 +19,11 @@ class Positive(nn.Module):
 
 class LogisticRegressionModelWithShift(nn.Module):
     parametrization_dict: ClassVar = {
-        "k_values": Positive(),
-        "sigma": Positive(),
-        "scaling_factors": Positive(),
-        "acceleration_factors": Positive(),
+        "k_values": (Positive(),),
+        "sigma": (Positive(),),
+        "time_shifts": (Positive(),),
+        "scaling_factors": (Positive(),),
+        "acceleration_factors": (Positive(),),
     }
 
     sigmoid_levels = torch.tensor([0.05, 0.95])  # for computing initial k_values
@@ -35,19 +36,26 @@ class LogisticRegressionModelWithShift(nn.Module):
         n_participants: int,
         n_features: int,
         expected_time_shift_range: Iterable[float] = (0.0, 0.0),
-        lambda_: float = 1.0,
+        lambda_time_shifts: float = 1.0,
+        lambda_acceleration_factors: float = 1.0,
         with_acceleration=False,
         with_shift=False,
         with_scaling=False,
     ):
         super().__init__()
 
-        if lambda_ < 0:
-            raise ValueError(f"lambda_ must be non-negative, got {lambda_}")
-
         if len(expected_time_shift_range) != 2:
             raise ValueError(
                 f"expected_time_shift_range must have length 2, got {len(expected_time_shift_range)}"
+            )
+
+        if lambda_time_shifts < 0:
+            raise ValueError(
+                f"lambda_time_shifts must be non-negative, got {lambda_time_shifts}"
+            )
+        if lambda_acceleration_factors < 0:
+            raise ValueError(
+                f"lambda_acceleration_factors must be non-negative, got {lambda_acceleration_factors}"
             )
 
         expected_time_shift_range = torch.tensor(
@@ -71,7 +79,8 @@ class LogisticRegressionModelWithShift(nn.Module):
         self.n_participants = n_participants
         self.n_features = n_features
         self.expected_time_shift_range = expected_time_shift_range
-        self.lambda_ = lambda_
+        self.lambda_time_shifts = lambda_time_shifts
+        self.lambda_acceleration_factors = lambda_acceleration_factors
         self.with_acceleration = with_acceleration
         self.with_shift = with_shift
         self.with_scaling = with_scaling
@@ -87,7 +96,7 @@ class LogisticRegressionModelWithShift(nn.Module):
         )
 
         self.time_shifts = nn.Parameter(
-            torch.randn(self.n_participants) + expected_time_shift_middle
+            torch.abs(torch.randn(self.n_participants)) + expected_time_shift_middle
         )
 
         self.sigma = nn.Parameter(torch.ones(self.n_features) * 0.5)
@@ -104,40 +113,57 @@ class LogisticRegressionModelWithShift(nn.Module):
             self.acceleration_factors = nn.Parameter(self.acceleration_factors)
 
         # constrain some parameters
-        for param_name, parametrization in self.parametrization_dict.items():
+        for param_name, parametrizations in self.parametrization_dict.items():
             if isinstance(getattr(self, param_name), nn.Parameter):
-                parametrize.register_parametrization(self, param_name, parametrization)
+                for parametrization in parametrizations:
+                    parametrize.register_parametrization(
+                        self, param_name, parametrization
+                    )
+
+    @classmethod
+    def _apply_parametrization(
+        cls, param_name: str, unparametrized_param: torch.Tensor
+    ):
+        parametrizations = cls.parametrization_dict[param_name]
+        constrained_param = unparametrized_param
+        for parametrization in parametrizations:
+            constrained_param = parametrization(constrained_param)
+        return constrained_param
 
     @classmethod
     def get_k_values(cls, unparametrized_k_values: torch.Tensor) -> torch.Tensor:
-        return cls.parametrization_dict["k_values"](unparametrized_k_values)
+        return cls._apply_parametrization("k_values", unparametrized_k_values)
+
+    @classmethod
+    def get_time_shifts(cls, unparametrized_time_shifts: torch.Tensor) -> torch.Tensor:
+        return cls._apply_parametrization("time_shifts", unparametrized_time_shifts)
 
     @classmethod
     def get_scaling_factors(
         cls, unparametrized_scaling_factors: torch.Tensor
     ) -> torch.Tensor:
-        return cls.parametrization_dict["scaling_factors"](
-            unparametrized_scaling_factors
+        return cls._apply_parametrization(
+            "scaling_factors", unparametrized_scaling_factors
         )
 
     @classmethod
     def get_acceleration_factors(
         cls, unparametrized_acceleration_factors: torch.Tensor
     ) -> torch.Tensor:
-        return cls.parametrization_dict["acceleration_factors"](
-            unparametrized_acceleration_factors
+        return cls._apply_parametrization(
+            "acceleration_factors", unparametrized_acceleration_factors
         )
 
     @classmethod
     def get_sigma(cls, unparametrized_sigma: torch.Tensor) -> torch.Tensor:
-        return cls.parametrization_dict["sigma"](unparametrized_sigma)
+        return cls._apply_parametrization("sigma", unparametrized_sigma)
 
     def forward(self, t: torch.Tensor, participant_ids: torch.Tensor):
         shift = self.time_shifts[participant_ids.to(torch.long)].squeeze(-1)
         acceleration = self.acceleration_factors[
             participant_ids.to(torch.long)
         ].squeeze(-1)
-        shifted_t = (t.view(-1) + shift) * acceleration
+        shifted_t = t.view(-1) * acceleration + shift
 
         linear_combination = self.k_values * (shifted_t.view(-1, 1) - self.x0_values)
         output = torch.sigmoid(linear_combination)
@@ -158,16 +184,23 @@ class LogisticRegressionModelWithShift(nn.Module):
         actual_no_na = torch.where(actual_mask, actual, predicted)
 
         # negative Gaussian log-likelihood
-        loss = torch.sum(
+        loss = torch.mean(
             (actual_no_na - predicted) ** 2 / (2 * sigma_sq)
-            + 0.5 * torch.log(2 * torch.pi * sigma_sq)
+            + torch.where(
+                actual_mask, 0.5 * torch.log(2 * torch.pi * sigma_sq), torch.tensor(0.0)
+            )
         )
 
         # penalize time shifts that are outside the expected range
         # equivalent to L2 regularization if expected_time_shift_range is (0, 0)
-        loss += self.lambda_ * torch.sum(
+        loss += self.lambda_time_shifts * torch.mean(
             (torch.relu(self.expected_time_shift_range[0] - self.time_shifts) ** 2)
             + (torch.relu(self.time_shifts - self.expected_time_shift_range[1]) ** 2)
+        )
+
+        # also penalize acceleration factors (L1 regularization)
+        loss += self.lambda_acceleration_factors * torch.mean(
+            torch.abs(torch.log(self.acceleration_factors))
         )
 
         return loss

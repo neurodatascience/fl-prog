@@ -145,6 +145,9 @@ dev = [
 "notebooks/" = "ipynb"
 "notebooks_py/" = "py:percent"
 
+[tool.jupytext]
+notebook_metadata_filter="-all"
+
 [tool.ruff.lint.per-file-ignores]
 "notebooks_py/*.py" = ["E402", "B018"]
 

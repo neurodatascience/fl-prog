@@ -31,11 +31,12 @@ from fl_prog.utils.io import (
     working_directory,
 )
 
-DEFAULT_N_ROUNDS = 10
+DEFAULT_N_ROUNDS = 5
 DEFAULT_N_UPDATES = 100
 DEFAULT_BATCH_SIZE = 100000  # all data (no batching)
 DEFAULT_LEARNING_RATE = 0.1
-DEFAULT_LAMBDA = 1
+DEFAULT_LAMBDA_TIME_SHIFTS = 1
+DEFAULT_LAMBDA_ACCELERATION_FACTORS = 0.1
 DEFAULT_EXPECTED_TIME_SHIFT_RANGE = (0.0, 0.0)
 DEFAULT_AGGREGATOR_NAME = "fedavg"
 
@@ -78,7 +79,8 @@ def _get_model_args(
     col_time: str,
     cols_biomarker: Iterable[str],
     node_id_map: dict[str, str],
-    lambda_: float = DEFAULT_LAMBDA,
+    lambda_time_shifts: float = DEFAULT_LAMBDA_TIME_SHIFTS,
+    lambda_acceleration_factors: float = DEFAULT_LAMBDA_ACCELERATION_FACTORS,
     estimated_time_shift_range: Iterable[float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
 ):
     return {
@@ -89,9 +91,10 @@ def _get_model_args(
         },
         "lr_with_shift": {
             "n_features": len(cols_biomarker),
-            "lambda_": lambda_,
+            "lambda_time_shifts": lambda_time_shifts,
+            "lambda_acceleration_factors": lambda_acceleration_factors,
             "expected_time_shift_range": estimated_time_shift_range,
-            # "with_acceleration": True,
+            "with_acceleration": True,
         },
         "node_specific_args": {
             "n_participants": _get_n_participants_map(
@@ -195,7 +198,9 @@ def _run_experiment(
         print(f"Loading local params for node {node} from {fpath_persistent_params}")
 
         final_local_persistent = Serializer.load(fpath_persistent_params)
-        time_shifts[node] = final_local_persistent["time_shifts"].data.numpy()
+        time_shifts[node] = fbm_model.get_time_shifts(
+            final_local_persistent["parametrizations.time_shifts.original"]
+        ).data.numpy()
 
         if "parametrizations.acceleration_factors.original" in final_local_persistent:
             acceleration_factors[node] = fbm_model.get_acceleration_factors(
@@ -279,11 +284,18 @@ def _run_experiment(
     default=DEFAULT_LEARNING_RATE,
 )
 @click.option(
-    "--lambda",
-    "lambda_",
+    "--lambda-time-shifts",
+    "lambda_time_shifts",
     type=click.FloatRange(min=0),
-    default=DEFAULT_LAMBDA,
+    default=DEFAULT_LAMBDA_TIME_SHIFTS,
     help="Regularization strength for time shifts",
+)
+@click.option(
+    "--lambda-acceleration-factors",
+    "lambda_acceleration_factors",
+    type=click.FloatRange(min=0),
+    default=DEFAULT_LAMBDA_ACCELERATION_FACTORS,
+    help="Regularization strength for acceleration factors",
 )
 @click.option(
     "--time-shift-range",
@@ -320,7 +332,8 @@ def run_fedbiomed(
     n_updates: int = DEFAULT_N_UPDATES,
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
-    lambda_: float = DEFAULT_LAMBDA,
+    lambda_time_shifts: float = DEFAULT_LAMBDA_TIME_SHIFTS,
+    lambda_acceleration_factors: float = DEFAULT_LAMBDA_ACCELERATION_FACTORS,
     estimated_time_shift_range: tuple[float, float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
     with_tensorboard: bool = False,
@@ -355,7 +368,8 @@ def run_fedbiomed(
             config["cols"]["col_timepoint"],
             config["cols"]["cols_biomarker"],
             node_id_map,
-            lambda_=lambda_,
+            lambda_time_shifts=lambda_time_shifts,
+            lambda_acceleration_factors=lambda_acceleration_factors,
             estimated_time_shift_range=estimated_time_shift_range,
         )
     except KeyError:

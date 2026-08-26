@@ -18,7 +18,9 @@ if fpath_notebook_config.exists():
 else:
     notebook_config = {}
 data_tag = notebook_config.get("tag", "iid")
-run_tag = notebook_config.get("run_tag", "5-100-100000-0.1-0.1-0.1-0.0_0.0-fedavg")
+run_tag = notebook_config.get(
+    "run_tag", "5-100-100000-0.1-0.0_0.0-l2-0.1-accel-l1-0.1-no_scaling-fedavg"
+)
 dname_data_date = notebook_config.get("dname_data_date", DNAME_LATEST)
 dname_results_date = notebook_config.get("dname_results_date", DNAME_LATEST)
 
@@ -40,7 +42,7 @@ try:
     data_dir = Path(results_dict["settings"]["dpath_data"])
     print(f"fpath_json_results: {fpath_json_results}")
     print(f"\tFound setups: {list(results_dict['results'].keys())}")
-except FileNotFoundError:
+except (FileNotFoundError, KeyError):
     print("Results not available")
     data_dir = DEFAULT_DPATH_DATA / dname_data_date / data_tag
 
@@ -54,7 +56,6 @@ n_biomarkers = len(json_data["cols"]["cols_biomarker"])
 params = json_data["params"]
 k_values = np.array(params["k_values"])
 x0_values = np.array(params["x0_values"])
-vertical_shifts = np.array(params["vertical_shifts"])
 scaling_factors = np.array(params["scaling_factors"])
 time_shifts = np.concatenate(params["time_shifts"])
 acceleration_factors = np.concatenate(params["acceleration_factors"])
@@ -132,11 +133,11 @@ for i_ax, ax in enumerate(axes):
             )
         n_subjects_per_site[site] += 1
 
-    for i_biomarker, (k, x0, vertical_shift, scaling_factor) in enumerate(
-        zip(k_values, x0_values, vertical_shifts, scaling_factors)
+    for i_biomarker, (k, x0, scaling_factor) in enumerate(
+        zip(k_values, x0_values, scaling_factors)
     ):
         t = np.linspace(0, 1.5, 100)
-        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor + vertical_shift
+        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor
         ax.plot(t, y, color=f"C{i_biomarker}", linestyle="--", alpha=1)
 
     ax.set_xlabel(TIME_LABEL)
@@ -158,7 +159,6 @@ save_fig(fig_data, f"{data_tag}-data-{THEME}-{N_SUBJECTS}subjects", extension="s
 def check_model_fit(
     estimated_k_values,
     estimated_x0_values,
-    estimated_vertical_shifts,
     estimated_scaling_factors,
     estimated_time_shifts,
     estimated_acceleration_factors,
@@ -172,7 +172,6 @@ def check_model_fit(
 
     estimated_k_values = np.array(estimated_k_values)
     estimated_x0_values = np.array(estimated_x0_values)
-    estimated_vertical_shifts = np.array(estimated_vertical_shifts)
     estimated_scaling_factors = np.array(estimated_scaling_factors)
     estimated_sigma = np.array(estimated_sigma)
 
@@ -183,12 +182,12 @@ def check_model_fit(
 
     mean_x_value_difference = (x0_values - estimated_x0_values).mean()
 
-    for i_biomarker, (k, x0, vertical_shift, scaling_factor) in enumerate(
-        zip(k_values, x0_values, vertical_shifts, scaling_factors)
+    for i_biomarker, (k, x0, scaling_factor) in enumerate(
+        zip(k_values, x0_values, scaling_factors)
     ):
         # ground truth
         t = np.linspace(-1, 2, 100)
-        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor + vertical_shift
+        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor
         ax.plot(t, y, color=f"C{i_biomarker}", linestyle="--", alpha=0.8)
 
         if align_x:
@@ -207,7 +206,6 @@ def check_model_fit(
                 )
             )
             * estimated_scaling_factors[i_biomarker]
-            + estimated_vertical_shifts[i_biomarker]
         )
         ax.plot(
             t,
@@ -236,9 +234,6 @@ def check_model_fit(
     print(x0_values - estimated_x0_values)
     print("===== x value offset std =====")
     print((x0_values - estimated_x0_values).std())
-    print("===== vertical shifts =====")
-    print(vertical_shifts)
-    print(estimated_vertical_shifts)
     print("===== scaling factors =====")
     print(scaling_factors)
     print(estimated_scaling_factors)
@@ -276,6 +271,32 @@ fig_model_fit.tight_layout()
 
 # %%
 save_fig(fig_model_fit, f"{data_tag}-model_fit-{THEME}", extension="svg")
+
+# %%
+import matplotlib.pyplot as plt
+
+fig_acceleration_factors, ax = plt.subplots(
+    figsize={"paper": (2.5, 2.5), "talk": (4, 4)}[THEME]
+)
+
+ax: plt.Axes
+
+ax.scatter(
+    acceleration_factors,
+    np.hstack(
+        list(
+            results_dict["results"]["federated"][
+                "estimated_acceleration_factors"
+            ].values()
+        )
+    ),
+)
+ax.set_aspect("equal")
+
+ax.set_xlabel("Ground truth")
+ax.set_ylabel("Estimated")
+
+fig_acceleration_factors.tight_layout()
 
 # %%
 import pandas as pd
@@ -358,11 +379,11 @@ for i_ax, ax in enumerate(axes):
             )
         n_subjects += 1
 
-    for i_biomarker, (k, x0, vertical_shift, scaling_factor) in enumerate(
-        zip(k_values, x0_values, vertical_shifts, scaling_factors)
+    for i_biomarker, (k, x0, scaling_factor) in enumerate(
+        zip(k_values, x0_values, scaling_factors)
     ):
         t = np.linspace(-0.5, 1.5, 100)
-        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor + vertical_shift
+        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor
         ax.plot(t, y, color=f"C{i_biomarker}", linestyle="--", alpha=1)
 
     ax.set_xlabel(TIME_LABEL)

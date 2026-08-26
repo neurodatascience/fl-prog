@@ -223,10 +223,6 @@ def _run_experiment(
         else:
             acceleration_factors[node] = np.ones_like(time_shifts[node])
 
-    if "vertical_shifts" in final_params:
-        vertical_shifts = final_params["vertical_shifts"].data.numpy()
-    else:
-        vertical_shifts = np.zeros_like(final_params["x0_values"].data.numpy())
     if "parametrizations.scaling_factors.original" in final_params:
         scaling_factors = fbm_model.get_scaling_factors(
             final_params["parametrizations.scaling_factors.original"]
@@ -239,7 +235,6 @@ def _run_experiment(
             final_params["parametrizations.k_values.original"]
         ).data.numpy(),
         "estimated_x0_values": final_params["x0_values"].data.numpy(),
-        "estimated_vertical_shifts": vertical_shifts,
         "estimated_scaling_factors": scaling_factors,
         "estimated_sigma": fbm_model.get_sigma(
             final_params["parametrizations.sigma.original"]

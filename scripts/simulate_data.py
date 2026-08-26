@@ -23,8 +23,6 @@ DEFAULT_K_MAX = 10.0
 DEFAULT_X0_MIN = 0.0
 DEFAULT_X0_MAX = 1.0
 DEFAULT_ACCELERATION_FACTOR_STD = 0
-DEFAULT_VERTICAL_SHIFT_MIN = 0
-DEFAULT_VERTICAL_SHIFT_MAX = 0
 DEFAULT_SCALING_FACTOR_MIN = 1
 DEFAULT_SCALING_FACTOR_MAX = 1
 DEFAULT_NA_RATIO = 0.0
@@ -109,8 +107,6 @@ def simulate_data(
     x0_min: float = DEFAULT_X0_MIN,
     x0_max: float = DEFAULT_X0_MAX,
     acceleration_factor_std: float = DEFAULT_ACCELERATION_FACTOR_STD,
-    vertical_shift_min: float = DEFAULT_VERTICAL_SHIFT_MIN,
-    vertical_shift_max: float = DEFAULT_VERTICAL_SHIFT_MAX,
     scaling_factor_min: float = DEFAULT_SCALING_FACTOR_MIN,
     scaling_factor_max: float = DEFAULT_SCALING_FACTOR_MAX,
     na_ratio: float = DEFAULT_NA_RATIO,
@@ -155,9 +151,6 @@ def simulate_data(
     # biomarker-specific parameters
     k_values = rng.uniform(k_min, k_max, size=n_biomarkers)
     x0_values = rng.uniform(x0_min, x0_max, size=n_biomarkers)
-    vertical_shifts = rng.uniform(
-        vertical_shift_min, vertical_shift_max, size=n_biomarkers
-    )
     scaling_factors = rng.uniform(
         scaling_factor_min, scaling_factor_max, size=n_biomarkers
     )
@@ -185,7 +178,6 @@ def simulate_data(
                 n_subjects=n_subjects,
                 k_values=k_values,
                 x0_values=x0_values,
-                vertical_shifts=vertical_shifts,
                 scaling_factors=scaling_factors,
                 sigmas=sigma_all,
                 max_n_timepoints=n_max_timepoints,
@@ -222,7 +214,6 @@ def simulate_data(
         "acceleration_factors": acceleration_factors_all,
         "k_values": k_values,
         "x0_values": x0_values,
-        "vertical_shifts": vertical_shifts,
         "scaling_factors": scaling_factors,
         "sigmas": sigma_all,
     }
@@ -295,8 +286,6 @@ def simulate_data(
 @click.option(
     "--acceleration-factor-std", type=float, default=DEFAULT_ACCELERATION_FACTOR_STD
 )
-@click.option("--vertical-shift-min", type=float, default=DEFAULT_VERTICAL_SHIFT_MIN)
-@click.option("--vertical-shift-max", type=float, default=DEFAULT_VERTICAL_SHIFT_MAX)
 @click.option("--scaling-factor-min", type=float, default=DEFAULT_SCALING_FACTOR_MIN)
 @click.option("--scaling-factor-max", type=float, default=DEFAULT_SCALING_FACTOR_MAX)
 @click.option("--rng-seed", type=int, default=None, envvar="RNG_SEED")

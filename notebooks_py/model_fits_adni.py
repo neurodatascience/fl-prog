@@ -60,42 +60,50 @@ import pandas as pd
 from fl_prog.utils.constants import NODE_PREFIX
 
 
-def get_time_shift_by_subject(
-    estimated_time_shifts, subjects_by_node, time_scaling_factor=1.0
+def get_time_param_by_subject(
+    estimated_time_params, subjects_by_node, param_name, time_scaling_factor=1.0
 ):
 
-    dfs_time_shifts = []
-    for node_id, time_shifts in estimated_time_shifts.items():
-        df_time_shifts = pd.DataFrame(
+    dfs_time_params = []
+    for node_id, params in estimated_time_params.items():
+        df_time_params = pd.DataFrame(
             {
                 "participant_id": [
                     str(subject)
                     for subject in subjects_by_node[node_id.removeprefix(NODE_PREFIX)]
                 ],
                 # "participant_id": subjects_by_node[node_id.removeprefix(NODE_PREFIX)],
-                "estimated_time_shift": time_shifts,
+                param_name: params,
             }
         )
-        df_time_shifts["estimated_time_shift"] = (
-            df_time_shifts["estimated_time_shift"].astype(float) * time_scaling_factor
+        df_time_params[param_name] = (
+            df_time_params[param_name].astype(float) * time_scaling_factor
         )
-        dfs_time_shifts.append(df_time_shifts)
+        dfs_time_params.append(df_time_params)
 
-    time_shift_by_subject = (
-        pd.concat(dfs_time_shifts, ignore_index=True)
+    time_param_by_subject = (
+        pd.concat(dfs_time_params, ignore_index=True)
         .set_index("participant_id")
         .squeeze()
         .to_dict()
     )
-    return time_shift_by_subject
+    return time_param_by_subject
 
 
-time_shift_by_subject = get_time_shift_by_subject(
+time_shift_by_subject = get_time_param_by_subject(
     results["federated"]["estimated_time_shifts"],
     subjects_by_node,
+    "estimated_time_shift",
     time_scaling_factor=time_scaling_factor,
 )
 # time_shift_by_subject
+
+acceleration_factor_by_subject = get_time_param_by_subject(
+    results["federated"]["estimated_acceleration_factors"],
+    subjects_by_node,
+    "estimated_acceleration_factor",
+    time_scaling_factor=1,
+)
 
 # print(min(time_shift_by_subject.values()))
 # print(max(time_shift_by_subject.values()))
@@ -107,17 +115,14 @@ import numpy as np
 data_fitted_models = []
 
 for setup in results:
-    for biomarker, k, x0, vertical_shift, scaling_factor in zip(
+    for biomarker, k, x0, scaling_factor in zip(
         cols_biomarker,
         results[setup]["estimated_k_values"],
         results[setup]["estimated_x0_values"],
-        results[setup]["estimated_vertical_shifts"],
         results[setup]["estimated_scaling_factors"],
     ):
         months = np.linspace(-0.5, 4, 100)
-        values = scaling_factor * (
-            1 / (1 + np.exp(-k * (months - x0))) + vertical_shift
-        )
+        values = scaling_factor * (1 / (1 + np.exp(-k * (months - x0))))
 
         biomarker_min, biomarker_max = min_max_by_measure[biomarker]
 
@@ -143,21 +148,41 @@ df_fitted_models
 import numpy as np
 
 estimated_time_shifts_federated = pd.Series(
-    get_time_shift_by_subject(
+    get_time_param_by_subject(
         results["federated"]["estimated_time_shifts"],
         subjects_by_node,
+        "estimated_time_shift",
         time_scaling_factor=time_scaling_factor,
+    )
+).sort_index()
+
+estimated_acceleration_factors_federated = pd.Series(
+    get_time_param_by_subject(
+        results["federated"]["estimated_acceleration_factors"],
+        subjects_by_node,
+        "estimated_acceleration_factor",
+        time_scaling_factor=1,
     )
 ).sort_index()
 
 if "centralized" in results:
     estimated_time_shifts_centralized = pd.Series(
-        get_time_shift_by_subject(
+        get_time_param_by_subject(
             results["centralized"]["estimated_time_shifts"],
             subjects_by_node,
+            "estimated_time_shift",
             time_scaling_factor=time_scaling_factor,
         )
     ).sort_index()
+    estimated_acceleration_factors_centralized = pd.Series(
+        get_time_param_by_subject(
+            results["centralized"]["estimated_acceleration_factors"],
+            subjects_by_node,
+            "estimated_acceleration_factor",
+            time_scaling_factor=1,
+        )
+    ).sort_index()
+
     # estimated_time_shifts_federated = np.concatenate(
     #     list(results["federated"]["estimated_time_shifts"].values())
     # )
@@ -168,6 +193,16 @@ if "centralized" in results:
     print("Correlation between estimated time shifts (federated vs centralized):")
     print(
         np.corrcoef(estimated_time_shifts_federated, estimated_time_shifts_centralized)
+    )
+
+    print(
+        "Correlation between estimated acceleration factors (federated vs centralized):"
+    )
+    print(
+        np.corrcoef(
+            estimated_acceleration_factors_federated,
+            estimated_acceleration_factors_centralized,
+        )
     )
 else:
     print("Centralized results not available (yet)")
@@ -222,7 +257,12 @@ df_adni_long = pd.melt(
 )
 df_adni_long["months_shifted"] = df_adni_long[["months_scaled", "rid"]].apply(
     lambda row: (
-        (row["months_scaled"] * time_scaling_factor) + time_shift_by_subject[row["rid"]]
+        (
+            row["months_scaled"]
+            * time_scaling_factor
+            * acceleration_factor_by_subject[row["rid"]]
+        )
+        + time_shift_by_subject[row["rid"]]
     ),
     axis="columns",
 )
@@ -329,6 +369,37 @@ fig_time_shift_box = sns.catplot(
 # yticks = np.asarray(ax.get_yticks())
 # ax.set_yticks(yticks)
 # ax.set_yticklabels(yticks * time_scaling_factor)
+
+# %%
+import numpy as np
+
+hue_order = ["CN", "SMC", "EMCI", "LMCI", "AD"]
+
+df_acceleration_factors = estimated_acceleration_factors_federated.reset_index(
+    name="estimated_acceleration_factor"
+)
+
+df_acceleration_factors["group"] = df_acceleration_factors["index"].map(
+    df_demographics_baseline.set_index("RID")["DX_bl"].to_dict()
+)
+fig_acceleration_factor_kde = sns.displot(
+    data=df_acceleration_factors,
+    x="estimated_acceleration_factor",
+    hue="group",
+    kind="kde",
+    hue_order=hue_order,
+)
+
+fig_acceleration_factor_box = sns.catplot(
+    data=df_acceleration_factors.sort_values(
+        "group", key=lambda x: x.map({group: i for i, group in enumerate(hue_order)})
+    ),
+    y="estimated_acceleration_factor",
+    x="group",
+    kind="box",
+    hue="group",
+    hue_order=hue_order,
+)
 
 # %%
 """

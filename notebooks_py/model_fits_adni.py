@@ -17,12 +17,13 @@ if fpath_notebook_config.exists():
 else:
     notebook_config = {}
 
-TAG = notebook_config.get("tag", "adni_iid")
+data_tag = notebook_config.get("tag", "adni_iid")
+run_tag = notebook_config.get("run_tag", "6-25-100000-0.05-10.0-0.1-0.0_3.0-fedavg")
 dname_results_date = notebook_config.get("dname_results_date", DNAME_LATEST)
 fpath_adni_merge = Path(os.environ.get("ADNI_MERGE_FILE"))
 
-dpath_results = DEFAULT_DPATH_RESULTS / dname_results_date / TAG
-fpath_json = dpath_results / f"{TAG}-estimated_params.json"
+dpath_results = DEFAULT_DPATH_RESULTS / dname_results_date / data_tag
+fpath_json = dpath_results / f"{run_tag}-estimated_params.json"
 print(fpath_json)
 
 json_content = json.loads(fpath_json.read_text())
@@ -207,7 +208,7 @@ data_specific_cols = ["rid", "visit"]
 index_cols = ["participant_id_int", "months_scaled"] + data_specific_cols
 
 df_adni = pd.read_csv(
-    f"{json_content['settings']['dpath_data']}/{TAG}-merged.tsv",
+    f"{json_content['settings']['dpath_data']}/{data_tag}-merged.tsv",
     sep="\t",
     index_col=index_cols,
     dtype={col: str for col in data_specific_cols},

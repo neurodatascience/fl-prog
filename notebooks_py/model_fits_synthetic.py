@@ -17,7 +17,8 @@ if fpath_notebook_config.exists():
     notebook_config = json.loads(fpath_notebook_config.read_text())
 else:
     notebook_config = {}
-TAG = notebook_config.get("tag", "iid_with_acceleration")
+data_tag = notebook_config.get("tag", "iid")
+run_tag = notebook_config.get("run_tag", "5-100-100000-0.1-0.1-0.1-0.0_0.0-fedavg")
 dname_data_date = notebook_config.get("dname_data_date", DNAME_LATEST)
 dname_results_date = notebook_config.get("dname_results_date", DNAME_LATEST)
 
@@ -31,19 +32,19 @@ TIME_LABEL = "Time"
 BIOMARKER_LABEL = "Biomarker value"
 N_SUBJECTS = 1  # number of subjects per site to plot
 
-results_dir = DEFAULT_DPATH_RESULTS / dname_results_date / TAG
+results_dir = DEFAULT_DPATH_RESULTS / dname_results_date / data_tag
 
 try:
-    fpath_json_results = results_dir / f"{TAG}-estimated_params.json"
+    fpath_json_results = results_dir / f"{run_tag}-estimated_params.json"
     results_dict = json.loads(fpath_json_results.read_text())
     data_dir = Path(results_dict["settings"]["dpath_data"])
     print(f"fpath_json_results: {fpath_json_results}")
     print(f"\tFound setups: {list(results_dict['results'].keys())}")
 except FileNotFoundError:
     print("Results not available")
-    data_dir = DEFAULT_DPATH_DATA / dname_data_date / TAG
+    data_dir = DEFAULT_DPATH_DATA / dname_data_date / data_tag
 
-fpath_json_data = data_dir / f"{TAG}.json"
+fpath_json_data = data_dir / f"{data_tag}.json"
 json_data = json.loads(fpath_json_data.read_text())
 print(f"fpath_json_data: {fpath_json_data}")
 
@@ -66,7 +67,7 @@ n_sites = len(json_data["subjects_by_node"]) - 1
 
 df = pd.concat(
     {
-        i + 1: pd.read_csv(data_dir / f"{TAG}-{i + 1}.tsv", sep="\t")
+        i + 1: pd.read_csv(data_dir / f"{data_tag}-{i + 1}.tsv", sep="\t")
         for i in range(n_sites)
     },
     axis="index",
@@ -150,7 +151,7 @@ XLIM = axes[0].get_xlim()
 YLIM = axes[0].get_ylim()
 
 # %%
-save_fig(fig_data, f"{TAG}-data-{THEME}-{N_SUBJECTS}subjects", extension="svg")
+save_fig(fig_data, f"{data_tag}-data-{THEME}-{N_SUBJECTS}subjects", extension="svg")
 
 
 # %%
@@ -274,7 +275,7 @@ fig_model_fit.tight_layout()
 
 
 # %%
-save_fig(fig_model_fit, f"{TAG}-model_fit-{THEME}", extension="svg")
+save_fig(fig_model_fit, f"{data_tag}-model_fit-{THEME}", extension="svg")
 
 # %%
 import pandas as pd

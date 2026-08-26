@@ -56,11 +56,6 @@ class ModelParams:
     acceleration_factors: np.ndarray
 
 
-def _get_fpath_json_results(tag: str, dpath_results: Path) -> Path:
-    dpath_results_latest = get_dpath_latest(dpath_results)
-    return dpath_results_latest / tag / f"{tag}-estimated_params.json"
-
-
 def _get_dpath_data(json_results: dict) -> Path:
     return Path(json_results["settings"]["dpath_data"])
 
@@ -177,7 +172,8 @@ def _estimated_params_by_setup(
     return params_by_setup
 
 
-def _load_df_data(json_data: dict, dpath_data: Path, tag: str) -> pd.DataFrame:
+def _load_df_data(json_data: dict, dpath_data: Path) -> pd.DataFrame:
+    tag = json_data["settings"]["tag"]
     cols = _get_cols(json_data)
     fpath_data = dpath_data / f"{tag}-merged.tsv"
     return pd.read_csv(fpath_data, sep="\t", dtype={cols["col_subject"]: str})
@@ -415,13 +411,7 @@ def _save_tsv(df_metrics: pd.DataFrame, fpath_out: Path):
     print(f"Saved metrics to {fpath_out}")
 
 
-def assess_fit(
-    tag: str,
-    dpath_results: Path,
-):
-    fpath_json_results = _get_fpath_json_results(tag, dpath_results)
-    print(f"fpath_json_results: {fpath_json_results}")
-
+def get_metrics_single_run(fpath_json_results: Path):
     json_results = load_json(fpath_json_results)
 
     dpath_data = _get_dpath_data(json_results)
@@ -433,7 +423,7 @@ def assess_fit(
     subjects_by_node = _get_subjects_by_node(json_data)
     true_params = _get_true_params(json_data)
 
-    df_data = _load_df_data(json_data, dpath_data, tag)
+    df_data = _load_df_data(json_data, dpath_data)
 
     col_subject = cols["col_subject"]
     n_biomarkers = len(cols["cols_biomarker"])
@@ -542,17 +532,34 @@ def assess_fit(
         rows, columns=["setup", "set_name", "col_biomarker", "metric", "value"]
     )
 
-    fpath_out = fpath_json_results.with_name(f"{tag}-fit_quality.tsv")
-    _save_tsv(df_metrics, fpath_out)
-
     df_recovery = pd.DataFrame(
         rows_recovery,
         columns=["setup", "set_name", "col_biomarker", "metric", "value"],
     )
-    fpath_recovery_out = fpath_json_results.with_name(f"{tag}-param_recovery.tsv")
-    _save_tsv(df_recovery, fpath_recovery_out)
 
     return df_metrics, df_recovery
+
+
+def get_metrics(
+    tag: str,
+    dpath_results: Path,
+):
+    dpath_results_latest = get_dpath_latest(dpath_results)
+    for fpath_json_results in (dpath_results_latest / tag).glob(
+        "*-estimated_params.json"
+    ):
+        run_tag = fpath_json_results.stem.removesuffix("-estimated_params")
+        print(f"fpath_json_results: {fpath_json_results}")
+
+        df_metrics, df_recovery = get_metrics_single_run(fpath_json_results)
+
+        fpath_out = fpath_json_results.with_name(f"{run_tag}-fit_quality.tsv")
+        _save_tsv(df_metrics, fpath_out)
+
+        fpath_recovery_out = fpath_json_results.with_name(
+            f"{run_tag}-param_recovery.tsv"
+        )
+        _save_tsv(df_recovery, fpath_recovery_out)
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -564,7 +571,7 @@ def assess_fit(
     default=DEFAULT_DPATH_RESULTS,
 )
 def main(**params):
-    assess_fit(**params)
+    get_metrics(**params)
 
 
 if __name__ == "__main__":

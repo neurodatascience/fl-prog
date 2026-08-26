@@ -1,12 +1,24 @@
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import ClassVar
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.nn.utils import parametrize
 
 from fl_prog.utils.constants import Penalty
+
+
+@dataclass
+class ModelParams:
+    k_values: np.ndarray
+    x0_values: np.ndarray
+    scaling_factors: np.ndarray
+    sigma: np.ndarray
+    time_shifts: np.ndarray
+    acceleration_factors: np.ndarray
 
 
 class Positive(nn.Module):
@@ -171,18 +183,36 @@ class LogisticRegressionModelWithShift(nn.Module):
     def get_sigma(cls, unparametrized_sigma: torch.Tensor) -> torch.Tensor:
         return cls._apply_parametrization("sigma", unparametrized_sigma)
 
-    def forward(self, t: torch.Tensor, participant_ids: torch.Tensor):
-        shift = self.time_shifts[participant_ids.to(torch.long)].squeeze(-1)
-        acceleration = self.acceleration_factors[
-            participant_ids.to(torch.long)
-        ].squeeze(-1)
+    def forward(
+        self,
+        t: torch.Tensor,
+        participant_ids: torch.Tensor,
+        params: ModelParams | None = None,
+    ):
+        # training
+        if params is None:
+            k_values = self.k_values
+            x0_values = self.x0_values
+            scaling_factors = self.scaling_factors
+            time_shifts = self.time_shifts
+            acceleration_factors = self.acceleration_factors
+        # inference
+        else:
+            k_values = torch.tensor(params.k_values, dtype=torch.float)
+            x0_values = torch.tensor(params.x0_values, dtype=torch.float)
+            scaling_factors = torch.tensor(params.scaling_factors, dtype=torch.float)
+            time_shifts = torch.tensor(params.time_shifts, dtype=torch.float)
+            acceleration_factors = torch.tensor(
+                params.acceleration_factors, dtype=torch.float
+            )
+
+        shift = time_shifts[participant_ids.to(torch.long)].squeeze(-1)
+        acceleration = acceleration_factors[participant_ids.to(torch.long)].squeeze(-1)
         shifted_t = t.view(-1) * acceleration + shift
 
-        linear_combination = self.k_values * (shifted_t.view(-1, 1) - self.x0_values)
+        linear_combination = k_values * (shifted_t.view(-1, 1) - x0_values)
         output = torch.sigmoid(linear_combination)
-        if self.with_scaling:
-            scaling_factors = self.scaling_factors
-            output = scaling_factors * output
+        output = output * scaling_factors
         return output
 
     def get_loss(self, predicted: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:

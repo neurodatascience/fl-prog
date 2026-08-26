@@ -102,7 +102,9 @@ def save_json(fpath: Path, data: dict, indent: int = 4):
 
 
 def serialize_data(obj: object):
-    if isinstance(obj, np.ndarray):
+    if isinstance(obj, set):
+        return sorted(obj)
+    elif isinstance(obj, np.ndarray):
         return obj.tolist()
     elif isinstance(obj, torch.Tensor):
         return serialize_data(obj.data.numpy())

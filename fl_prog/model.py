@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.nn.utils import parametrize
 
-from fl_prog.utils.constants import PenaltyType
+from fl_prog.utils.constants import Penalty
 
 
 class Positive(nn.Module):
@@ -43,8 +43,8 @@ class LogisticRegressionModelWithShift(nn.Module):
         with_acceleration=False,
         with_shift=False,
         with_scaling=False,
-        penalty_time_shifts: PenaltyType = "l2",
-        penalty_acceleration_factors: PenaltyType = "l1",
+        penalty_time_shifts: Penalty = "l2",
+        penalty_acceleration_factors: Penalty = "l1",
     ):
         super().__init__()
 
@@ -137,17 +137,17 @@ class LogisticRegressionModelWithShift(nn.Module):
         return constrained_param
 
     def _apply_penalty(
-        self, tensor: torch.Tensor, penalty_type: PenaltyType
+        self, tensor: torch.Tensor, penalty_type: Penalty
     ) -> torch.Tensor:
         match penalty_type:
-            case PenaltyType.L1:
+            case Penalty.L1:
                 return torch.abs(tensor)
-            case PenaltyType.L2:
+            case Penalty.L2:
                 return tensor**2
             case _:
                 raise ValueError(
                     f"Unknown penalty type: {penalty_type}."
-                    f" Valid options are: {[e.value for e in PenaltyType]}"
+                    f" Valid options are: {[e.value for e in Penalty]}"
                 )
 
     @classmethod

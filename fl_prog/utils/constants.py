@@ -15,7 +15,12 @@ NODE_PREFIX = "node_"
 NODE_ID_CENTRALIZED = "centralized"
 
 
+class Setup(str, Enum):
+    CENTRALIZED = "centralized"
+    FEDERATED = "federated"
+
+
 # model
-class PenaltyType(Enum):
+class Penalty(str, Enum):
     L1 = "l1"
     L2 = "l2"

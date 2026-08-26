@@ -19,6 +19,8 @@ from fl_prog.utils.constants import (
     CLICK_CONTEXT_SETTINGS,
     NODE_ID_CENTRALIZED,
     NODE_PREFIX,
+    Penalty,
+    Setup,
 )
 from fl_prog.utils.fbm_node import load_node_db
 from fl_prog.utils.io import (
@@ -31,13 +33,17 @@ from fl_prog.utils.io import (
     working_directory,
 )
 
+DEFAULT_SETUPS = (Setup.FEDERATED, Setup.CENTRALIZED)
 DEFAULT_N_ROUNDS = 5
 DEFAULT_N_UPDATES = 100
 DEFAULT_BATCH_SIZE = 100000  # all data (no batching)
 DEFAULT_LEARNING_RATE = 0.1
-DEFAULT_LAMBDA_TIME_SHIFTS = 0.1
-DEFAULT_LAMBDA_ACCELERATION_FACTORS = 0.1
 DEFAULT_EXPECTED_TIME_SHIFT_RANGE = (0.0, 0.0)
+DEFAULT_LAMBDA_TIME_SHIFTS = 0.1
+DEFAULT_PENALTY_TIME_SHIFTS = Penalty.L2
+DEFAULT_WITH_ACCELERATION = True
+DEFAULT_LAMBDA_ACCELERATION_FACTORS = 0.1
+DEFAULT_PENALTY_ACCELERATION_FACTORS = Penalty.L1
 DEFAULT_AGGREGATOR_NAME = "fedavg"
 
 VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
@@ -82,6 +88,9 @@ def _get_model_args(
     lambda_time_shifts: float = DEFAULT_LAMBDA_TIME_SHIFTS,
     lambda_acceleration_factors: float = DEFAULT_LAMBDA_ACCELERATION_FACTORS,
     estimated_time_shift_range: Iterable[float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
+    with_acceleration: bool = DEFAULT_WITH_ACCELERATION,
+    penalty_time_shifts: str = DEFAULT_PENALTY_TIME_SHIFTS,
+    penalty_acceleration_factors: str = DEFAULT_PENALTY_ACCELERATION_FACTORS,
 ):
     return {
         "colnames": {
@@ -91,10 +100,12 @@ def _get_model_args(
         },
         "lr_with_shift": {
             "n_features": len(cols_biomarker),
-            "lambda_time_shifts": lambda_time_shifts,
-            "lambda_acceleration_factors": lambda_acceleration_factors,
             "expected_time_shift_range": estimated_time_shift_range,
-            "with_acceleration": True,
+            "lambda_time_shifts": lambda_time_shifts,
+            "penalty_time_shifts": penalty_time_shifts.value,
+            "with_acceleration": with_acceleration,
+            "lambda_acceleration_factors": lambda_acceleration_factors,
+            "penalty_acceleration_factors": penalty_acceleration_factors.value,
         },
         "node_specific_args": {
             "n_participants": _get_n_participants_map(
@@ -273,6 +284,13 @@ def _run_experiment(
     default=DEFAULT_DPATH_FEDBIOMED,
 )
 @click.option(
+    "--setup",
+    "setups",
+    type=click.Choice(Setup, case_sensitive=False),
+    multiple=True,
+    default=DEFAULT_SETUPS,
+)
+@click.option(
     "--node-centralized", "node_id_centralized", type=str, default=NODE_ID_CENTRALIZED
 )
 @click.option("--n-rounds", type=click.IntRange(min=1), default=DEFAULT_N_ROUNDS)
@@ -306,6 +324,22 @@ def _run_experiment(
     help="Expected range of time shifts (for initialization and regularization)",
 )
 @click.option(
+    "--with-acceleration/--no-acceleration",
+    default=DEFAULT_WITH_ACCELERATION,
+)
+@click.option(
+    "--penalty-time-shifts",
+    type=click.Choice(Penalty, case_sensitive=False),
+    default=DEFAULT_PENALTY_TIME_SHIFTS,
+    help="Penalty type for time shifts",
+)
+@click.option(
+    "--penalty-acceleration-factors",
+    type=click.Choice(Penalty, case_sensitive=False),
+    default=DEFAULT_PENALTY_ACCELERATION_FACTORS,
+    help="Penalty type for acceleration factors",
+)
+@click.option(
     "--aggregator",
     "aggregator_name",
     type=click.Choice(VALID_AGGREGATOR_NAMES),
@@ -327,13 +361,17 @@ def run_fedbiomed(
     dpath_fbm: Path,
     dpath_data: Path,
     dpath_results: Path,
+    setups: Iterable[Setup] = DEFAULT_SETUPS,
     node_id_centralized: str = NODE_ID_CENTRALIZED,
     n_rounds: int = DEFAULT_N_ROUNDS,
     n_updates: int = DEFAULT_N_UPDATES,
     batch_size: int = DEFAULT_BATCH_SIZE,
     learning_rate: float = DEFAULT_LEARNING_RATE,
     lambda_time_shifts: float = DEFAULT_LAMBDA_TIME_SHIFTS,
+    penalty_time_shifts: Penalty = DEFAULT_PENALTY_TIME_SHIFTS,
+    with_acceleration: bool = DEFAULT_WITH_ACCELERATION,
     lambda_acceleration_factors: float = DEFAULT_LAMBDA_ACCELERATION_FACTORS,
+    penalty_acceleration_factors: Penalty = DEFAULT_PENALTY_ACCELERATION_FACTORS,
     estimated_time_shift_range: tuple[float, float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
     with_tensorboard: bool = False,
@@ -342,6 +380,8 @@ def run_fedbiomed(
     random_seed: int | None = None,
     overwrite: bool = False,
 ):
+    setups = set(setups)
+
     dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
     run_tag = "-".join(
         [
@@ -349,9 +389,12 @@ def run_fedbiomed(
             f"{n_updates}",
             f"{batch_size}",
             f"{learning_rate}",
-            f"{lambda_time_shifts}",
-            f"{lambda_acceleration_factors}",
             f"{estimated_time_shift_range[0]}_{estimated_time_shift_range[1]}",
+            f"{penalty_time_shifts.value}",
+            f"{lambda_time_shifts}",
+            "accel" if with_acceleration else "no_accel",
+            f"{penalty_acceleration_factors.value}",
+            f"{lambda_acceleration_factors}",
             aggregator_name,
         ]
     )
@@ -383,6 +426,9 @@ def run_fedbiomed(
             lambda_time_shifts=lambda_time_shifts,
             lambda_acceleration_factors=lambda_acceleration_factors,
             estimated_time_shift_range=estimated_time_shift_range,
+            with_acceleration=with_acceleration,
+            penalty_time_shifts=penalty_time_shifts,
+            penalty_acceleration_factors=penalty_acceleration_factors,
         )
     except KeyError:
         raise RuntimeError(
@@ -416,40 +462,43 @@ def run_fedbiomed(
     json_data["results"] = {}
 
     # federated
-    results_federated = _run_experiment(
-        dpath_fbm,
-        nodes=nodes_federated,
-        tags=tags,
-        model_args=model_args,
-        training_args=training_args,
-        n_rounds=n_rounds,
-        aggregator_name=aggregator_name,
-        with_tensorboard=with_tensorboard,
-        dpath_tensorboard=dpath_tensorboard,
-        save_training_replies=save_training_replies,
-        save_all_aggregated_params=save_all_aggregated_params,
-    )
+    if Setup.FEDERATED in setups:
+        results_federated = _run_experiment(
+            dpath_fbm,
+            nodes=nodes_federated,
+            tags=tags,
+            model_args=model_args,
+            training_args=training_args,
+            n_rounds=n_rounds,
+            aggregator_name=aggregator_name,
+            with_tensorboard=with_tensorboard,
+            dpath_tensorboard=dpath_tensorboard,
+            save_training_replies=save_training_replies,
+            save_all_aggregated_params=save_all_aggregated_params,
+        )
 
-    json_data["results"]["federated"] = results_federated
-    save_json(fpath_out, json_data)
+        json_data["results"]["federated"] = results_federated
+        save_json(fpath_out, json_data)
 
     # centralized
-    results_centralized = _run_experiment(
-        dpath_fbm,
-        nodes=[f"{NODE_PREFIX}{node_id_centralized}"],
-        tags=tags,
-        model_args=model_args,
-        training_args=training_args,
-        n_rounds=n_rounds,
-        aggregator_name=aggregator_name,
-        with_tensorboard=with_tensorboard,
-        dpath_tensorboard=dpath_tensorboard,
-        save_training_replies=save_training_replies,
-        save_all_aggregated_params=save_all_aggregated_params,
-    )
+    if Setup.CENTRALIZED in setups:
+        results_centralized = _run_experiment(
+            dpath_fbm,
+            nodes=[f"{NODE_PREFIX}{node_id_centralized}"],
+            tags=tags,
+            model_args=model_args,
+            training_args=training_args,
+            n_rounds=n_rounds,
+            aggregator_name=aggregator_name,
+            with_tensorboard=with_tensorboard,
+            dpath_tensorboard=dpath_tensorboard,
+            save_training_replies=save_training_replies,
+            save_all_aggregated_params=save_all_aggregated_params,
+        )
 
-    json_data["results"]["centralized"] = results_centralized
-    save_json(fpath_out, json_data)
+        json_data["results"]["centralized"] = results_centralized
+        save_json(fpath_out, json_data)
+
     print(f"Saved results to {fpath_out}")
 
 

@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from torch import nn
 from torch.nn.utils import parametrize
 
+from fl_prog.utils.constants import Penalty
+
 
 class Positive(nn.Module):
     """Constrain a parameter to be positive using the softplus function."""
@@ -41,6 +43,8 @@ class LogisticRegressionModelWithShift(nn.Module):
         with_acceleration=False,
         with_shift=False,
         with_scaling=False,
+        penalty_time_shifts: Penalty = "l2",
+        penalty_acceleration_factors: Penalty = "l1",
     ):
         super().__init__()
 
@@ -84,6 +88,8 @@ class LogisticRegressionModelWithShift(nn.Module):
         self.with_acceleration = with_acceleration
         self.with_shift = with_shift
         self.with_scaling = with_scaling
+        self.penalty_time_shifts = penalty_time_shifts
+        self.penalty_acceleration_factors = penalty_acceleration_factors
 
         # slopes
         self.k_values = nn.Parameter(torch.rand(self.n_features) + starting_k_value)
@@ -129,6 +135,20 @@ class LogisticRegressionModelWithShift(nn.Module):
         for parametrization in parametrizations:
             constrained_param = parametrization(constrained_param)
         return constrained_param
+
+    def _apply_penalty(
+        self, tensor: torch.Tensor, penalty_type: Penalty
+    ) -> torch.Tensor:
+        match penalty_type:
+            case Penalty.L1:
+                return torch.abs(tensor)
+            case Penalty.L2:
+                return tensor**2
+            case _:
+                raise ValueError(
+                    f"Unknown penalty type: {penalty_type}."
+                    f" Valid options are: {[e.value for e in Penalty]}"
+                )
 
     @classmethod
     def get_k_values(cls, unparametrized_k_values: torch.Tensor) -> torch.Tensor:
@@ -192,15 +212,24 @@ class LogisticRegressionModelWithShift(nn.Module):
         )
 
         # penalize time shifts that are outside the expected range
-        # equivalent to L2 regularization if expected_time_shift_range is (0, 0)
+        # equivalent to normal L1/L2 regularization if expected_time_shift_range is (0, 0)
         loss += self.lambda_time_shifts * torch.mean(
-            (torch.relu(self.expected_time_shift_range[0] - self.time_shifts) ** 2)
-            + (torch.relu(self.time_shifts - self.expected_time_shift_range[1]) ** 2)
+            self._apply_penalty(
+                torch.relu(self.expected_time_shift_range[0] - self.time_shifts),
+                self.penalty_time_shifts,
+            )
+            + self._apply_penalty(
+                torch.relu(self.time_shifts - self.expected_time_shift_range[1]),
+                self.penalty_time_shifts,
+            )
         )
 
-        # also penalize acceleration factors (L1 regularization)
+        # also penalize acceleration factors
         loss += self.lambda_acceleration_factors * torch.mean(
-            torch.abs(torch.log(self.acceleration_factors))
+            self._apply_penalty(
+                torch.log(self.acceleration_factors),
+                self.penalty_acceleration_factors,
+            )
         )
 
         return loss

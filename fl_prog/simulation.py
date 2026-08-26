@@ -50,7 +50,6 @@ def simulate_all_subjects(
     n_subjects: int,
     k_values: Iterable[float],
     x0_values: Iterable[float],
-    vertical_shifts: Iterable[float],
     scaling_factors: Iterable[float],
     sigmas: Iterable[float],
     max_n_timepoints: int = 3,
@@ -75,8 +74,6 @@ def simulate_all_subjects(
         Logistic function steepness parameters.
     x0_values : Iterable[float]
         Logistic function midpoint parameters. Must have the same length as k_values.
-    vertical_shifts : Iterable[float]
-        Vertical shift parameters for each biomarker. Must have the same length as k_values.
     scaling_factors : Iterable[float]
         Scaling factors for each biomarker. Must have the same length as k_values.
     sigmas : Iterable[float]
@@ -110,14 +107,13 @@ def simulate_all_subjects(
     """
     if (
         len(k_values) != len(x0_values)
-        or len(k_values) != len(vertical_shifts)
         or len(k_values) != len(scaling_factors)
         or len(k_values) != len(sigmas)
     ):
         raise ValueError(
-            "k_values, x0_values, vertical_shifts, scaling_factors, and sigmas must "
+            "k_values, x0_values, scaling_factors, and sigmas must "
             f"have the same length. Got {len(k_values)}, {len(x0_values)}, "
-            f"{len(vertical_shifts)}, {len(scaling_factors)}, and {len(sigmas)}."
+            f"{len(scaling_factors)}, and {len(sigmas)}."
         )
 
     if (n_timepoints_distribution is not None and time_at_timepoint is None) or (
@@ -167,7 +163,6 @@ def simulate_all_subjects(
             timepoints,
             k_values,
             x0_values,
-            vertical_shifts,
             scaling_factors,
         )
         for i_biomarker, sigma in enumerate(sigmas):

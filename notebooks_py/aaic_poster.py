@@ -54,7 +54,6 @@ def plot_simulated_data(tag, ax, with_legend=False):
     params = json_data["params"]
     k_values = np.array(params["k_values"])
     x0_values = np.array(params["x0_values"])
-    vertical_shifts = np.array(params.get("vertical_shifts", [0] * n_biomarkers))
     scaling_factors = np.array(params.get("scaling_factors", [1] * n_biomarkers))
     time_shifts = np.concatenate(params["time_shifts"])
 
@@ -98,11 +97,11 @@ def plot_simulated_data(tag, ax, with_legend=False):
             )
         n_subjects_per_site[site] += 1
 
-    for i_biomarker, (k, x0, vertical_shift, scaling_factor) in enumerate(
-        zip(k_values, x0_values, vertical_shifts, scaling_factors)
+    for i_biomarker, (k, x0, scaling_factor) in enumerate(
+        zip(k_values, x0_values, scaling_factors)
     ):
         t = np.linspace(0, 1, 100)
-        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor + vertical_shift
+        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor
         ax.plot(t, y, color=f"C{i_biomarker}", linestyle="--", alpha=1, linewidth=2)
 
     if with_legend:
@@ -223,7 +222,6 @@ def check_model_fit(
     params = json_data["params"]
     k_values = np.array(params["k_values"])
     x0_values = np.array(params["x0_values"])
-    vertical_shifts = np.array(params.get("vertical_shifts", [0] * n_biomarkers))
     scaling_factors = np.array(params.get("scaling_factors", [1] * n_biomarkers))
 
     if ax is None:
@@ -231,9 +229,6 @@ def check_model_fit(
 
     estimated_k_values = results_dict["results"][setup]["estimated_k_values"]
     estimated_x0_values = results_dict["results"][setup]["estimated_x0_values"]
-    estimated_vertical_shifts = results_dict["results"][setup].get(
-        "estimated_vertical_shifts", [0] * n_biomarkers
-    )
     estimated_scaling_factors = results_dict["results"][setup].get(
         "estimated_scaling_factors", [1] * n_biomarkers
     )
@@ -246,19 +241,18 @@ def check_model_fit(
 
     estimated_k_values = np.array(estimated_k_values)
     estimated_x0_values = np.array(estimated_x0_values)
-    estimated_vertical_shifts = np.array(estimated_vertical_shifts)
     estimated_scaling_factors = np.array(estimated_scaling_factors)
     estimated_time_shifts = np.array(estimated_time_shifts)
     estimated_sigma = np.array(estimated_sigma)
 
     mean_x_value_difference = (x0_values - estimated_x0_values).mean()
 
-    for i_biomarker, (k, x0, vertical_shift, scaling_factor) in enumerate(
-        zip(k_values, x0_values, vertical_shifts, scaling_factors)
+    for i_biomarker, (k, x0, scaling_factor) in enumerate(
+        zip(k_values, x0_values, scaling_factors)
     ):
         # ground truth
         t = np.linspace(-1, 2, 100)
-        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor + vertical_shift
+        y = 1 / (1 + np.exp(-k * (t - x0))) * scaling_factor
         ax.plot(t, y, color=f"C{i_biomarker}", linestyle="--", alpha=0.8)
 
         if align_x:
@@ -277,7 +271,6 @@ def check_model_fit(
                 )
             )
             * estimated_scaling_factors[i_biomarker]
-            + estimated_vertical_shifts[i_biomarker]
         )
         ax.plot(
             t,
@@ -772,17 +765,14 @@ def plot_model_fit(ax, tag, legend=False):
     data_fitted_models = []
 
     for setup in results:
-        for biomarker, k, x0, vertical_shift, scaling_factor in zip(
+        for biomarker, k, x0, scaling_factor in zip(
             cols_biomarker,
             results[setup]["estimated_k_values"],
             results[setup]["estimated_x0_values"],
-            results[setup]["estimated_vertical_shifts"],
             results[setup]["estimated_scaling_factors"],
         ):
             months = np.linspace(-0.5, 4, 100)
-            values = scaling_factor * (
-                1 / (1 + np.exp(-k * (months - x0))) + vertical_shift
-            )
+            values = scaling_factor * (1 / (1 + np.exp(-k * (months - x0))))
 
             biomarker_min, biomarker_max = min_max_by_measure[biomarker]
 
@@ -913,13 +903,10 @@ for ax_idx, biomarker in enumerate(cols_biomarker):
 
             k = results[setup]["estimated_k_values"][i_biomarker]
             x0 = results[setup]["estimated_x0_values"][i_biomarker]
-            vertical_shift = results[setup]["estimated_vertical_shifts"][i_biomarker]
             scaling_factor = results[setup]["estimated_scaling_factors"][i_biomarker]
 
             months = np.linspace(-0.5, 4, 100)
-            values = scaling_factor * (
-                1 / (1 + np.exp(-k * (months - x0))) + vertical_shift
-            )
+            values = scaling_factor * (1 / (1 + np.exp(-k * (months - x0))))
 
             ax.plot(
                 months * time_scaling_factor,
@@ -985,13 +972,10 @@ for ax_idx, biomarker in enumerate(cols_biomarker[:5]):
 
             k = results[setup]["estimated_k_values"][i_biomarker]
             x0 = results[setup]["estimated_x0_values"][i_biomarker]
-            vertical_shift = results[setup]["estimated_vertical_shifts"][i_biomarker]
             scaling_factor = results[setup]["estimated_scaling_factors"][i_biomarker]
 
             months = np.linspace(-0.5, 4, 100)
-            values = scaling_factor * (
-                1 / (1 + np.exp(-k * (months - x0))) + vertical_shift
-            )
+            values = scaling_factor * (1 / (1 + np.exp(-k * (months - x0))))
 
             # Use color for federated, dark gray for centralized
             plot_color = colors[i_biomarker] if setup == "federated" else "darkgray"
@@ -1026,11 +1010,10 @@ ax = axes[5]
 for i_biomarker, col_biomarker in enumerate(cols_biomarker):
     k = results["federated"]["estimated_k_values"][i_biomarker]
     x0 = results["federated"]["estimated_x0_values"][i_biomarker]
-    vertical_shift = results["federated"]["estimated_vertical_shifts"][i_biomarker]
     scaling_factor = results["federated"]["estimated_scaling_factors"][i_biomarker]
 
     months = np.linspace(-0.5, 4, 100)
-    values = scaling_factor * (1 / (1 + np.exp(-k * (months - x0))) + vertical_shift)
+    values = scaling_factor * (1 / (1 + np.exp(-k * (months - x0))))
 
     line = ax.plot(
         months * time_scaling_factor,

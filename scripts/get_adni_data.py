@@ -220,7 +220,6 @@ def _build_params_from_simulation(
         "acceleration_factors": acceleration_factors,
         "k_values": params["k_values"],
         "x0_values": params["x0_values"],
-        "vertical_shifts": params["vertical_shifts"],
         "scaling_factors": params["scaling_factors"],
         "sigmas": params["sigmas"],
     }

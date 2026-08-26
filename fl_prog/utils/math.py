@@ -7,7 +7,6 @@ def multivariate_logistic(
     x: Iterable[float],
     k_values: Iterable[float],
     x0_values: Iterable[float],
-    vertical_shifts: Iterable[float],
     scaling_factors: Iterable[float],
 ) -> np.ndarray:
     """
@@ -21,8 +20,6 @@ def multivariate_logistic(
         1D array-like of steepness parameter for each dimension, shape (D,).
     x0_values : Iterable[float]
         1D array-like of midpoint parameter for each dimension, shape (D,).
-    vertical_shifts : Iterable[float]
-        1D array-like of vertical shift for each dimension, shape (D,).
     scaling_factors : Iterable[float]
         1D array-like of scaling factor for each dimension, shape (D,).
 
@@ -34,7 +31,6 @@ def multivariate_logistic(
     x = np.asarray(x)
     k_values = np.asarray(k_values)
     x0_values = np.asarray(x0_values)
-    vertical_shifts = np.asarray(vertical_shifts)
     scaling_factors = np.asarray(scaling_factors)
 
     # reshape x for broadcasting if needed
@@ -47,7 +43,4 @@ def multivariate_logistic(
             f"{len(k_values)} and {len(x0_values)} respectively"
         )
 
-    return (
-        scaling_factors * (1 / (1 + np.exp(-k_values * (x - x0_values))))
-        + vertical_shifts
-    )
+    return scaling_factors * (1 / (1 + np.exp(-k_values * (x - x0_values))))

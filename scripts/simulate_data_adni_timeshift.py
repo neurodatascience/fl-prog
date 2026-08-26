@@ -880,8 +880,8 @@ def _build_mirrored_params(
     Time is scaled by ``config['max_time']`` (months -> model time units),
     matching the transform applied by get_adni_data.py. Per-biomarker arrays
     follow sorted-measure order; time shifts and acceleration factors are
-    keyed by normalized RID. vertical_shifts and scaling_factors are fixed to
-    the model's parametrization (0 and 1). sigmas are the generative noise
+    keyed by normalized RID. scaling_factors are fixed to
+    the model's parametrization (1). sigmas are the generative noise
     standard deviations rescaled to the min-max-normalized observation space.
     """
     t_unit = config.get("max_time") or 1.0
@@ -898,7 +898,6 @@ def _build_mirrored_params(
         "acceleration_factors": {str(rid): 1.0 for rid in time_shifts_months.index},
         "k_values": [],
         "x0_values": [],
-        "vertical_shifts": [],
         "scaling_factors": [],
         "sigmas": [],
     }
@@ -919,7 +918,6 @@ def _build_mirrored_params(
 
         params["k_values"].append(biomarker.slope * t_unit / 12.0)
         params["x0_values"].append(biomarker.midpoint * 12.0 / t_unit)
-        params["vertical_shifts"].append(0.0)
         params["scaling_factors"].append(1.0)
         params["sigmas"].append(biomarker.noise_sd / value_range)
 

@@ -44,6 +44,7 @@ DEFAULT_PENALTY_TIME_SHIFTS = Penalty.L2
 DEFAULT_WITH_ACCELERATION = True
 DEFAULT_LAMBDA_ACCELERATION_FACTORS = 0.1
 DEFAULT_PENALTY_ACCELERATION_FACTORS = Penalty.L1
+DEFAULT_WITH_SCALING = False
 DEFAULT_AGGREGATOR_NAME = "fedavg"
 
 VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
@@ -91,6 +92,7 @@ def _get_model_args(
     with_acceleration: bool = DEFAULT_WITH_ACCELERATION,
     penalty_time_shifts: str = DEFAULT_PENALTY_TIME_SHIFTS,
     penalty_acceleration_factors: str = DEFAULT_PENALTY_ACCELERATION_FACTORS,
+    with_scaling: bool = DEFAULT_WITH_SCALING,
 ):
     return {
         "colnames": {
@@ -106,6 +108,7 @@ def _get_model_args(
             "with_acceleration": with_acceleration,
             "lambda_acceleration_factors": lambda_acceleration_factors,
             "penalty_acceleration_factors": penalty_acceleration_factors.value,
+            "with_scaling": with_scaling,
         },
         "node_specific_args": {
             "n_participants": _get_n_participants_map(
@@ -220,10 +223,6 @@ def _run_experiment(
         else:
             acceleration_factors[node] = np.ones_like(time_shifts[node])
 
-    if "vertical_shifts" in final_params:
-        vertical_shifts = final_params["vertical_shifts"].data.numpy()
-    else:
-        vertical_shifts = np.zeros_like(final_params["x0_values"].data.numpy())
     if "parametrizations.scaling_factors.original" in final_params:
         scaling_factors = fbm_model.get_scaling_factors(
             final_params["parametrizations.scaling_factors.original"]
@@ -236,7 +235,6 @@ def _run_experiment(
             final_params["parametrizations.k_values.original"]
         ).data.numpy(),
         "estimated_x0_values": final_params["x0_values"].data.numpy(),
-        "estimated_vertical_shifts": vertical_shifts,
         "estimated_scaling_factors": scaling_factors,
         "estimated_sigma": fbm_model.get_sigma(
             final_params["parametrizations.sigma.original"]
@@ -326,6 +324,7 @@ def _run_experiment(
 @click.option(
     "--with-acceleration/--no-acceleration",
     default=DEFAULT_WITH_ACCELERATION,
+    help="Whether to include acceleration factors in the model",
 )
 @click.option(
     "--penalty-time-shifts",
@@ -338,6 +337,11 @@ def _run_experiment(
     type=click.Choice(Penalty, case_sensitive=False),
     default=DEFAULT_PENALTY_ACCELERATION_FACTORS,
     help="Penalty type for acceleration factors",
+)
+@click.option(
+    "--with-scaling/--no-scaling",
+    default=DEFAULT_WITH_SCALING,
+    help="Whether to include scaling factors in the model",
 )
 @click.option(
     "--aggregator",
@@ -373,6 +377,7 @@ def run_fedbiomed(
     lambda_acceleration_factors: float = DEFAULT_LAMBDA_ACCELERATION_FACTORS,
     penalty_acceleration_factors: Penalty = DEFAULT_PENALTY_ACCELERATION_FACTORS,
     estimated_time_shift_range: tuple[float, float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
+    with_scaling: bool = DEFAULT_WITH_SCALING,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
     with_tensorboard: bool = False,
     save_training_replies: bool = False,
@@ -395,6 +400,7 @@ def run_fedbiomed(
             "accel" if with_acceleration else "no_accel",
             f"{penalty_acceleration_factors.value}",
             f"{lambda_acceleration_factors}",
+            "scaling" if with_scaling else "no_scaling",
             aggregator_name,
         ]
     )
@@ -429,6 +435,7 @@ def run_fedbiomed(
             with_acceleration=with_acceleration,
             penalty_time_shifts=penalty_time_shifts,
             penalty_acceleration_factors=penalty_acceleration_factors,
+            with_scaling=with_scaling,
         )
     except KeyError:
         raise RuntimeError(

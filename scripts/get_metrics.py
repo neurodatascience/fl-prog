@@ -21,7 +21,6 @@ from fl_prog.utils.io import (
 TRUE_FEATURE_KEYS = {
     "k_values": "k_values",
     "x0_values": "x0_values",
-    "vertical_shifts": "vertical_shifts",
     "scaling_factors": "scaling_factors",
     "sigma": "sigmas",
 }
@@ -29,7 +28,6 @@ TRUE_FEATURE_KEYS = {
 ESTIMATED_FEATURE_KEYS = {
     "k_values": "estimated_k_values",
     "x0_values": "estimated_x0_values",
-    "vertical_shifts": "estimated_vertical_shifts",
     "scaling_factors": "estimated_scaling_factors",
     "sigma": "estimated_sigma",
 }
@@ -49,7 +47,6 @@ class ModelParams:
 
     k_values: np.ndarray
     x0_values: np.ndarray
-    vertical_shifts: np.ndarray
     scaling_factors: np.ndarray
     sigma: np.ndarray
     time_shifts: np.ndarray
@@ -195,7 +192,6 @@ def _predict(p: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.ndarr
 
     linear_combination = p.k_values * (shifted_t[:, np.newaxis] - p.x0_values)
     output = p.scaling_factors * (1 / (1 + np.exp(-linear_combination)))
-    output += p.vertical_shifts
     return output
 
 

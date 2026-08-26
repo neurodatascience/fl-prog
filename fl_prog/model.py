@@ -41,7 +41,6 @@ class LogisticRegressionModelWithShift(nn.Module):
         lambda_time_shifts: float = 1.0,
         lambda_acceleration_factors: float = 1.0,
         with_acceleration=False,
-        with_shift=False,
         with_scaling=False,
         penalty_time_shifts: Penalty = "l2",
         penalty_acceleration_factors: Penalty = "l1",
@@ -86,7 +85,6 @@ class LogisticRegressionModelWithShift(nn.Module):
         self.lambda_time_shifts = lambda_time_shifts
         self.lambda_acceleration_factors = lambda_acceleration_factors
         self.with_acceleration = with_acceleration
-        self.with_shift = with_shift
         self.with_scaling = with_scaling
         self.penalty_time_shifts = penalty_time_shifts
         self.penalty_acceleration_factors = penalty_acceleration_factors
@@ -107,12 +105,8 @@ class LogisticRegressionModelWithShift(nn.Module):
 
         self.sigma = nn.Parameter(torch.ones(self.n_features) * 0.5)
 
-        # combining vertical_shifts and scaling_factors does not work well
-        self.vertical_shifts = torch.zeros(self.n_features)
         self.scaling_factors = torch.ones(self.n_features)
         self.acceleration_factors = torch.ones(self.n_participants)
-        if with_shift:
-            self.vertical_shifts = nn.Parameter(self.vertical_shifts)
         if with_scaling:
             self.scaling_factors = nn.Parameter(self.scaling_factors)
         if with_acceleration:
@@ -136,9 +130,8 @@ class LogisticRegressionModelWithShift(nn.Module):
             constrained_param = parametrization(constrained_param)
         return constrained_param
 
-    def _apply_penalty(
-        self, tensor: torch.Tensor, penalty_type: Penalty
-    ) -> torch.Tensor:
+    @staticmethod
+    def _apply_penalty(tensor: torch.Tensor, penalty_type: Penalty) -> torch.Tensor:
         match penalty_type:
             case Penalty.L1:
                 return torch.abs(tensor)
@@ -190,8 +183,6 @@ class LogisticRegressionModelWithShift(nn.Module):
         if self.with_scaling:
             scaling_factors = self.scaling_factors
             output = scaling_factors * output
-        if self.with_shift:
-            output = output + self.vertical_shifts
         return output
 
     def get_loss(self, predicted: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:

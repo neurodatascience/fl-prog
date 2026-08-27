@@ -25,10 +25,9 @@ def split_train_test(
 ):
     old_tag = tag
     tag = f"{tag}_split{min_n_timepoints}"
-    dpath_out_old = get_dpath_latest(dpath_data) / tag
-    fpath_json_old = dpath_out_old / f"{tag}.json"
+    dpath_out_old = get_dpath_latest(dpath_data) / old_tag
+    fpath_json_old = dpath_out_old / f"{old_tag}.json"
     dpath_out_new = get_dpath_latest(dpath_data, use_today=True) / tag
-    dpath_out_new.mkdir(parents=True, exist_ok=True)
 
     settings = locals().copy()
 
@@ -80,6 +79,7 @@ def split_train_test(
         fname_site_new = fname_site.replace(old_tag, tag)
         node_id_map_new[fname_site_new] = node_id
 
+        dpath_out_new.mkdir(parents=True, exist_ok=True)
         fpath_site_new = dpath_out_new / fname_site_new
         df_train.to_csv(fpath_site_new, sep="\t", index=False)
         print(f"{df_site.shape} -> {df_train.shape}: {fpath_site_new}")

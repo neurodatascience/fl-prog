@@ -13,15 +13,13 @@ from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import (
     DEFAULT_DPATH_DATA,
     DEFAULT_DPATH_RESULTS,
+    format_df_for_leaspy,
     get_dpath_latest,
     load_json,
     save_json,
 )
 
 DEFAULT_N_ITER = 20000
-
-LEASPY_COL_SUBJECT = "ID"
-LEASPY_COL_TIMEPOINT = "TIME"
 
 
 def _results_exist(fpath_out: Path) -> bool:
@@ -32,28 +30,13 @@ def _results_exist(fpath_out: Path) -> bool:
     return "results" in json_results
 
 
-def _get_formatted_df(
-    fpath_data, col_subject, col_timepoint, cols_biomarker
-) -> pd.DataFrame:
-    df = pd.read_csv(fpath_data, sep="\t", dtype={col_subject: str})
-    df = df.rename(
-        columns={
-            col_subject: LEASPY_COL_SUBJECT,
-            col_timepoint: LEASPY_COL_TIMEPOINT,
-        }
-    )
-    df = df.set_index([LEASPY_COL_SUBJECT, LEASPY_COL_TIMEPOINT])
-    df = df.loc[:, cols_biomarker]
-    return df
-
-
 def _get_results(fitted_model: LogisticModel) -> dict:
     with tempfile.NamedTemporaryFile(
         mode="+wt", suffix=".json", delete=True
     ) as tmp_file:
         fitted_model.save(tmp_file.name)
         tmp_file.flush()
-        return load_json(tmp_file.name)
+        return load_json(Path(tmp_file.name))
 
 
 def run_leaspy(
@@ -91,9 +74,9 @@ def run_leaspy(
     model_args = {
         "name": ModelName.LOGISTIC,
         "dimension": len(config["cols"]["cols_biomarker"]),
-        "source_dimension": np.ceil(
-            np.sqrt(len(config["cols"]["cols_biomarker"]))
-        ).astype(int),
+        "source_dimension": int(
+            np.ceil(np.sqrt(len(config["cols"]["cols_biomarker"])))
+        ),
         "obs_models": "gaussian-diagonal",
     }
 
@@ -106,8 +89,8 @@ def run_leaspy(
     json_data = {"settings": locals()}
 
     fpath_merged = dpath_data / f"{tag}-merged.tsv"
-    df_data = _get_formatted_df(
-        fpath_data=fpath_merged,
+    df_data = format_df_for_leaspy(
+        df=pd.read_csv(fpath_merged, sep="\t"),
         col_subject=config["cols"]["col_subject"],
         col_timepoint=config["cols"]["col_timepoint"],
         cols_biomarker=config["cols"]["cols_biomarker"],
@@ -141,6 +124,7 @@ def run_leaspy(
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     default=DEFAULT_DPATH_RESULTS,
 )
+@click.option("--n-iter", type=int, default=DEFAULT_N_ITER)
 @click.option("--random-seed", type=int, envvar="RNG_SEED")
 @click.option("--overwrite/--no-overwrite", default=False)
 def main(**params):

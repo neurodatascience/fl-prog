@@ -155,10 +155,16 @@ def _estimated_params_by_setup(
     return params_by_setup
 
 
-def _load_df_data(json_data: dict, dpath_data: Path) -> pd.DataFrame:
+def _load_df_data(
+    json_data: dict, dpath_data: Path, test: bool = False
+) -> pd.DataFrame:
     tag = json_data["settings"]["tag"]
     cols = _get_cols(json_data)
-    fpath_data = dpath_data / f"{tag}-merged.tsv"
+    if test:
+        suffix = "-test"
+    else:
+        suffix = "-merged"
+    fpath_data = dpath_data / f"{tag}{suffix}.tsv"
     return pd.read_csv(fpath_data, sep="\t", dtype={cols["col_subject"]: str})
 
 
@@ -202,6 +208,7 @@ def _compute_predictive_metrics(
     y_pred: np.ndarray,
     cols_biomarker: list[str],
     setup: str,
+    set_name: str,
 ) -> list[dict[str, str | float]]:
     """Predictive fit metrics on observed data, per biomarker.
 
@@ -226,7 +233,7 @@ def _compute_predictive_metrics(
         rows.extend(
             _metric_rows(
                 setup,
-                "data",
+                set_name,
                 col_biomarker,
                 [
                     ("r2_score", r2_score(y_true_biomarker, y_pred_biomarker)),
@@ -249,7 +256,7 @@ def _compute_predictive_metrics(
     rows.extend(
         _metric_rows(
             setup,
-            "data",
+            set_name,
             "all",
             [
                 ("r2_score", r2_score(y_true_all, y_pred_all)),
@@ -409,11 +416,13 @@ def get_metrics_single_run(fpath_json_results: Path):
             " Skipping recovery metrics.",
         )
 
-    df_data = _load_df_data(json_data, dpath_data)
+    df_data_train = _load_df_data(json_data, dpath_data)
+    df_data_test: pd.DataFrame | None = _load_df_data(json_data, dpath_data, test=True)
 
+    # same for train/test data
     col_subject = cols["col_subject"]
     n_biomarkers = len(cols["cols_biomarker"])
-    n_subjects = df_data[col_subject].nunique()
+    n_subjects = df_data_train[col_subject].nunique()
     print(f"n_biomarkers: {n_biomarkers}")
     print(f"n_subjects: {n_subjects}")
     print(
@@ -424,7 +433,7 @@ def get_metrics_single_run(fpath_json_results: Path):
         )
     )
 
-    if not set(cols["cols_biomarker"]).issubset(df_data.columns):
+    if not set(cols["cols_biomarker"]).issubset(df_data_train.columns):
         raise ValueError(
             "cols_biomarker contains columns not present in the merged data"
         )
@@ -436,7 +445,7 @@ def get_metrics_single_run(fpath_json_results: Path):
             for subject in subjects
         },
     )
-    if subjects_in_nodes != sorted(df_data[col_subject].unique()):
+    if subjects_in_nodes != sorted(df_data_train[col_subject].unique()):
         raise ValueError("subjects_by_node does not match subjects in merged data")
 
     if true_params is not None:
@@ -484,11 +493,18 @@ def get_metrics_single_run(fpath_json_results: Path):
         )
 
     cols_biomarker = cols["cols_biomarker"]
-    t = df_data[cols["col_timepoint"]].to_numpy(dtype=float)
-    subject_ids = df_data[cols["col_subject_index"]].to_numpy(dtype=int)
-    y_true = df_data[cols_biomarker].to_numpy(dtype=float)
+    t_train = df_data_train[cols["col_timepoint"]].to_numpy(dtype=float)
+    subject_ids_train = df_data_train[cols["col_subject_index"]].to_numpy(dtype=int)
+    y_true_train = df_data_train[cols_biomarker].to_numpy(dtype=float)
 
-    if subject_ids.size and (subject_ids.min() < 0 or subject_ids.max() >= n_subjects):
+    if df_data_test is not None:
+        t_test = df_data_test[cols["col_timepoint"]].to_numpy(dtype=float)
+        subject_ids_test = df_data_test[cols["col_subject_index"]].to_numpy(dtype=int)
+        y_true_test = df_data_test[cols_biomarker].to_numpy(dtype=float)
+
+    if subject_ids_train.size and (
+        subject_ids_train.min() < 0 or subject_ids_train.max() >= n_subjects
+    ):
         raise ValueError(
             "subject indices fall outside the merged data's subject range "
             f"[0, {n_subjects})"
@@ -497,10 +513,27 @@ def get_metrics_single_run(fpath_json_results: Path):
     rows: list[dict[str, str | float]] = []
     rows_recovery: list[dict[str, str | float]] = []
     for setup, estimated_params in estimated_by_setup.items():
-        y_pred = _predict(estimated_params, t, subject_ids)
+        y_pred_train = _predict(estimated_params, t_train, subject_ids_train)
         rows.extend(
-            _compute_predictive_metrics(y_true, y_pred, cols_biomarker, setup=setup)
+            _compute_predictive_metrics(
+                y_true_train,
+                y_pred_train,
+                cols_biomarker,
+                setup=setup,
+                set_name="train",
+            )
         )
+        if df_data_test is not None:
+            y_pred_test = _predict(estimated_params, t_test, subject_ids_test)
+            rows.extend(
+                _compute_predictive_metrics(
+                    y_true_test,
+                    y_pred_test,
+                    cols_biomarker,
+                    setup=setup,
+                    set_name="test",
+                )
+            )
         if true_params is not None:
             rows_recovery.extend(
                 _compute_recovery_metrics(

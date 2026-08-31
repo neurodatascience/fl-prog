@@ -6,21 +6,28 @@ import click
 import pandas as pd
 
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, load_json, save_json
+from fl_prog.utils.io import (
+    DEFAULT_DPATH_DATA,
+    get_dpath_latest,
+    load_json,
+    save_json,
+)
 
 DEFAULT_MIN_N_TIMEPOINTS = 2
+SUFFIX_TEST = "-test"
 
 
 def split_train_test(
     tag: str,
     dpath_data: Path,
     min_n_timepoints: int = DEFAULT_MIN_N_TIMEPOINTS,
+    suffix_test: str = SUFFIX_TEST,
 ):
-    new_tag = f"{tag}_train"
-    dpath_out_old = get_dpath_latest(dpath_data) / tag
-    fpath_json_old = dpath_out_old / f"{tag}.json"
-    dpath_out_new = get_dpath_latest(dpath_data, use_today=True) / new_tag
-    dpath_out_new.mkdir(parents=True, exist_ok=True)
+    old_tag = tag
+    tag = f"{tag}_split{min_n_timepoints}"
+    dpath_out_old = get_dpath_latest(dpath_data) / old_tag
+    fpath_json_old = dpath_out_old / f"{old_tag}.json"
+    dpath_out_new = get_dpath_latest(dpath_data, use_today=True) / tag
 
     settings = locals().copy()
 
@@ -35,14 +42,21 @@ def split_train_test(
     dfs_test = []
     node_id_map_new = {}
     subjects_by_node = {}
+    n_samples = 0
     for fname_site, node_id in node_id_map_old.items():
         if fname_site.endswith("-merged.tsv"):
+            click.secho(
+                "WARNING: merged file found. Make sure to merge the data after this step.",
+                fg="yellow",
+                bold=True,
+            )
             continue
 
         subjects_by_node[node_id] = []
 
         fpath_site = dpath_out_old / fname_site
         df_site = pd.read_csv(fpath_site, sep="\t", dtype={col_subject: str})
+        n_samples += len(df_site)
 
         dfs_train = []
         subjects = []
@@ -62,9 +76,10 @@ def split_train_test(
             lambda x, subjects=subjects: subjects.index(x)
         )
 
-        fname_site_new = fname_site.replace(tag, new_tag)
+        fname_site_new = fname_site.replace(old_tag, tag)
         node_id_map_new[fname_site_new] = node_id
 
+        dpath_out_new.mkdir(parents=True, exist_ok=True)
         fpath_site_new = dpath_out_new / fname_site_new
         df_train.to_csv(fpath_site_new, sep="\t", index=False)
         print(f"{df_site.shape} -> {df_train.shape}: {fpath_site_new}")
@@ -76,18 +91,21 @@ def split_train_test(
         print(df_test[col_subject].value_counts())
         raise ValueError("Some subjects have multiple timepoints in the test set.")
 
-    fpath_test = dpath_out_new / f"{tag}-test.tsv"
+    fpath_test = dpath_out_new / f"{tag}{suffix_test}.tsv"
     df_test.to_csv(fpath_test, sep="\t", index=False)
-    print(f"Saved test set ({df_test.shape}) to {fpath_test}")
+    print(
+        f"Saved test set ({df_test.shape}, {len(df_test) / n_samples:.2%}) to {fpath_test}"
+    )
 
     json_data_new = {}
     json_data_new["settings"] = settings
     json_data_new["node_id_map"] = node_id_map_new
     json_data_new["cols"] = json_data_old["cols"]
     json_data_new["subjects_by_node"] = subjects_by_node
-    fpath_json_new = dpath_out_new / f"{new_tag}.json"
+    fpath_json_new = dpath_out_new / f"{tag}.json"
     save_json(fpath_json_new, json_data_new)
     print(f"Saved new JSON data to {fpath_json_new}")
+    print(f"Use new tag --tag {tag} in next steps")
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -105,6 +123,11 @@ def split_train_test(
     default=DEFAULT_MIN_N_TIMEPOINTS,
 )
 def main(*args, **kwargs):
+    """
+    Split into train/test sets by leaving out the last timepoint for each subject.
+
+    Run before merging the data across sites.
+    """
     split_train_test(*args, **kwargs)
 
 

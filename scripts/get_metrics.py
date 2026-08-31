@@ -1,16 +1,18 @@
 #!/usr/bin/env python
 
 from collections.abc import Iterable
-from dataclasses import dataclass, fields
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
 import click
 import numpy as np
 import pandas as pd
+import torch
 from scipy.stats import linregress, spearmanr
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
+from fl_prog.model import LogisticRegressionModelWithShift, ModelParams
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_PREFIX
 from fl_prog.utils.io import (
     DEFAULT_DPATH_RESULTS,
@@ -35,22 +37,6 @@ ESTIMATED_FEATURE_KEYS = {
 PER_SUBJECT_FIELDS = ("time_shifts", "acceleration_factors")
 CORRELATED_FIELDS = ("k_values", "x0_values")
 CENTRALIZED_NODE = "centralized"
-
-
-@dataclass
-class ModelParams:
-    """Parameters aligned to a canonical subject order.
-
-    Per-feature arrays have shape (n_features,); per-subject arrays have
-    shape (n_subjects,), aligned to the merged data's subject order.
-    """
-
-    k_values: np.ndarray
-    x0_values: np.ndarray
-    scaling_factors: np.ndarray
-    sigma: np.ndarray
-    time_shifts: np.ndarray
-    acceleration_factors: np.ndarray
 
 
 def _get_dpath_data(json_results: dict) -> Path:
@@ -169,30 +155,33 @@ def _estimated_params_by_setup(
     return params_by_setup
 
 
-def _load_df_data(json_data: dict, dpath_data: Path) -> pd.DataFrame:
+def _load_df_data(
+    json_data: dict, dpath_data: Path, test: bool = False
+) -> pd.DataFrame:
     tag = json_data["settings"]["tag"]
     cols = _get_cols(json_data)
-    fpath_data = dpath_data / f"{tag}-merged.tsv"
+    if test:
+        suffix = "-test"
+    else:
+        suffix = "-merged"
+    fpath_data = dpath_data / f"{tag}{suffix}.tsv"
     return pd.read_csv(fpath_data, sep="\t", dtype={cols["col_subject"]: str})
 
 
-def _predict(p: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.ndarray:
-    """Model forward pass, vectorized over entries.
+def _predict(params: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.ndarray:
+    """Model forward pass.
 
-    Returns predictions of shape (n_entries, n_features), matching
-    LogisticRegressionModelWithShift.forward::
-        pred = scaling * sigmoid(k * ((t + shift) * acc - x0)) + vertical
+    Returns predictions of shape (n_entries, n_features)
     """
-    t = np.asarray(t, dtype=float)
-    subject_ids = np.asarray(subject_ids, dtype=int)
+    model = LogisticRegressionModelWithShift(
+        n_participants=len(params.time_shifts),
+        n_features=len(params.k_values),
+    )
 
-    shift = p.time_shifts[subject_ids]
-    acceleration = p.acceleration_factors[subject_ids]
-    shifted_t = t * acceleration + shift
+    t = torch.tensor(t, dtype=torch.float)
+    subject_ids = torch.tensor(subject_ids, dtype=torch.long)
 
-    linear_combination = p.k_values * (shifted_t[:, np.newaxis] - p.x0_values)
-    output = p.scaling_factors * (1 / (1 + np.exp(-linear_combination)))
-    return output
+    return model.forward(t, subject_ids, params=params).detach().numpy()
 
 
 def _metric_rows(
@@ -219,6 +208,7 @@ def _compute_predictive_metrics(
     y_pred: np.ndarray,
     cols_biomarker: list[str],
     setup: str,
+    set_name: str,
 ) -> list[dict[str, str | float]]:
     """Predictive fit metrics on observed data, per biomarker.
 
@@ -243,7 +233,7 @@ def _compute_predictive_metrics(
         rows.extend(
             _metric_rows(
                 setup,
-                "data",
+                set_name,
                 col_biomarker,
                 [
                     ("r2_score", r2_score(y_true_biomarker, y_pred_biomarker)),
@@ -266,7 +256,7 @@ def _compute_predictive_metrics(
     rows.extend(
         _metric_rows(
             setup,
-            "data",
+            set_name,
             "all",
             [
                 ("r2_score", r2_score(y_true_all, y_pred_all)),
@@ -417,13 +407,22 @@ def get_metrics_single_run(fpath_json_results: Path):
 
     cols = _get_cols(json_data)
     subjects_by_node = _get_subjects_by_node(json_data)
-    true_params = _get_true_params(json_data)
+    try:
+        true_params = _get_true_params(json_data)
+    except KeyError:
+        true_params = None
+        click.secho(
+            f"True parameters not found in {json_results['settings']['fpath_config']}."
+            " Skipping recovery metrics.",
+        )
 
-    df_data = _load_df_data(json_data, dpath_data)
+    df_data_train = _load_df_data(json_data, dpath_data)
+    df_data_test: pd.DataFrame | None = _load_df_data(json_data, dpath_data, test=True)
 
+    # same for train/test data
     col_subject = cols["col_subject"]
     n_biomarkers = len(cols["cols_biomarker"])
-    n_subjects = df_data[col_subject].nunique()
+    n_subjects = df_data_train[col_subject].nunique()
     print(f"n_biomarkers: {n_biomarkers}")
     print(f"n_subjects: {n_subjects}")
     print(
@@ -434,7 +433,7 @@ def get_metrics_single_run(fpath_json_results: Path):
         )
     )
 
-    if not set(cols["cols_biomarker"]).issubset(df_data.columns):
+    if not set(cols["cols_biomarker"]).issubset(df_data_train.columns):
         raise ValueError(
             "cols_biomarker contains columns not present in the merged data"
         )
@@ -446,29 +445,30 @@ def get_metrics_single_run(fpath_json_results: Path):
             for subject in subjects
         },
     )
-    if subjects_in_nodes != sorted(df_data[col_subject].unique()):
+    if subjects_in_nodes != sorted(df_data_train[col_subject].unique()):
         raise ValueError("subjects_by_node does not match subjects in merged data")
 
-    true_params_by_subject = _true_params_by_subject(subjects_by_node, true_params)
-    if true_params_by_subject.time_shifts.shape != (n_subjects,):
-        raise ValueError(
-            f"true time_shifts have shape {true_params_by_subject.time_shifts.shape} "
-            f"but expected ({n_subjects},)"
+    if true_params is not None:
+        true_params_by_subject = _true_params_by_subject(subjects_by_node, true_params)
+        if true_params_by_subject.time_shifts.shape != (n_subjects,):
+            raise ValueError(
+                f"true time_shifts have shape {true_params_by_subject.time_shifts.shape} "
+                f"but expected ({n_subjects},)"
+            )
+        if true_params_by_subject.acceleration_factors.shape != (n_subjects,):
+            raise ValueError(
+                f"true acceleration_factors have shape "
+                f"{true_params_by_subject.acceleration_factors.shape} "
+                f"but expected ({n_subjects},)"
+            )
+        print(
+            f"true time_shifts range: [{true_params_by_subject.time_shifts.min():.3f}, "
+            f"{true_params_by_subject.time_shifts.max():.3f}]"
         )
-    if true_params_by_subject.acceleration_factors.shape != (n_subjects,):
-        raise ValueError(
-            f"true acceleration_factors have shape "
-            f"{true_params_by_subject.acceleration_factors.shape} "
-            f"but expected ({n_subjects},)"
+        print(
+            f"true acceleration_factors range: [{true_params_by_subject.acceleration_factors.min():.3f}, "
+            f"{true_params_by_subject.acceleration_factors.max():.3f}]"
         )
-    print(
-        f"true time_shifts range: [{true_params_by_subject.time_shifts.min():.3f}, "
-        f"{true_params_by_subject.time_shifts.max():.3f}]"
-    )
-    print(
-        f"true acceleration_factors range: [{true_params_by_subject.acceleration_factors.min():.3f}, "
-        f"{true_params_by_subject.acceleration_factors.max():.3f}]"
-    )
 
     estimated_by_setup = _estimated_params_by_setup(json_results, subjects_by_node)
     for setup, estimated_params in estimated_by_setup.items():
@@ -493,11 +493,18 @@ def get_metrics_single_run(fpath_json_results: Path):
         )
 
     cols_biomarker = cols["cols_biomarker"]
-    t = df_data[cols["col_timepoint"]].to_numpy(dtype=float)
-    subject_ids = df_data[cols["col_subject_index"]].to_numpy(dtype=int)
-    y_true = df_data[cols_biomarker].to_numpy(dtype=float)
+    t_train = df_data_train[cols["col_timepoint"]].to_numpy(dtype=float)
+    subject_ids_train = df_data_train[cols["col_subject_index"]].to_numpy(dtype=int)
+    y_true_train = df_data_train[cols_biomarker].to_numpy(dtype=float)
 
-    if subject_ids.size and (subject_ids.min() < 0 or subject_ids.max() >= n_subjects):
+    if df_data_test is not None:
+        t_test = df_data_test[cols["col_timepoint"]].to_numpy(dtype=float)
+        subject_ids_test = df_data_test[cols["col_subject_index"]].to_numpy(dtype=int)
+        y_true_test = df_data_test[cols_biomarker].to_numpy(dtype=float)
+
+    if subject_ids_train.size and (
+        subject_ids_train.min() < 0 or subject_ids_train.max() >= n_subjects
+    ):
         raise ValueError(
             "subject indices fall outside the merged data's subject range "
             f"[0, {n_subjects})"
@@ -506,23 +513,41 @@ def get_metrics_single_run(fpath_json_results: Path):
     rows: list[dict[str, str | float]] = []
     rows_recovery: list[dict[str, str | float]] = []
     for setup, estimated_params in estimated_by_setup.items():
-        y_pred = _predict(estimated_params, t, subject_ids)
+        y_pred_train = _predict(estimated_params, t_train, subject_ids_train)
         rows.extend(
-            _compute_predictive_metrics(y_true, y_pred, cols_biomarker, setup=setup)
-        )
-        rows_recovery.extend(
-            _compute_recovery_metrics(
-                true_params_by_subject,
-                estimated_params,
+            _compute_predictive_metrics(
+                y_true_train,
+                y_pred_train,
                 cols_biomarker,
                 setup=setup,
+                set_name="train",
             )
         )
-        rows_recovery.extend(
-            _compute_per_subject_recovery(
-                true_params_by_subject, estimated_params, setup=setup
+        if df_data_test is not None:
+            y_pred_test = _predict(estimated_params, t_test, subject_ids_test)
+            rows.extend(
+                _compute_predictive_metrics(
+                    y_true_test,
+                    y_pred_test,
+                    cols_biomarker,
+                    setup=setup,
+                    set_name="test",
+                )
             )
-        )
+        if true_params is not None:
+            rows_recovery.extend(
+                _compute_recovery_metrics(
+                    true_params_by_subject,
+                    estimated_params,
+                    cols_biomarker,
+                    setup=setup,
+                )
+            )
+            rows_recovery.extend(
+                _compute_per_subject_recovery(
+                    true_params_by_subject, estimated_params, setup=setup
+                )
+            )
 
     df_metrics = pd.DataFrame(
         rows, columns=["setup", "set_name", "col_biomarker", "metric", "value"]
@@ -549,13 +574,14 @@ def get_metrics(
 
         df_metrics, df_recovery = get_metrics_single_run(fpath_json_results)
 
-        fpath_out = fpath_json_results.with_name(f"{run_tag}-fit_quality.tsv")
-        _save_tsv(df_metrics, fpath_out)
+        fpath_metrics_out = fpath_json_results.with_name(f"{run_tag}-fit_quality.tsv")
+        _save_tsv(df_metrics, fpath_metrics_out)
 
-        fpath_recovery_out = fpath_json_results.with_name(
-            f"{run_tag}-param_recovery.tsv"
-        )
-        _save_tsv(df_recovery, fpath_recovery_out)
+        if not df_recovery.empty:
+            fpath_recovery_out = fpath_json_results.with_name(
+                f"{run_tag}-param_recovery.tsv"
+            )
+            _save_tsv(df_recovery, fpath_recovery_out)
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)

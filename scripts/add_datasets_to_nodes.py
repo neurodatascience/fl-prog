@@ -108,7 +108,16 @@ def add_datasets_to_nodes(tag: str, dpath_data: Path, dpath_nodes: Path, wipe: b
 
     for fpath_tsv in sorted(fpaths_tsv):
         fpath_tsv = fpath_tsv.absolute()
-        dpath_node = dpath_nodes / f"node-{node_id_map[fpath_tsv.name]}"
+        try:
+            node_id = node_id_map[fpath_tsv.name]
+        except KeyError:
+            click.secho(
+                f"WARNING: {fpath_tsv.name} not found in node_id_map in {fpath_json}.",
+                fg="yellow",
+                bold=True,
+            )
+            continue
+        dpath_node = dpath_nodes / f"node-{node_id}"
         print(f"----- {fpath_tsv} -----")
         _add_dataset_to_node(fpath_tsv, dpath_node, tag, wipe)
 

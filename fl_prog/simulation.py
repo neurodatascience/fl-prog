@@ -129,6 +129,7 @@ def simulate_all_subjects(
     for _ in range(n_subjects):
         acceleration_factor = -1
         while acceleration_factor <= 0:
+            # will be reset to 1 if n_timepoints is 1
             acceleration_factor = rng.normal(
                 acceleration_factor_mean, acceleration_factor_std
             )
@@ -144,6 +145,8 @@ def simulate_all_subjects(
                     ),
                 )
             )
+            if n_timepoints == 1:
+                acceleration_factor = 1.0
             t0_for_subject = rng.uniform(t0_min, t0_max)
             timepoints = (
                 np.array(time_at_timepoint)[:n_timepoints] * acceleration_factor
@@ -151,6 +154,8 @@ def simulate_all_subjects(
             )
         else:
             n_timepoints = rng.integers(1, max_n_timepoints + 1)
+            if n_timepoints == 1:
+                acceleration_factor = 1.0
             timepoints = generate_timepoints(
                 n_timepoints,
                 t0_min=t0_min,

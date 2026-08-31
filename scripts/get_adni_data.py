@@ -47,7 +47,7 @@ def _get_fname_out(tag, i: int | None = None, suffix: str = ".tsv") -> str:
     return f"{tag}{suffix}"
 
 
-def _scale_min_max(df, min, max, measures) -> pd.DataFrame:
+def _scale_min_max(df, min: pd.Series, max: pd.Series, measures) -> pd.DataFrame:
     df.loc[:, measures] = (df[measures] - min) / (max - min)
     return df
 

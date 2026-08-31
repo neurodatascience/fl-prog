@@ -98,6 +98,7 @@ dependencies = [
   "click",
   "fedbiomed[node,researcher]>=6.3.1",
   "ipykernel",
+  "leaspy",
   "numpy",
   "seaborn",
   "scikit-learn",

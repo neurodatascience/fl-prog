@@ -6,9 +6,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 
-from fl_prog.utils.constants import DATE_FORMAT, DNAME_LATEST
+from fl_prog.utils.constants import (
+    DATE_FORMAT,
+    DNAME_LATEST,
+    LEASPY_COL_SUBJECT,
+    LEASPY_COL_TIMEPOINT,
+)
 
 DPATH_PROJECT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_DPATH_DATA = DPATH_PROJECT / "data"
@@ -123,3 +129,18 @@ def working_directory(dpath):
         yield
     finally:
         os.chdir(dpath_old)
+
+
+def format_df_for_leaspy(
+    df: pd.DataFrame, col_subject: str, col_timepoint: str, cols_biomarker: list[str]
+) -> pd.DataFrame:
+    df[col_subject] = df[col_subject].astype(str)
+    df = df.rename(
+        columns={
+            col_subject: LEASPY_COL_SUBJECT,
+            col_timepoint: LEASPY_COL_TIMEPOINT,
+        }
+    )
+    df = df.set_index([LEASPY_COL_SUBJECT, LEASPY_COL_TIMEPOINT])
+    df = df.loc[:, cols_biomarker]
+    return df

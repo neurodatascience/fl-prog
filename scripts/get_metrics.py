@@ -1,7 +1,5 @@
 #!/usr/bin/env python
-
-from collections.abc import Iterable
-from dataclasses import fields
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -9,15 +7,26 @@ import click
 import numpy as np
 import pandas as pd
 import torch
-from scipy.stats import linregress, spearmanr
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
+from fl_prog.metrics import (
+    PER_SUBJECT_FIELDS,
+    compute_per_subject_recovery,
+    compute_predictive_metrics,
+    compute_recovery_metrics,
+)
 from fl_prog.model import LogisticRegressionModelWithShift, ModelParams
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_PREFIX
+from fl_prog.utils.constants import (
+    CLICK_CONTEXT_SETTINGS,
+    LEASPY_COL_SUBJECT,
+    LEASPY_COL_TIMEPOINT,
+    NODE_PREFIX,
+)
 from fl_prog.utils.io import (
     DEFAULT_DPATH_RESULTS,
+    format_df_for_leaspy,
     get_dpath_latest,
     load_json,
+    save_json,
 )
 
 TRUE_FEATURE_KEYS = {
@@ -34,9 +43,11 @@ ESTIMATED_FEATURE_KEYS = {
     "sigma": "estimated_sigma",
 }
 
-PER_SUBJECT_FIELDS = ("time_shifts", "acceleration_factors")
-CORRELATED_FIELDS = ("k_values", "x0_values")
 CENTRALIZED_NODE = "centralized"
+
+DEFAULT_LEASPY_ALGORITHM_NAME = "scipy_minimize"
+DEFAULT_LEASPY_SEED = 0
+DEFAULT_LEASPY_N_JOBS = 1
 
 
 def _get_dpath_data(json_results: dict) -> Path:
@@ -50,14 +61,6 @@ def _load_json_data(json_results: dict) -> dict:
 
 def _get_cols(json_data: dict) -> dict[str, Any]:
     return json_data["cols"]
-
-
-def _get_subjects_by_node(json_data: dict) -> dict[str, list[str]]:
-    return json_data["subjects_by_node"]
-
-
-def _get_true_params(json_data: dict) -> dict[str, Any]:
-    return json_data["params"]
 
 
 def _build_model_params(
@@ -156,16 +159,27 @@ def _estimated_params_by_setup(
 
 
 def _load_df_data(
-    json_data: dict, dpath_data: Path, test: bool = False
+    dpath_data: Path, tag: str, cols: dict, test: bool = False
 ) -> pd.DataFrame:
-    tag = json_data["settings"]["tag"]
-    cols = _get_cols(json_data)
     if test:
         suffix = "-test"
     else:
         suffix = "-merged"
     fpath_data = dpath_data / f"{tag}{suffix}.tsv"
     return pd.read_csv(fpath_data, sep="\t", dtype={cols["col_subject"]: str})
+
+
+def _load_df_data_leaspy(
+    dpath_data: Path, tag: str, cols: dict, test: bool = False
+) -> pd.DataFrame:
+    df = _load_df_data(dpath_data, tag, cols, test=test)
+    df = format_df_for_leaspy(
+        df=df,
+        col_subject=cols["col_subject"],
+        col_timepoint=cols["col_timepoint"],
+        cols_biomarker=cols["cols_biomarker"],
+    )
+    return df
 
 
 def _predict(params: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.ndarray:
@@ -184,221 +198,15 @@ def _predict(params: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.
     return model.forward(t, subject_ids, params=params).detach().numpy()
 
 
-def _metric_rows(
-    setup: str,
-    set_name: str,
-    col_biomarker: str,
-    items: Iterable[tuple[str, float]],
-) -> list[dict[str, str | float]]:
-    """Build metric rows carrying the shared output schema."""
-    return [
-        {
-            "setup": setup,
-            "set_name": set_name,
-            "col_biomarker": col_biomarker,
-            "metric": metric,
-            "value": value,
-        }
-        for metric, value in items
-    ]
-
-
-def _compute_predictive_metrics(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    cols_biomarker: list[str],
-    setup: str,
-    set_name: str,
-) -> list[dict[str, str | float]]:
-    """Predictive fit metrics on observed data, per biomarker.
-
-    Rows with a NaN in ``y_true`` are masked out per biomarker, mirroring the
-    missing-data handling in the model loss.
-    """
-    y_true = np.asarray(y_true, dtype=float)
-    y_pred = np.asarray(y_pred, dtype=float)
-
-    rows: list[dict[str, str | float]] = []
-    y_true_all = []
-    y_pred_all = []
-    for i_biomarker, col_biomarker in enumerate(cols_biomarker):
-        mask = ~np.isnan(y_true[:, i_biomarker])
-        y_true_biomarker = y_true[mask, i_biomarker]
-        y_pred_biomarker = y_pred[mask, i_biomarker]
-        residuals = y_true_biomarker - y_pred_biomarker
-
-        y_true_all.append(y_true_biomarker)
-        y_pred_all.append(y_pred_biomarker)
-
-        rows.extend(
-            _metric_rows(
-                setup,
-                set_name,
-                col_biomarker,
-                [
-                    ("r2_score", r2_score(y_true_biomarker, y_pred_biomarker)),
-                    (
-                        "mean_squared_error",
-                        mean_squared_error(y_true_biomarker, y_pred_biomarker),
-                    ),
-                    (
-                        "mean_absolute_error",
-                        mean_absolute_error(y_true_biomarker, y_pred_biomarker),
-                    ),
-                    ("residual_mean", residuals.mean()),
-                    ("residual_std", residuals.std()),
-                ],
-            )
-        )
-
-    y_true_all = np.concatenate(y_true_all)
-    y_pred_all = np.concatenate(y_pred_all)
-    rows.extend(
-        _metric_rows(
-            setup,
-            set_name,
-            "all",
-            [
-                ("r2_score", r2_score(y_true_all, y_pred_all)),
-                ("mean_squared_error", mean_squared_error(y_true_all, y_pred_all)),
-                ("mean_absolute_error", mean_absolute_error(y_true_all, y_pred_all)),
-            ],
-        )
-    )
-    return rows
-
-
-def _pearson_r(x: np.ndarray, y: np.ndarray) -> float:
-    return np.corrcoef(x, y)[0, 1]
-
-
-def _spearman_r(x: np.ndarray, y: np.ndarray) -> float:
-    return spearmanr(x, y).statistic
-
-
-def _slope(x: np.ndarray, y: np.ndarray) -> float:
-    try:
-        return linregress(x, y).slope
-    except ValueError:
-        return np.nan
-
-
-def _compute_recovery_metrics(
-    param_true: ModelParams,
-    param_estimated: ModelParams,
-    cols_biomarker: list[str],
-    setup: str,
-) -> list[dict[str, str | float]]:
-    """Per-feature recovery errors between true and estimated parameters.
-
-    For each feature, pooled ``all`` rows carry mean-abs-relative/mean-abs
-    errors (plus pearson/spearman correlations for k_values and x0_values),
-    and a nested per-biomarker part adds relative and absolute errors per
-    biomarker. Relative errors are NaN where the true value is zero.
-    """
-    rows: list[dict[str, str | float]] = []
-    for field in fields(ModelParams):
-        if field.name in PER_SUBJECT_FIELDS:
-            continue
-        true_values = np.asarray(getattr(param_true, field.name), dtype=float)
-        est_values = np.asarray(getattr(param_estimated, field.name), dtype=float)
-
-        if len(true_values) != len(cols_biomarker):
-            raise ValueError(
-                f"{field.name} has {len(true_values)} values but "
-                f"{len(cols_biomarker)} biomarkers"
-            )
-
-        mask = true_values != 0
-        relative_errors = np.full(true_values.shape, np.nan)
-        relative_errors[mask] = (est_values[mask] - true_values[mask]) / true_values[
-            mask
-        ]
-        absolute_errors = est_values - true_values
-
-        pooled_items = [
-            (
-                f"{field.name}_mean_abs_relative_error",
-                np.nanmean(np.abs(relative_errors)),
-            ),
-            (f"{field.name}_mae", np.mean(np.abs(absolute_errors))),
-        ]
-        if field.name in CORRELATED_FIELDS:
-            pooled_items.extend(
-                [
-                    (f"{field.name}_pearson_r", _pearson_r(true_values, est_values)),
-                    (
-                        f"{field.name}_spearman_r",
-                        _spearman_r(true_values, est_values),
-                    ),
-                ]
-            )
-        rows.extend(_metric_rows(setup, "recovery_per_biomarker", "all", pooled_items))
-
-        for i_biomarker, col_biomarker in enumerate(cols_biomarker):
-            rows.extend(
-                _metric_rows(
-                    setup,
-                    "recovery_per_biomarker",
-                    col_biomarker,
-                    [
-                        (f"{field.name}_relative_error", relative_errors[i_biomarker]),
-                        (f"{field.name}_absolute_error", absolute_errors[i_biomarker]),
-                    ],
-                )
-            )
-    return rows
-
-
-def _compute_per_subject_recovery(
-    param_true: ModelParams,
-    param_estimated: ModelParams,
-    setup: str,
-) -> list[dict[str, str | float]]:
-    """Per-subject recovery metrics for time shifts and acceleration factors.
-
-    Correlations isolate ordering (gauge-robust); the slope (est vs true)
-    shows magnitude recovery, with the intercept absorbing recentering.
-    Acceleration factors additionally get a scale median (median est/true) and
-    a mean-abs-relative error, since they are multiplicative and positive.
-    """
-    rows: list[dict[str, str | float]] = []
-    for field_name in PER_SUBJECT_FIELDS:
-        true_values = np.asarray(getattr(param_true, field_name), dtype=float)
-        est_values = np.asarray(getattr(param_estimated, field_name), dtype=float)
-
-        items = [
-            (f"{field_name}_pearson_r", _pearson_r(true_values, est_values)),
-            (f"{field_name}_spearman_r", _spearman_r(true_values, est_values)),
-            (f"{field_name}_slope", _slope(true_values, est_values)),
-            (f"{field_name}_mae", np.mean(np.abs(est_values - true_values))),
-        ]
-        if field_name == "acceleration_factors":
-            mask = true_values != 0
-            ratios = np.full(true_values.shape, np.nan)
-            ratios[mask] = est_values[mask] / true_values[mask]
-            items.extend(
-                [
-                    (f"{field_name}_scale_median", np.nanmedian(ratios)),
-                    (
-                        f"{field_name}_mean_abs_relative_error",
-                        np.nanmean(np.abs(ratios - 1)),
-                    ),
-                ]
-            )
-
-        rows.extend(_metric_rows(setup, "recovery_per_subject", "all", items))
-    return rows
-
-
 def _save_tsv(df_metrics: pd.DataFrame, fpath_out: Path):
     fpath_out.parent.mkdir(parents=True, exist_ok=True)
     df_metrics.to_csv(fpath_out, sep="\t", index=False)
     print(f"Saved metrics to {fpath_out}")
 
 
-def get_metrics_single_run(fpath_json_results: Path):
-    json_results = load_json(fpath_json_results)
+def get_metrics_single_run(
+    json_results: dict, tag: str
+) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     dpath_data = _get_dpath_data(json_results)
     print(f"dpath_data: {dpath_data}")
@@ -406,9 +214,9 @@ def get_metrics_single_run(fpath_json_results: Path):
     json_data = _load_json_data(json_results)
 
     cols = _get_cols(json_data)
-    subjects_by_node = _get_subjects_by_node(json_data)
+    subjects_by_node = json_data["subjects_by_node"]
     try:
-        true_params = _get_true_params(json_data)
+        true_params = json_data["params"]
     except KeyError:
         true_params = None
         click.secho(
@@ -416,8 +224,11 @@ def get_metrics_single_run(fpath_json_results: Path):
             " Skipping recovery metrics.",
         )
 
-    df_data_train = _load_df_data(json_data, dpath_data)
-    df_data_test: pd.DataFrame | None = _load_df_data(json_data, dpath_data, test=True)
+    df_data_train = _load_df_data(dpath_data, tag, cols, test=False)
+    try:
+        df_data_test = _load_df_data(dpath_data, tag, cols, test=True)
+    except FileNotFoundError:
+        df_data_test = None
 
     # same for train/test data
     col_subject = cols["col_subject"]
@@ -515,7 +326,7 @@ def get_metrics_single_run(fpath_json_results: Path):
     for setup, estimated_params in estimated_by_setup.items():
         y_pred_train = _predict(estimated_params, t_train, subject_ids_train)
         rows.extend(
-            _compute_predictive_metrics(
+            compute_predictive_metrics(
                 y_true_train,
                 y_pred_train,
                 cols_biomarker,
@@ -526,7 +337,7 @@ def get_metrics_single_run(fpath_json_results: Path):
         if df_data_test is not None:
             y_pred_test = _predict(estimated_params, t_test, subject_ids_test)
             rows.extend(
-                _compute_predictive_metrics(
+                compute_predictive_metrics(
                     y_true_test,
                     y_pred_test,
                     cols_biomarker,
@@ -536,7 +347,7 @@ def get_metrics_single_run(fpath_json_results: Path):
             )
         if true_params is not None:
             rows_recovery.extend(
-                _compute_recovery_metrics(
+                compute_recovery_metrics(
                     true_params_by_subject,
                     estimated_params,
                     cols_biomarker,
@@ -544,7 +355,7 @@ def get_metrics_single_run(fpath_json_results: Path):
                 )
             )
             rows_recovery.extend(
-                _compute_per_subject_recovery(
+                compute_per_subject_recovery(
                     true_params_by_subject, estimated_params, setup=setup
                 )
             )
@@ -561,9 +372,92 @@ def get_metrics_single_run(fpath_json_results: Path):
     return df_metrics, df_recovery
 
 
+def get_metrics_single_run_leaspy(
+    json_results: dict,
+    tag: str,
+    algorithm_name=DEFAULT_LEASPY_ALGORITHM_NAME,
+    seed=DEFAULT_LEASPY_SEED,
+    n_jobs=DEFAULT_LEASPY_N_JOBS,
+) -> pd.DataFrame:
+    from leaspy.algo import AlgorithmSettings, algorithm_factory
+    from leaspy.io.data import Data, Dataset
+    from leaspy.models import BaseModel
+
+    dpath_data = _get_dpath_data(json_results)
+    print(f"dpath_data: {dpath_data}")
+
+    json_data = _load_json_data(json_results)
+
+    cols = _get_cols(json_data)
+    cols_biomarker = cols["cols_biomarker"]
+
+    for setup, model_params in json_results["results"].items():
+        # load the model
+        with tempfile.NamedTemporaryFile(
+            mode="rt", suffix=".json", delete=True
+        ) as tmp_file:
+            save_json(Path(tmp_file.name), model_params)
+            tmp_file.flush()
+            model = BaseModel.load(tmp_file.name)
+
+        # load data
+        df_data_train = _load_df_data_leaspy(dpath_data, tag, cols, test=False)
+        try:
+            df_data_test = _load_df_data_leaspy(dpath_data, tag, cols, test=True)
+        except FileNotFoundError:
+            df_data_test = None
+
+        # get the individual parameters from the train data
+        personalize_settings = AlgorithmSettings(
+            algorithm_name, seed=seed, n_jobs=n_jobs
+        )
+        algorithm = algorithm_factory(personalize_settings)
+        individual_parameters = algorithm.run(
+            model, Dataset(Data.from_dataframe(df_data_train, data_type="visit"))
+        )
+
+        rows: list[dict[str, str | float]] = []
+        for df, set_name in [(df_data_train, "train"), (df_data_test, "test")]:
+            if df is None:
+                continue
+
+            df: pd.DataFrame
+
+            y_true = df[cols_biomarker].to_numpy(dtype=float)
+
+            # predict
+            times_by_subject = df.index.get_level_values(LEASPY_COL_TIMEPOINT).groupby(
+                df.index.get_level_values(LEASPY_COL_SUBJECT)
+            )
+            predictions = model.estimate(times_by_subject, individual_parameters)
+            df_y_pred = pd.DataFrame(index=df.index, columns=cols_biomarker)
+            for subject, times_sub in times_by_subject.items():
+                df_y_pred.loc[(subject, list(times_sub)), cols_biomarker] = predictions[
+                    subject
+                ]
+            y_pred = df_y_pred.to_numpy(dtype=float)
+
+            rows.extend(
+                compute_predictive_metrics(
+                    y_true=y_true,
+                    y_pred=y_pred,
+                    cols_biomarker=cols_biomarker,
+                    setup=setup,
+                    set_name=set_name,
+                )
+            )
+
+    return pd.DataFrame(
+        rows, columns=["setup", "set_name", "col_biomarker", "metric", "value"]
+    )
+
+
 def get_metrics(
     tag: str,
     dpath_results: Path,
+    leaspy_algorithm_name=DEFAULT_LEASPY_ALGORITHM_NAME,
+    leaspy_seed=DEFAULT_LEASPY_SEED,
+    leaspy_n_jobs=DEFAULT_LEASPY_N_JOBS,
 ):
     dpath_results_latest = get_dpath_latest(dpath_results)
     for fpath_json_results in (dpath_results_latest / tag).glob(
@@ -572,14 +466,30 @@ def get_metrics(
         run_tag = fpath_json_results.stem.removesuffix("-estimated_params")
         print(f"fpath_json_results: {fpath_json_results}")
 
-        df_metrics, df_recovery = get_metrics_single_run(fpath_json_results)
+        json_results = load_json(fpath_json_results)
 
-        fpath_metrics_out = fpath_json_results.with_name(f"{run_tag}-fit_quality.tsv")
+        if not fpath_json_results.name.startswith("leaspy"):
+            df_metrics, df_recovery = get_metrics_single_run(json_results, tag)
+            suffix = ""
+        else:
+            df_metrics = get_metrics_single_run_leaspy(
+                json_results,
+                tag,
+                algorithm_name=leaspy_algorithm_name,
+                seed=leaspy_seed,
+                n_jobs=leaspy_n_jobs,
+            )
+            df_recovery = pd.DataFrame()
+            suffix = f"-{leaspy_algorithm_name}_{leaspy_seed}"
+
+        fpath_metrics_out = fpath_json_results.with_name(
+            f"{run_tag}-fit_quality{suffix}.tsv"
+        )
         _save_tsv(df_metrics, fpath_metrics_out)
 
         if not df_recovery.empty:
             fpath_recovery_out = fpath_json_results.with_name(
-                f"{run_tag}-param_recovery.tsv"
+                f"{run_tag}-param_recovery{suffix}.tsv"
             )
             _save_tsv(df_recovery, fpath_recovery_out)
 
@@ -591,6 +501,30 @@ def get_metrics(
     "dpath_results",
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     default=DEFAULT_DPATH_RESULTS,
+    show_envvar=True,
+)
+@click.option(
+    "--leaspy-algorithm-name",
+    type=str,
+    default=DEFAULT_LEASPY_ALGORITHM_NAME,
+    help="Algorithm name for Leaspy model personalization.",
+    show_envvar=True,
+)
+@click.option(
+    "--leaspy-seed",
+    type=int,
+    default=DEFAULT_LEASPY_SEED,
+    help="Random seed for Leaspy model personalization.",
+    envvar="RNG_SEED",
+    show_envvar=True,
+)
+@click.option(
+    "--leaspy-n-jobs",
+    type=int,
+    default=DEFAULT_LEASPY_N_JOBS,
+    help="Number of parallel jobs for Leaspy model personalization.",
+    envvar="LEASPY_N_JOBS",
+    show_envvar=True,
 )
 def main(**params):
     get_metrics(**params)

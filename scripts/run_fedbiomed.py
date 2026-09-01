@@ -29,6 +29,7 @@ from fl_prog.utils.io import (
     DEFAULT_DPATH_RESULTS,
     get_dpath_latest,
     get_node_id_map,
+    load_json,
     save_json,
     working_directory,
 )
@@ -49,6 +50,14 @@ DEFAULT_AGGREGATOR_NAME = "fedavg"
 
 VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
 PREFIX_DNAME_TENSORBOARD = "tensorboard-"
+
+
+def _results_exist(fpath_out: Path) -> bool:
+    if not fpath_out.exists():
+        return False
+
+    json_results = load_json(fpath_out)
+    return "results" in json_results
 
 
 def _check_node_datasets(
@@ -261,105 +270,6 @@ def _run_experiment(
     return results
 
 
-@click.command(context_settings=CLICK_CONTEXT_SETTINGS)
-@click.option("--tag", type=str, required=True)
-@click.option(
-    "--data-dir",
-    "dpath_data",
-    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    default=DEFAULT_DPATH_DATA,
-)
-@click.option(
-    "--results-dir",
-    "dpath_results",
-    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    default=DEFAULT_DPATH_RESULTS,
-)
-@click.option(
-    "--fedbiomed-dir",
-    "dpath_fbm",
-    type=click.Path(path_type=Path, exists=True, file_okay=False, dir_okay=True),
-    default=DEFAULT_DPATH_FEDBIOMED,
-)
-@click.option(
-    "--setup",
-    "setups",
-    type=click.Choice(Setup, case_sensitive=False),
-    multiple=True,
-    default=DEFAULT_SETUPS,
-)
-@click.option(
-    "--node-centralized", "node_id_centralized", type=str, default=NODE_ID_CENTRALIZED
-)
-@click.option("--n-rounds", type=click.IntRange(min=1), default=DEFAULT_N_ROUNDS)
-@click.option("--n-updates", type=click.IntRange(min=1), default=DEFAULT_N_UPDATES)
-@click.option("--batch-size", type=click.IntRange(min=1), default=DEFAULT_BATCH_SIZE)
-@click.option(
-    "--learning-rate",
-    type=click.FloatRange(min=0, min_open=True),
-    default=DEFAULT_LEARNING_RATE,
-)
-@click.option(
-    "--lambda-time-shifts",
-    "lambda_time_shifts",
-    type=click.FloatRange(min=0),
-    default=DEFAULT_LAMBDA_TIME_SHIFTS,
-    help="Regularization strength for time shifts",
-)
-@click.option(
-    "--lambda-acceleration-factors",
-    "lambda_acceleration_factors",
-    type=click.FloatRange(min=0),
-    default=DEFAULT_LAMBDA_ACCELERATION_FACTORS,
-    help="Regularization strength for acceleration factors",
-)
-@click.option(
-    "--time-shift-range",
-    "estimated_time_shift_range",
-    type=click.Tuple((float, float)),
-    nargs=2,
-    default=DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
-    help="Expected range of time shifts (for initialization and regularization)",
-)
-@click.option(
-    "--with-acceleration/--no-acceleration",
-    default=DEFAULT_WITH_ACCELERATION,
-    help="Whether to include acceleration factors in the model",
-)
-@click.option(
-    "--penalty-time-shifts",
-    type=click.Choice(Penalty, case_sensitive=False),
-    default=DEFAULT_PENALTY_TIME_SHIFTS,
-    help="Penalty type for time shifts",
-)
-@click.option(
-    "--penalty-acceleration-factors",
-    type=click.Choice(Penalty, case_sensitive=False),
-    default=DEFAULT_PENALTY_ACCELERATION_FACTORS,
-    help="Penalty type for acceleration factors",
-)
-@click.option(
-    "--with-scaling/--no-scaling",
-    default=DEFAULT_WITH_SCALING,
-    help="Whether to include scaling factors in the model",
-)
-@click.option(
-    "--aggregator",
-    "aggregator_name",
-    type=click.Choice(VALID_AGGREGATOR_NAMES),
-    default=DEFAULT_AGGREGATOR_NAME,
-)
-@click.option("--tensorboard/--no-tensorboard", "with_tensorboard", default=True)
-@click.option(
-    "--training-replies/--no-training-replies", "save_training_replies", default=False
-)
-@click.option(
-    "--aggregated-params/--no-aggregated-params",
-    "save_all_aggregated_params",
-    default=False,
-)
-@click.option("--random-seed", type=int, envvar="RNG_SEED")
-@click.option("--overwrite/--no-overwrite", default=False)
 def run_fedbiomed(
     tag: str,
     dpath_fbm: Path,
@@ -390,6 +300,7 @@ def run_fedbiomed(
     dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
     run_tag = "-".join(
         [
+            "fedbiomed",
             f"{n_rounds}",
             f"{n_updates}",
             f"{batch_size}",
@@ -402,10 +313,11 @@ def run_fedbiomed(
             f"{lambda_acceleration_factors}",
             "scaling" if with_scaling else "no_scaling",
             aggregator_name,
+            f"{random_seed}" if random_seed is not None else "no_seed",
         ]
     )
     fpath_out = dpath_out / f"{run_tag}-estimated_params.json"
-    if fpath_out.exists() and not overwrite:
+    if _results_exist(fpath_out) and not overwrite:
         click.secho(
             f"{fpath_out} already exists. Use --overwrite to overwrite.",
             fg="red",
@@ -509,5 +421,108 @@ def run_fedbiomed(
     print(f"Saved results to {fpath_out}")
 
 
+@click.command(context_settings=CLICK_CONTEXT_SETTINGS)
+@click.option("--tag", type=str, required=True)
+@click.option(
+    "--data-dir",
+    "dpath_data",
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+    default=DEFAULT_DPATH_DATA,
+)
+@click.option(
+    "--results-dir",
+    "dpath_results",
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+    default=DEFAULT_DPATH_RESULTS,
+)
+@click.option(
+    "--fedbiomed-dir",
+    "dpath_fbm",
+    type=click.Path(path_type=Path, exists=True, file_okay=False, dir_okay=True),
+    default=DEFAULT_DPATH_FEDBIOMED,
+)
+@click.option(
+    "--setup",
+    "setups",
+    type=click.Choice(Setup, case_sensitive=False),
+    multiple=True,
+    default=DEFAULT_SETUPS,
+)
+@click.option(
+    "--node-centralized", "node_id_centralized", type=str, default=NODE_ID_CENTRALIZED
+)
+@click.option("--n-rounds", type=click.IntRange(min=1), default=DEFAULT_N_ROUNDS)
+@click.option("--n-updates", type=click.IntRange(min=1), default=DEFAULT_N_UPDATES)
+@click.option("--batch-size", type=click.IntRange(min=1), default=DEFAULT_BATCH_SIZE)
+@click.option(
+    "--learning-rate",
+    type=click.FloatRange(min=0, min_open=True),
+    default=DEFAULT_LEARNING_RATE,
+)
+@click.option(
+    "--lambda-time-shifts",
+    "lambda_time_shifts",
+    type=click.FloatRange(min=0),
+    default=DEFAULT_LAMBDA_TIME_SHIFTS,
+    help="Regularization strength for time shifts",
+)
+@click.option(
+    "--lambda-acceleration-factors",
+    "lambda_acceleration_factors",
+    type=click.FloatRange(min=0),
+    default=DEFAULT_LAMBDA_ACCELERATION_FACTORS,
+    help="Regularization strength for acceleration factors",
+)
+@click.option(
+    "--time-shift-range",
+    "estimated_time_shift_range",
+    type=click.Tuple((float, float)),
+    nargs=2,
+    default=DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
+    help="Expected range of time shifts (for initialization and regularization)",
+)
+@click.option(
+    "--with-acceleration/--no-acceleration",
+    default=DEFAULT_WITH_ACCELERATION,
+    help="Whether to include acceleration factors in the model",
+)
+@click.option(
+    "--penalty-time-shifts",
+    type=click.Choice(Penalty, case_sensitive=False),
+    default=DEFAULT_PENALTY_TIME_SHIFTS,
+    help="Penalty type for time shifts",
+)
+@click.option(
+    "--penalty-acceleration-factors",
+    type=click.Choice(Penalty, case_sensitive=False),
+    default=DEFAULT_PENALTY_ACCELERATION_FACTORS,
+    help="Penalty type for acceleration factors",
+)
+@click.option(
+    "--with-scaling/--no-scaling",
+    default=DEFAULT_WITH_SCALING,
+    help="Whether to include scaling factors in the model",
+)
+@click.option(
+    "--aggregator",
+    "aggregator_name",
+    type=click.Choice(VALID_AGGREGATOR_NAMES),
+    default=DEFAULT_AGGREGATOR_NAME,
+)
+@click.option("--tensorboard/--no-tensorboard", "with_tensorboard", default=True)
+@click.option(
+    "--training-replies/--no-training-replies", "save_training_replies", default=False
+)
+@click.option(
+    "--aggregated-params/--no-aggregated-params",
+    "save_all_aggregated_params",
+    default=False,
+)
+@click.option("--random-seed", type=int, envvar="RNG_SEED")
+@click.option("--overwrite/--no-overwrite", default=False)
+def main(**params):
+    run_fedbiomed(**params)
+
+
 if __name__ == "__main__":
-    run_fedbiomed()
+    main()

@@ -20,6 +20,7 @@ from fl_prog.utils.io import (
 )
 
 DEFAULT_N_ITER = 20000
+DEFAULT_WITH_SOURCES = False
 
 
 def _results_exist(fpath_out: Path) -> bool:
@@ -43,6 +44,7 @@ def run_leaspy(
     tag: str,
     dpath_data: Path,
     dpath_results: Path,
+    with_sources: bool = DEFAULT_WITH_SOURCES,
     n_iter: int = DEFAULT_N_ITER,
     random_seed: int | None = None,
     overwrite: bool = False,
@@ -52,6 +54,7 @@ def run_leaspy(
         [
             "leaspy",
             str(n_iter),
+            "with_sources" if with_sources else "no_sources",
             str(random_seed) if random_seed is not None else "no_seed",
         ]
     )
@@ -74,9 +77,9 @@ def run_leaspy(
     model_args = {
         "name": ModelName.LOGISTIC,
         "dimension": len(config["cols"]["cols_biomarker"]),
-        "source_dimension": int(
-            np.ceil(np.sqrt(len(config["cols"]["cols_biomarker"])))
-        ),
+        "source_dimension": int(np.ceil(np.sqrt(len(config["cols"]["cols_biomarker"]))))
+        if with_sources
+        else 0,
         "obs_models": "gaussian-diagonal",
     }
 
@@ -124,6 +127,7 @@ def run_leaspy(
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     default=DEFAULT_DPATH_RESULTS,
 )
+@click.option("--with-sources/--no-sources", default=DEFAULT_WITH_SOURCES)
 @click.option("--n-iter", type=int, default=DEFAULT_N_ITER)
 @click.option("--random-seed", type=int, envvar="RNG_SEED")
 @click.option("--overwrite/--no-overwrite", default=False)

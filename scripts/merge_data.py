@@ -14,6 +14,10 @@ def _get_fname_merged(tag: str) -> str:
     return f"{tag}-merged.tsv"
 
 
+def _get_fname_test(tag: str) -> str:
+    return f"{tag}-test.tsv"
+
+
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
 @click.option("--tag", type=str, required=True)
 @click.option(
@@ -33,11 +37,13 @@ def merge_data(dpath_data, tag):
     col_subject = json_data["cols"]["col_subject"]
     col_subject_index = json_data["cols"]["col_subject_index"]
 
-    fpaths_tsv = [
-        fpath
-        for fpath in sorted(dpath_out.glob(f"{tag}*.tsv"))
-        if fpath.name != fname_merged
-    ]
+    fpaths_tsv = []
+    for fpath in sorted(dpath_out.glob(f"{tag}*.tsv")):
+        if fpath.name == fname_merged or fpath.name == _get_fname_test(tag):
+            print(f"Skipping {fpath.name}")
+            continue
+        fpaths_tsv.append(fpath)
+
     dfs = [
         pd.read_csv(fpath, sep="\t", dtype={col_subject: str}) for fpath in fpaths_tsv
     ]
@@ -50,7 +56,7 @@ def merge_data(dpath_data, tag):
 
     fpath_out = dpath_out / fname_merged
     df.to_csv(fpath_out, sep="\t", index=False)
-    print(f"Saved merged data to {fpath_out}")
+    print(f"Saved merged data (shape {df.shape}) to {fpath_out}")
 
     save_json(fpath_json, json_data)
     print(f"Updated node ID map in {fpath_json}")

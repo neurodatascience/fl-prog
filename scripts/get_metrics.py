@@ -421,6 +421,8 @@ def get_metrics_single_run_leaspy(
             if df is None:
                 continue
 
+            df: pd.DataFrame
+
             y_true = df[cols_biomarker].to_numpy(dtype=float)
 
             # predict
@@ -428,14 +430,12 @@ def get_metrics_single_run_leaspy(
                 df.index.get_level_values(LEASPY_COL_SUBJECT)
             )
             predictions = model.estimate(times_by_subject, individual_parameters)
-            y_pred = np.vstack(
-                [
-                    predictions[subject]
-                    for subject in df.index.get_level_values(
-                        LEASPY_COL_SUBJECT
-                    ).unique()
+            df_y_pred = pd.DataFrame(index=df.index, columns=cols_biomarker)
+            for subject, times_sub in times_by_subject.items():
+                df_y_pred.loc[(subject, list(times_sub)), cols_biomarker] = predictions[
+                    subject
                 ]
-            )
+            y_pred = df_y_pred.to_numpy(dtype=float)
 
             rows.extend(
                 compute_predictive_metrics(

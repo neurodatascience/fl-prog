@@ -12,6 +12,8 @@ import torch
 from fl_prog.utils.constants import (
     DATE_FORMAT,
     DNAME_LATEST,
+    DPMOST_COL_SUBJECT,
+    DPMOST_COL_TIMEPOINT,
     LEASPY_COL_SUBJECT,
     LEASPY_COL_TIMEPOINT,
 )
@@ -143,4 +145,18 @@ def format_df_for_leaspy(
     )
     df = df.set_index([LEASPY_COL_SUBJECT, LEASPY_COL_TIMEPOINT])
     df = df.loc[:, cols_biomarker]
+    return df
+
+
+def format_df_for_dpmost(
+    df: pd.DataFrame, col_subject: str, col_timepoint: str, cols_biomarker: list[str]
+) -> pd.DataFrame:
+    df[col_subject] = df[col_subject].astype(str)
+    df = df.rename(
+        columns={
+            col_subject: DPMOST_COL_SUBJECT,
+            col_timepoint: DPMOST_COL_TIMEPOINT,
+        }
+    )
+    df = df.loc[:, [DPMOST_COL_SUBJECT, DPMOST_COL_TIMEPOINT] + cols_biomarker]
     return df

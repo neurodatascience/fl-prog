@@ -25,20 +25,36 @@ PATH_TO_DPMOST = (
 sys.path.append(str(PATH_TO_DPMOST))
 from DPMoSt import DPMoSt
 
-DEFAULT_N_OUTER_ITER = 300
+DEFAULT_N_OUTER_ITER = 1000
 
 
-def _results_exist(fpath_out: Path) -> bool:
-    if not fpath_out.exists():
+def _results_exist(fpath_out_json: Path, fpath_model_out: Path) -> bool:
+    if not fpath_out_json.exists():
         return False
 
-    json_results = load_json(fpath_out)
+    if fpath_model_out.exists():
+        return True
+
+    json_results = load_json(fpath_out_json)
     return "results" in json_results
 
 
 def _get_results(model: DPMoSt, fpath_model: Path) -> dict:
     model.save(str(fpath_model.with_suffix("")))
-    return fpath_model
+    # model.est_theta: x0, k, scaling_factor
+    sigmoid_params = np.vstack(model.est_theta)
+    return {
+        "estimated_k_values": sigmoid_params[:, 1],
+        "estimated_x0_values": sigmoid_params[:, 0],
+        "estimated_scaling_factors": sigmoid_params[:, 2],
+        "estimated_sigma": np.vstack(model.est_noise).squeeze(),
+        "estimated_time_shifts": {
+            "node_centralized": model.time_shift.detach().numpy(),
+        },
+        "estimated_acceleration_factors": {
+            "node_centralized": np.ones(model.n_subjects),
+        },
+    }
 
 
 def run_dpmost(
@@ -63,7 +79,7 @@ def run_dpmost(
     )
     fpath_out_json = dpath_out / f"{run_tag}-estimated_params.json"
     fpath_out_model = dpath_out / f"{run_tag}-model.pkl"
-    if _results_exist(fpath_out_json) and not overwrite:
+    if _results_exist(fpath_out_json, fpath_out_model) and not overwrite:
         click.secho(
             f"{fpath_out_json} already exists. Use --overwrite to overwrite.",
             fg="red",

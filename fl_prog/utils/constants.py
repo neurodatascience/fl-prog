@@ -14,6 +14,10 @@ DATE_FORMAT = "%Y_%m_%d"
 NODE_PREFIX = "node_"
 NODE_ID_CENTRALIZED = "centralized"
 
+# Leaspy
+LEASPY_COL_SUBJECT = "ID"
+LEASPY_COL_TIMEPOINT = "TIME"
+
 
 class Setup(str, Enum):
     CENTRALIZED = "centralized"

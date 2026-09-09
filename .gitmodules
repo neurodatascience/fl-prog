@@ -1,0 +1,3 @@
+[submodule "vendored/dpmost"]
+	path = vendored/dpmost
+	url = https://gitlab.inria.fr/aviani/dpmost.git

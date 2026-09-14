@@ -241,7 +241,7 @@ def _predict_dpmost(
 def _save_tsv(df_metrics: pd.DataFrame, fpath_out: Path):
     fpath_out.parent.mkdir(parents=True, exist_ok=True)
     df_metrics.to_csv(fpath_out, sep="\t", index=False)
-    print(f"\tSaved metrics to {fpath_out}")
+    click.secho(f"\tSaved metrics to {fpath_out}", fg="green")
 
 
 def get_metrics_single_run(

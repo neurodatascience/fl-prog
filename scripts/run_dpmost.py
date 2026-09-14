@@ -25,7 +25,7 @@ PATH_TO_DPMOST = (
 sys.path.append(str(PATH_TO_DPMOST))
 from DPMoSt import DPMoSt
 
-DEFAULT_N_OUTER_ITER = 1000
+DEFAULT_N_OUTER_ITER = 20000
 
 
 def _results_exist(fpath_out_json: Path, fpath_model_out: Path) -> bool:

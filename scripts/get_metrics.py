@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -182,7 +183,9 @@ def _load_df_data_leaspy(
     return df
 
 
-def _predict(params: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.ndarray:
+def _predict_fl_prog(
+    params: ModelParams, t: np.ndarray, subject_ids: np.ndarray
+) -> np.ndarray:
     """Model forward pass.
 
     Returns predictions of shape (n_entries, n_features)
@@ -198,18 +201,58 @@ def _predict(params: ModelParams, t: np.ndarray, subject_ids: np.ndarray) -> np.
     return model.forward(t, subject_ids, params=params).detach().numpy()
 
 
+def _predict_dpmost(
+    params: ModelParams, t: np.ndarray, subject_ids: np.ndarray
+) -> np.ndarray:
+    """Predict individual datapoints for DPMoSt.
+
+    Returns predictions of shape (n_entries, n_features)
+    """
+    import sys
+
+    PATH_TO_DPMOST = (
+        Path(__file__).parent.parent.resolve()
+        / "vendored"
+        / "dpmost"
+        / "models"
+        / "dpmost"
+    )
+    sys.path.append(str(PATH_TO_DPMOST))
+
+    from utility import sigmoid_eval
+
+    t = torch.tensor(t + params.time_shifts[subject_ids], dtype=torch.float).reshape(
+        -1, 1
+    )
+    theta = torch.tensor(
+        np.hstack(
+            [
+                params.x0_values[:, None],
+                params.k_values[:, None],
+                params.scaling_factors[:, None],
+            ],
+        ),
+        dtype=torch.float,
+    )
+
+    return sigmoid_eval(t, theta).detach().numpy()
+
+
 def _save_tsv(df_metrics: pd.DataFrame, fpath_out: Path):
     fpath_out.parent.mkdir(parents=True, exist_ok=True)
     df_metrics.to_csv(fpath_out, sep="\t", index=False)
-    print(f"Saved metrics to {fpath_out}")
+    click.secho(f"\tSaved metrics to {fpath_out}", fg="green")
 
 
 def get_metrics_single_run(
-    json_results: dict, tag: str
+    json_results: dict,
+    tag: str,
+    predict_fn: Callable[[ModelParams, np.ndarray, np.ndarray], np.ndarray],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    print(f"\tUsing predict_fn: {predict_fn.__name__}")
 
     dpath_data = _get_dpath_data(json_results)
-    print(f"dpath_data: {dpath_data}")
+    print(f"\tdpath_data: {dpath_data}")
 
     json_data = _load_json_data(json_results)
 
@@ -220,8 +263,9 @@ def get_metrics_single_run(
     except KeyError:
         true_params = None
         click.secho(
-            f"True parameters not found in {json_results['settings']['fpath_config']}."
+            f"\tTrue parameters not found in {json_results['settings']['fpath_config']}."
             " Skipping recovery metrics.",
+            fg="yellow",
         )
 
     df_data_train = _load_df_data(dpath_data, tag, cols, test=False)
@@ -232,17 +276,7 @@ def get_metrics_single_run(
 
     # same for train/test data
     col_subject = cols["col_subject"]
-    n_biomarkers = len(cols["cols_biomarker"])
     n_subjects = df_data_train[col_subject].nunique()
-    print(f"n_biomarkers: {n_biomarkers}")
-    print(f"n_subjects: {n_subjects}")
-    print(
-        "n_subjects_by_node: "
-        + ", ".join(
-            f"{node_id}: {len(subjects)}"
-            for node_id, subjects in subjects_by_node.items()
-        )
-    )
 
     if not set(cols["cols_biomarker"]).issubset(df_data_train.columns):
         raise ValueError(
@@ -294,14 +328,6 @@ def get_metrics_single_run(
                 f"{estimated_params.acceleration_factors.shape} but expected "
                 f"({n_subjects},)"
             )
-        print(
-            f"{setup}: estimated time_shifts range: "
-            f"[{estimated_params.time_shifts.min():.3f}, "
-            f"{estimated_params.time_shifts.max():.3f}], "
-            f"estimated acceleration_factors range: "
-            f"[{estimated_params.acceleration_factors.min():.3f}, "
-            f"{estimated_params.acceleration_factors.max():.3f}]"
-        )
 
     cols_biomarker = cols["cols_biomarker"]
     t_train = df_data_train[cols["col_timepoint"]].to_numpy(dtype=float)
@@ -324,7 +350,7 @@ def get_metrics_single_run(
     rows: list[dict[str, str | float]] = []
     rows_recovery: list[dict[str, str | float]] = []
     for setup, estimated_params in estimated_by_setup.items():
-        y_pred_train = _predict(estimated_params, t_train, subject_ids_train)
+        y_pred_train = predict_fn(estimated_params, t_train, subject_ids_train)
         rows.extend(
             compute_predictive_metrics(
                 y_true_train,
@@ -335,7 +361,7 @@ def get_metrics_single_run(
             )
         )
         if df_data_test is not None:
-            y_pred_test = _predict(estimated_params, t_test, subject_ids_test)
+            y_pred_test = predict_fn(estimated_params, t_test, subject_ids_test)
             rows.extend(
                 compute_predictive_metrics(
                     y_true_test,
@@ -468,10 +494,7 @@ def get_metrics(
 
         json_results = load_json(fpath_json_results)
 
-        if not fpath_json_results.name.startswith("leaspy"):
-            df_metrics, df_recovery = get_metrics_single_run(json_results, tag)
-            suffix = ""
-        else:
+        if fpath_json_results.name.startswith("leaspy"):
             df_metrics = get_metrics_single_run_leaspy(
                 json_results,
                 tag,
@@ -481,6 +504,15 @@ def get_metrics(
             )
             df_recovery = pd.DataFrame()
             suffix = f"-{leaspy_algorithm_name}_{leaspy_seed}"
+        else:
+            if fpath_json_results.name.startswith("dpmost"):
+                predict_fn = _predict_dpmost
+            else:
+                predict_fn = _predict_fl_prog
+            df_metrics, df_recovery = get_metrics_single_run(
+                json_results, tag, predict_fn=predict_fn
+            )
+            suffix = ""
 
         fpath_metrics_out = fpath_json_results.with_name(
             f"{run_tag}-fit_quality{suffix}.tsv"

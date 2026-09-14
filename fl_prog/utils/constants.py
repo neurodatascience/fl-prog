@@ -18,6 +18,10 @@ NODE_ID_CENTRALIZED = "centralized"
 LEASPY_COL_SUBJECT = "ID"
 LEASPY_COL_TIMEPOINT = "TIME"
 
+# DPMoSt
+DPMOST_COL_SUBJECT = "subj_id"
+DPMOST_COL_TIMEPOINT = "time"
+
 
 class Setup(str, Enum):
     CENTRALIZED = "centralized"

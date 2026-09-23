@@ -47,7 +47,10 @@ def save_fig(fig: sns.FacetGrid | plt.Figure, fname, extension="svg", **kwargs):
     kwargs_default = {"bbox_inches": "tight", "dpi": 300}
     kwargs_default.update(kwargs)
 
-    fpath: Path = (dpath_results / fname).with_suffix(f".{extension}")
+    fpath: Path = (
+        dpath_results
+        / f"{run_tag}-{fname.removesuffix('svg').removesuffix('png')}.{extension}"
+    )
     fpath.parent.mkdir(parents=True, exist_ok=True)
 
     fig.savefig(fpath, **kwargs_default)
@@ -91,7 +94,7 @@ def get_time_param_by_subject(
 
 
 time_shift_by_subject = get_time_param_by_subject(
-    results["federated"]["estimated_time_shifts"],
+    results["centralized"]["estimated_time_shifts"],
     subjects_by_node,
     "estimated_time_shift",
     time_scaling_factor=time_scaling_factor,
@@ -99,7 +102,7 @@ time_shift_by_subject = get_time_param_by_subject(
 # time_shift_by_subject
 
 acceleration_factor_by_subject = get_time_param_by_subject(
-    results["federated"]["estimated_acceleration_factors"],
+    results["centralized"]["estimated_acceleration_factors"],
     subjects_by_node,
     "estimated_acceleration_factor",
     time_scaling_factor=1,
@@ -334,6 +337,9 @@ import numpy as np
 
 hue_order = ["CN", "SMC", "EMCI", "LMCI", "AD"]
 
+# df_time_shifts = estimated_time_shifts_federated.reset_index(
+#     name="estimated_time_shift"
+# )
 df_time_shifts = estimated_time_shifts_federated.reset_index(
     name="estimated_time_shift"
 )
@@ -375,6 +381,9 @@ import numpy as np
 
 hue_order = ["CN", "SMC", "EMCI", "LMCI", "AD"]
 
+# df_acceleration_factors = estimated_acceleration_factors_centralized.reset_index(
+#     name="estimated_acceleration_factor"
+# )
 df_acceleration_factors = estimated_acceleration_factors_federated.reset_index(
     name="estimated_acceleration_factor"
 )

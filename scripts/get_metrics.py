@@ -244,6 +244,35 @@ def _save_tsv(df_metrics: pd.DataFrame, fpath_out: Path):
     click.secho(f"\tSaved metrics to {fpath_out}", fg="green")
 
 
+def _validate_subject_ids(subject_ids: np.ndarray, n_subjects: int, set_name: str):
+    """Ensure subject indices point into the merged data's subject range."""
+    if subject_ids.size and (subject_ids.min() < 0 or subject_ids.max() >= n_subjects):
+        raise ValueError(
+            f"{set_name}: subject indices fall outside the merged data's subject "
+            f"range [0, {n_subjects})"
+        )
+
+
+def _get_subject_ids_from_frame(
+    df_frame: pd.DataFrame, cols: dict, df_data_train: pd.DataFrame
+) -> np.ndarray:
+    """Map subjects to their global index from the train data."""
+    col_subject = cols["col_subject"]
+    col_subject_index = cols["col_subject_index"]
+    subject_index_map = dict(
+        zip(df_data_train[col_subject], df_data_train[col_subject_index])
+    )
+
+    subject_ids = df_frame[col_subject].map(subject_index_map)
+    if subject_ids.isna().any():
+        missing_subjects = df_frame.loc[subject_ids.isna(), col_subject].tolist()
+        raise ValueError(
+            "test set contains subjects not present in the merged train data: "
+            f"{missing_subjects[:5]}"
+        )
+    return subject_ids.to_numpy(dtype=int)
+
+
 def get_metrics_single_run(
     json_results: dict,
     tag: str,
@@ -334,18 +363,16 @@ def get_metrics_single_run(
     subject_ids_train = df_data_train[cols["col_subject_index"]].to_numpy(dtype=int)
     y_true_train = df_data_train[cols_biomarker].to_numpy(dtype=float)
 
+    _validate_subject_ids(subject_ids_train, n_subjects, "train")
+
+    subject_ids_test = np.array([], dtype=int)
     if df_data_test is not None:
         t_test = df_data_test[cols["col_timepoint"]].to_numpy(dtype=float)
-        subject_ids_test = df_data_test[cols["col_subject_index"]].to_numpy(dtype=int)
-        y_true_test = df_data_test[cols_biomarker].to_numpy(dtype=float)
-
-    if subject_ids_train.size and (
-        subject_ids_train.min() < 0 or subject_ids_train.max() >= n_subjects
-    ):
-        raise ValueError(
-            "subject indices fall outside the merged data's subject range "
-            f"[0, {n_subjects})"
+        subject_ids_test = _get_subject_ids_from_frame(
+            df_data_test, cols, df_data_train
         )
+        y_true_test = df_data_test[cols_biomarker].to_numpy(dtype=float)
+        _validate_subject_ids(subject_ids_test, n_subjects, "test")
 
     rows: list[dict[str, str | float]] = []
     rows_recovery: list[dict[str, str | float]] = []

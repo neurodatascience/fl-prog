@@ -100,6 +100,7 @@ dependencies = [
   "ipykernel",
   "leaspy",
   "numpy",
+  "pcntoolkit",
   "seaborn",
   "scikit-learn",
   "scipy",

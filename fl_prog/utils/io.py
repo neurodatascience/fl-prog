@@ -24,6 +24,17 @@ DEFAULT_DPATH_FEDBIOMED = DPATH_PROJECT / "fedbiomed"
 DEFAULT_DPATH_RESULTS = DPATH_PROJECT / "results"
 
 
+def infer_sep(fpath: Path) -> str:
+    if fpath.suffix == ".tsv":
+        return "\t"
+    elif fpath.suffix == ".csv":
+        return ","
+    else:
+        raise ValueError(
+            f"Could not infer separator from file extension {fpath.suffix}."
+        )
+
+
 def get_dpath_latest(dpath_parent, use_today=False):
     dpath_parent = Path(dpath_parent)
     dpath_latest = dpath_parent / DNAME_LATEST

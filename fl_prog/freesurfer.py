@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from fl_prog.utils.io import infer_sep
+
 COL_SUBJECT = "participant_id_int"
 COL_TIMEPOINT = "months_scaled"
 
@@ -16,17 +18,6 @@ def _merge_hemispheres(df: pd.DataFrame) -> pd.DataFrame:
             df[measure] = df[[col_rh, col_lh]].mean(axis=1)
             df = df.drop(columns=[col_rh, col_lh])
     return df
-
-
-def infer_sep(fpath: Path) -> str:
-    if fpath.suffix == ".tsv":
-        return "\t"
-    elif fpath.suffix == ".csv":
-        return ","
-    else:
-        raise ValueError(
-            f"Could not infer separator from file extension {fpath.suffix}."
-        )
 
 
 def get_df_idp(
@@ -68,3 +59,24 @@ def get_df_idp(
     )
 
     return df_idp
+
+
+def _rename_and_drop_cols(
+    df: pd.DataFrame, left: str, right: str, suffix_to_strip: str, suffix_to_drop: str
+) -> pd.DataFrame:
+    inverse_map = {}  # new -> old
+
+    def _rename_col(col_name: str) -> str:
+        col_name_original = col_name
+        col_name = col_name.removesuffix(suffix_to_strip)
+        if col_name.startswith("lh_"):
+            col_name = col_name.replace("lh_", left, 1)
+        elif col_name.startswith("rh_"):
+            col_name = col_name.replace("rh_", right, 1)
+
+        inverse_map[col_name] = col_name_original
+        return col_name
+
+    df = df.drop(columns=[col for col in df.columns if col.endswith(suffix_to_drop)])
+    df = df.rename(columns=_rename_col)
+    return df, inverse_map

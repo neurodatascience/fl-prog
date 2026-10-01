@@ -19,7 +19,7 @@ from fl_prog.utils.io import DEFAULT_DPATH_DATA, load_json, save_json
 
 FNAME_SETTINGS = "settings.json"
 FNAME_HARMONIZED = "harmonized.csv"
-DNAME_MODEL = "pcntoolkit"
+DNAME_MODELS = "pcntoolkit"
 
 # from https://pcntoolkit.readthedocs.io/en/dev/tutorials/12_transfer_pretrained.html
 SURF_BASE_URL = "https://surfdrive.surf.nl/public.php/webdav/zip/"
@@ -394,10 +394,13 @@ def apply_normative_models(
             *[model_name.removesuffix(".zip") for model_name in model_names],
         ]
     )
-    dpath_transferred_model = dpath_out / tag / DNAME_MODEL
+    dpath_transferred_models = dpath_out / tag / DNAME_MODELS
     fpath_settings = dpath_out / tag / FNAME_SETTINGS
     fpath_harmonized = dpath_out / tag / FNAME_HARMONIZED
     settings = locals().copy()
+
+    fpath_settings.parent.mkdir(parents=True, exist_ok=True)
+    save_json(fpath_settings, settings)
 
     if fpath_harmonized.exists() and not overwrite:
         raise KnownError(
@@ -430,7 +433,7 @@ def apply_normative_models(
             idx_adaptation,
             model_name,
             dpath_models,
-            dpath_transferred_model,
+            dpath_transferred_models / model_name.removesuffix(".zip"),
             drop_adaptation,
         )
         harmonized_vars_map[model_name] = harmonized_vars_model
@@ -440,7 +443,6 @@ def apply_normative_models(
 
     settings["harmonized_vars_map"] = harmonized_vars_map
 
-    dpath_out.mkdir(parents=True, exist_ok=True)
     save_json(fpath_settings, settings)
     click.secho(f"Settings saved to {fpath_settings}.", fg="green")
     df_harmonized.to_csv(fpath_harmonized, index=True)

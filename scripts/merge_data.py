@@ -9,13 +9,11 @@ import pandas as pd
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_ID_CENTRALIZED
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, save_json
 
+DEFAULT_SAME_SCALING_ACROSS_SITES = False
+
 
 def _get_fname_merged(tag: str) -> str:
     return f"{tag}-merged.tsv"
-
-
-def _get_fname_test(tag: str) -> str:
-    return f"{tag}-test.tsv"
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -26,7 +24,16 @@ def _get_fname_test(tag: str) -> str:
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
     default=DEFAULT_DPATH_DATA,
 )
-def merge_data(dpath_data, tag):
+@click.option(
+    "--shared-scaling/--local-scaling",
+    "same_scaling_across_sites",
+    is_flag=True,
+    default=DEFAULT_SAME_SCALING_ACROSS_SITES,
+    help="Whether to use the merged data as the scaling reference for all sites (shared) or to use each site's own data as the scaling reference (local).",
+)
+def merge_data(
+    dpath_data, tag, same_scaling_across_sites: bool = DEFAULT_SAME_SCALING_ACROSS_SITES
+):
     dpath_out = get_dpath_latest(dpath_data) / tag
     fname_merged = _get_fname_merged(tag)
 
@@ -39,7 +46,7 @@ def merge_data(dpath_data, tag):
 
     fpaths_tsv = []
     for fpath in sorted(dpath_out.glob(f"{tag}*.tsv")):
-        if fpath.name == fname_merged or fpath.name == _get_fname_test(tag):
+        if fpath.name in json_data["do_not_merge"]:
             print(f"Skipping {fpath.name}")
             continue
         fpaths_tsv.append(fpath)
@@ -53,6 +60,12 @@ def merge_data(dpath_data, tag):
     df[col_subject_index] = df[col_subject].map(lambda x: subjects.index(x))
 
     json_data["subjects_by_node"][NODE_ID_CENTRALIZED] = subjects
+    json_data["do_not_merge"].append(fname_merged)
+
+    json_data["scaling_references"][fname_merged] = fname_merged
+    for fname, scaling_reference in json_data["scaling_references"].items():
+        if scaling_reference is None or same_scaling_across_sites:
+            json_data["scaling_references"][fname] = fname_merged
 
     fpath_out = dpath_out / fname_merged
     df.to_csv(fpath_out, sep="\t", index=False)

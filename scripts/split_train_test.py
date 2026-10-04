@@ -13,8 +13,10 @@ from fl_prog.utils.io import (
     save_json,
 )
 
-DEFAULT_MIN_N_TIMEPOINTS = 2
+DEFAULT_MIN_N_TIMEPOINTS = 4
 SUFFIX_TEST = "-test"
+
+# TODO make sure adaptation rows end up in train, not test
 
 
 def split_train_test(
@@ -42,6 +44,7 @@ def split_train_test(
     dfs_test = []
     node_id_map_new = {}
     subjects_by_node = {}
+    scaling_references = {}
     n_samples = 0
     for fname_site, node_id in node_id_map_old.items():
         if fname_site.endswith("-merged.tsv"):
@@ -78,6 +81,7 @@ def split_train_test(
 
         fname_site_new = fname_site.replace(old_tag, tag)
         node_id_map_new[fname_site_new] = node_id
+        scaling_references[fname_site_new] = fname_site_new
 
         dpath_out_new.mkdir(parents=True, exist_ok=True)
         fpath_site_new = dpath_out_new / fname_site_new
@@ -96,12 +100,19 @@ def split_train_test(
     print(
         f"Saved test set ({df_test.shape}, {len(df_test) / n_samples:.2%}) to {fpath_test}"
     )
+    scaling_references[fpath_test.name] = (
+        None  # no scaling reference until site data are merged
+    )
 
     json_data_new = {}
     json_data_new["settings"] = settings
     json_data_new["node_id_map"] = node_id_map_new
     json_data_new["cols"] = json_data_old["cols"]
     json_data_new["subjects_by_node"] = subjects_by_node
+    json_data_new["need_scaling"] = json_data_old["need_scaling"]
+    json_data_new["scaling_references"] = scaling_references
+    json_data_new["do_not_merge"] = json_data_old.get("do_not_merge", [])
+    json_data_new["do_not_merge"].append(fpath_test.name)
     fpath_json_new = dpath_out_new / f"{tag}.json"
     save_json(fpath_json_new, json_data_new)
     print(f"Saved new JSON data to {fpath_json_new}")

@@ -28,6 +28,9 @@ COL_SUBJECT_ADNIMERGE = "RID"
 COL_SESSION_ADNIMERGE = "VISCODE"
 COL_SITE_ADNIMERGE = "SITE"
 COL_AGE_ADNIMERGE = "AGE"
+COL_GROUP_ADNIMERGE = "DX_bl"
+
+COL_GROUP = "group"
 
 
 def _normalize_adni_rid(value) -> str:
@@ -45,17 +48,6 @@ def _get_fname_out(tag, i: int | None = None, suffix: str = ".tsv") -> str:
     if i is not None:
         tag = f"{tag}-{i}"
     return f"{tag}{suffix}"
-
-
-def _scale_min_max(df, min: pd.Series, max: pd.Series, measures) -> pd.DataFrame:
-    df.loc[:, measures] = (df[measures] - min) / (max - min)
-    return df
-
-
-def _flip(df, measures) -> pd.DataFrame:
-    """Flip 1->0 to 0->1."""
-    df.loc[:, measures] = 1 - df[measures]
-    return df
 
 
 def _split_participants_into_sites(
@@ -254,12 +246,12 @@ def get_adni_data(
     merge_hemispheres: bool = config.get("merge_hemispheres", True)
     col_subject_original: str = config["col_subject_original"]
     col_session_original: str = config["col_session_original"]
-    session_timepoint_map: dict[str, float] = config["session_timepoint_map"]
+    session_timepoint_map: dict[str, float] = {
+        k: float(v) for k, v in config["session_timepoint_map"].items()
+    }
     measures: list[str] = config["measures"]
     measures_adnimerge: list[str] = config.get("measures_adnimerge", [])
-    flip: bool = config.get("flip", False)
     max_time: float = config.get("max_time", None)
-    min_max_by_measure: dict[list[float]] = config.get("min_max_by_measure", None)
 
     if fpath_adni_merge is not None:
         df_adnimerge = pd.read_csv(
@@ -290,7 +282,12 @@ def get_adni_data(
             raise ValueError(
                 "fpath_adni_merge must be provided if requesting ADNIMERGE measures"
             )
-        df_idp = _add_adnimerge_measures(df_idp, df_adnimerge, measures_adnimerge)
+        df_idp = _add_adnimerge_measures(
+            df_idp,
+            df_adnimerge,
+            measures_adnimerge + [COL_GROUP_ADNIMERGE],
+        )
+        df_idp = df_idp.rename(columns={COL_GROUP_ADNIMERGE: COL_GROUP})
     # Add biological AGE information
     df_idp = _add_adni_age_column(
         df_idp=df_idp,
@@ -325,26 +322,13 @@ def get_adni_data(
         site_map = None
 
     cols_biomarkers = list(
-        set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_AGE_ADNIMERGE}
+        set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_AGE_ADNIMERGE, COL_GROUP}
     )
     df_idp = df_idp.dropna(axis="index", subset=cols_biomarkers, how="all")
 
-    if min_max_by_measure is not None:
-        min_values = pd.DataFrame(
-            data=[x[0] for x in min_max_by_measure.values()],
-            index=min_max_by_measure.keys(),
-        ).squeeze()
-        max_values = pd.DataFrame(
-            data=[x[1] for x in min_max_by_measure.values()],
-            index=min_max_by_measure.keys(),
-        ).squeeze()
-        df_idp = _scale_min_max(df_idp, min_values, max_values, cols_biomarkers)
-
-    if flip:
-        df_idp = _flip(df_idp, cols_biomarkers)
-
     if max_time is not None:
         df_idp = df_idp.query(f"{COL_TIMEPOINT} <= {max_time}")
+        df_idp.loc[:, COL_TIMEPOINT] = df_idp[COL_TIMEPOINT].astype(float)
         df_idp.loc[:, COL_TIMEPOINT] = df_idp[COL_TIMEPOINT] / max_time
 
     participant_ids = sorted(
@@ -354,6 +338,7 @@ def get_adni_data(
 
     node_id_map = {}
     subjects_by_node = {}
+    scaling_references = {}
     for i_site, site_participant_ids in enumerate(
         _split_participants_into_sites(participant_ids, n_sites, site_map=site_map),
         start=1,
@@ -374,6 +359,7 @@ def get_adni_data(
             f"Site {i_site}: {df_site.shape}, {len(site_participant_ids)} participants, {fpath_tsv}"
         )
         node_id_map[fname_tsv] = node_id
+        scaling_references[fname_tsv] = fname_tsv
 
     json_data["node_id_map"] = node_id_map
 
@@ -385,9 +371,12 @@ def get_adni_data(
         "cols_biomarker": sorted(
             cols_biomarkers,
         ),
+        "col_group": COL_GROUP,
     }
 
     json_data["subjects_by_node"] = subjects_by_node
+    json_data["need_scaling"] = True
+    json_data["scaling_references"] = scaling_references
 
     if sim_metadata is not None:
         json_data["params"] = _build_params_from_simulation(

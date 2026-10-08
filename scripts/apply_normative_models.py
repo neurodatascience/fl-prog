@@ -22,7 +22,7 @@ from pcntoolkit import NormativeModel, NormData
 from sklearn.model_selection import StratifiedGroupKFold
 
 from fl_prog.freesurfer import COL_TIMEPOINT, _rename_and_drop_cols, get_df_idp
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, COL_ADAPTATION
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, load_json, save_json
 
 FNAME_SETTINGS = "settings.json"
@@ -43,7 +43,6 @@ COL_SITE_ADNIMERGE = "SITE"
 
 COL_ROW_ID = "row_id"
 COL_BATCH_ID = "batch_id"
-COL_ADAPTATION = "adaptation"
 
 COL_HARMONIZED_PCNTOOLKIT = "Y_harmonized"
 COL_ROW_ID_PCNTOOLKIT = "subject_ids"

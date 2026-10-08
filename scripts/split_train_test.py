@@ -5,7 +5,7 @@ from pathlib import Path
 import click
 import pandas as pd
 
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, COL_ADAPTATION
 from fl_prog.utils.io import (
     DEFAULT_DPATH_DATA,
     get_dpath_latest,
@@ -15,8 +15,6 @@ from fl_prog.utils.io import (
 
 DEFAULT_MIN_N_TIMEPOINTS = 4
 SUFFIX_TEST = "-test"
-
-# TODO make sure adaptation rows end up in train, not test
 
 
 def split_train_test(
@@ -59,12 +57,19 @@ def split_train_test(
 
         fpath_site = dpath_out_old / fname_site
         df_site = pd.read_csv(fpath_site, sep="\t", dtype={col_subject: str})
+        has_adaptation = COL_ADAPTATION in df_site.columns
         n_samples += len(df_site)
 
         dfs_train = []
         subjects = []
         for subject, df_subject in df_site.groupby(col_subject, sort=False):
-            if len(df_subject) >= min_n_timepoints:
+            if has_adaptation and df_subject[COL_ADAPTATION].all():
+                dfs_train.append(df_subject)
+            elif has_adaptation and df_subject[COL_ADAPTATION].any():
+                raise ValueError(
+                    f"Subject {subject} has a mix of adaptation and non-adaptation rows."
+                )
+            elif len(df_subject) >= min_n_timepoints:
                 df_subject = df_subject.sort_values(col_timepoint, ascending=True)
                 dfs_test.append(df_subject.iloc[[-1]])
                 dfs_train.append(df_subject.iloc[:-1])

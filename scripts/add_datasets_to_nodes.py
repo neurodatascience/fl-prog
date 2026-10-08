@@ -15,6 +15,7 @@ from fl_prog.utils.io import (
     DEFAULT_DPATH_FEDBIOMED,
     get_dpath_latest,
     get_node_id_map,
+    load_json,
 )
 
 
@@ -105,6 +106,14 @@ def add_datasets_to_nodes(tag: str, dpath_data: Path, dpath_nodes: Path, wipe: b
     fpath_json = dpath_tag / f"{tag}.json"
 
     node_id_map = get_node_id_map(fpath_json)
+
+    if load_json(fpath_json)["need_scaling"]:
+        click.secho(
+            f"Error: Data with tag {tag} need scaling. Please run scale_adni_data.py first.",
+            fg="red",
+            bold=True,
+        )
+        sys.exit(1)
 
     for fpath_tsv in sorted(fpaths_tsv):
         fpath_tsv = fpath_tsv.absolute()

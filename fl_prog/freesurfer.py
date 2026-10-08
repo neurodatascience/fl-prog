@@ -51,6 +51,7 @@ def get_df_idp(
     df_idp[COL_TIMEPOINT] = df_idp.index.get_level_values(col_session_original).map(
         session_timepoint_map
     )
+    df_idp[COL_TIMEPOINT] = df_idp[COL_TIMEPOINT].astype(float)
     participant_ids = sorted(
         df_idp.index.get_level_values(col_subject_original).unique().tolist()
     )

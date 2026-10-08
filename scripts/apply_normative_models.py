@@ -21,7 +21,7 @@ from joblib import Parallel, delayed
 from pcntoolkit import NormativeModel, NormData
 from sklearn.model_selection import train_test_split
 
-from fl_prog.freesurfer import _rename_and_drop_cols, get_df_idp
+from fl_prog.freesurfer import COL_TIMEPOINT, _rename_and_drop_cols, get_df_idp
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, load_json, save_json
 
@@ -131,6 +131,12 @@ def _get_merged_df(
         session_timepoint_map=session_timepoint_map,
     )
     print(f"IDP dataframe: {df_idps.shape}")
+
+    max_time = config.get("max_time", None)
+    if max_time is not None:
+        df_idps = df_idps.query(f"{COL_TIMEPOINT} <= {max_time}")
+        df_idps.loc[:, COL_TIMEPOINT] = df_idps[COL_TIMEPOINT] / max_time
+        print(f"IDP dataframe after filtering by max_time={max_time}: {df_idps.shape}")
 
     df_adnimerge = pd.read_csv(
         fpath_adni_merge,
@@ -474,10 +480,6 @@ def apply_normative_models(
     )
 
     click.secho(f"After dropping batches: {df_data.shape}")
-
-    import sys
-
-    sys.exit()
 
     idx_adaptation = _get_idx_adaptation(
         df_data,

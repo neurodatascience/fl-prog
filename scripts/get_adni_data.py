@@ -11,7 +11,7 @@ import pandas as pd
 from sklearn.model_selection import GroupKFold
 
 from fl_prog.freesurfer import COL_SUBJECT, COL_TIMEPOINT, get_df_idp
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, COL_ADAPTATION
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, load_json, save_json
 
 
@@ -243,7 +243,7 @@ def get_adni_data(
 
     rng = np.random.default_rng(rng_seed)
 
-    merge_hemispheres: bool = config.get("merge_hemispheres", True)
+    merge_hemispheres: bool = config.get("merge_hemispheres", False)
     col_subject_original: str = config["col_subject_original"]
     col_session_original: str = config["col_session_original"]
     session_timepoint_map: dict[str, float] = {
@@ -269,14 +269,24 @@ def get_adni_data(
     else:
         df_adnimerge = None
 
-    df_idp = get_df_idp(
-        fpath_idps,
-        merge_hemispheres,
-        col_subject_original,
-        col_session_original,
-        session_timepoint_map,
-        measures,
-    )
+    try:
+        df_idp = get_df_idp(
+            fpath_idps,
+            merge_hemispheres,
+            col_subject_original,
+            col_session_original,
+            session_timepoint_map,
+            measures + [COL_ADAPTATION],
+        )
+    except KeyError:
+        df_idp = get_df_idp(
+            fpath_idps,
+            merge_hemispheres,
+            col_subject_original,
+            col_session_original,
+            session_timepoint_map,
+            measures,
+        )
     if measures_adnimerge:
         if df_adnimerge is None:
             raise ValueError(

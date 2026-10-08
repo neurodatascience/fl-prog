@@ -470,13 +470,13 @@ def apply_normative_models(
     fpath_harmonized = dpath_out / tag / FNAME_HARMONIZED
     settings = locals().copy()
 
-    fpath_settings.parent.mkdir(parents=True, exist_ok=True)
-    save_json(fpath_settings, settings)
-
     if fpath_harmonized.exists() and not overwrite:
         raise KnownError(
             f"Output file already exists: {fpath_harmonized}. Use --overwrite to overwrite."
         )
+
+    fpath_settings.parent.mkdir(parents=True, exist_ok=True)
+    save_json(fpath_settings, settings)
 
     config = load_json(fpath_config)
     df_data = _get_merged_df(fpath_idps, fpath_adni_merge, config)

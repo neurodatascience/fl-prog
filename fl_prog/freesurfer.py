@@ -31,9 +31,12 @@ def get_df_idp(
     df_idp = pd.read_csv(
         fpath_idps,
         sep=infer_sep(fpath_idps),
-        index_col=[col_subject_original, col_session_original],
         dtype={col_subject_original: str, col_session_original: str},
     )
+    df_idp[col_session_original] = df_idp[col_session_original].apply(
+        lambda x: "BL" if x == "M00" else x
+    )
+    df_idp = df_idp.set_index([col_subject_original, col_session_original])
     df_idp = df_idp.sort_index()
     if measures is not None:
         df_idp = df_idp.loc[:, measures]

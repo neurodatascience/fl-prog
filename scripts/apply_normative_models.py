@@ -130,7 +130,7 @@ def _get_merged_df(
         col_session_original=col_session_original,
         session_timepoint_map=session_timepoint_map,
     )
-    df_idps.index = df_idps.index.rename([COL_SUBJECT_ADNIMERGE, COL_SESSION_ADNIMERGE])
+    print(f"IDP dataframe: {df_idps.shape}")
 
     df_adnimerge = pd.read_csv(
         fpath_adni_merge,
@@ -144,12 +144,17 @@ def _get_merged_df(
     df_adnimerge[COL_SESSION_ADNIMERGE] = df_adnimerge[
         COL_SESSION_ADNIMERGE
     ].str.upper()
-    df_adnimerge = df_adnimerge.set_index(
-        [COL_SUBJECT_ADNIMERGE, COL_SESSION_ADNIMERGE]
+    df_adnimerge = df_adnimerge.rename(
+        columns={
+            COL_SUBJECT_ADNIMERGE: col_subject_original,
+            COL_SESSION_ADNIMERGE: col_session_original,
+        }
     )
+    df_adnimerge = df_adnimerge.set_index([col_subject_original, col_session_original])
     df_adnimerge = df_adnimerge[
         [COL_AGE_ADNIMERGE, COL_SEX_ADNIMERGE, COL_SITE_ADNIMERGE, COL_GROUP_ADNIMERGE]
     ]
+    print(f"ADNIMERGE dataframe: {df_adnimerge.shape}")
 
     df_merged = df_idps.merge(
         df_adnimerge,
@@ -160,7 +165,7 @@ def _get_merged_df(
     )
 
     df_merged[COL_ROW_ID] = df_merged.index.to_frame().apply(
-        lambda x: f"{x[COL_SUBJECT_ADNIMERGE]}_{x[COL_SESSION_ADNIMERGE]}",
+        lambda x: f"{x[col_subject_original]}_{x[col_session_original]}",
         axis="columns",
     )
     df_merged = df_merged.reset_index(drop=False)
@@ -469,6 +474,10 @@ def apply_normative_models(
     )
 
     click.secho(f"After dropping batches: {df_data.shape}")
+
+    import sys
+
+    sys.exit()
 
     idx_adaptation = _get_idx_adaptation(
         df_data,

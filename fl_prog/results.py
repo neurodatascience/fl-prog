@@ -4,6 +4,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -509,7 +510,9 @@ class FittedModel:
       acceleration_factor)
     - ``df_long``: one row per visit and biomarker (subject, group, set_name,
       biomarker, t, t_shifted, y_obs, y_pred)
-    - ``df_trajectory``: group trajectory (biomarker, t_shifted, y)
+    - ``df_trajectory``: group trajectory (biomarker, t_shifted, y) over the
+      range of the model's subject data; use ``get_df_trajectory`` for other
+      timepoints
     """
 
     label: str
@@ -519,6 +522,24 @@ class FittedModel:
     df_subject: pd.DataFrame
     df_long: pd.DataFrame
     df_trajectory: pd.DataFrame
+    cols_biomarker: list[str]
+    # group trajectory at reparametrized timepoints (in unscaled model time)
+    trajectory_fn: Callable[[np.ndarray], np.ndarray]
+    time_factor: float
+
+    def get_df_trajectory(self, t_shifted: np.ndarray) -> pd.DataFrame:
+        """Group trajectory at reparametrized timepoints given in months."""
+        t_shifted = np.asarray(t_shifted, dtype=float)
+        df_trajectory = (
+            pd.DataFrame(
+                self.trajectory_fn(t_shifted / self.time_factor),
+                columns=self.cols_biomarker,
+            )
+            .assign(**{COL_TIME_SHIFTED: t_shifted})
+            .melt(id_vars=[COL_TIME_SHIFTED], var_name=COL_BIOMARKER, value_name=COL_Y)
+        )
+        df_trajectory.insert(0, COL_MODEL, self.label)
+        return df_trajectory
 
 
 def get_model_label(model_type: str, setup: str, n_setups: int) -> str:
@@ -562,8 +583,7 @@ def _build_fitted_model(
     df_shift_acc: pd.DataFrame,
     t_shifted: np.ndarray,
     y_pred: np.ndarray,
-    t_grid: np.ndarray,
-    y_grid: np.ndarray,
+    trajectory_fn: Callable[[np.ndarray], np.ndarray],
     time_factor: float,
 ) -> FittedModel:
     col_subject = cols["col_subject"]
@@ -601,22 +621,22 @@ def _build_fitted_model(
     df_long.insert(1, COL_GROUP, df_long[COL_SUBJECT].map(group_by_subject))
     df_long.insert(0, COL_MODEL, label)
 
-    df_trajectory = (
-        pd.DataFrame(y_grid, columns=cols_biomarker)
-        .assign(**{COL_TIME_SHIFTED: t_grid * time_factor})
-        .melt(id_vars=[COL_TIME_SHIFTED], var_name=COL_BIOMARKER, value_name=COL_Y)
-    )
-    df_trajectory.insert(0, COL_MODEL, label)
-
-    return FittedModel(
+    fitted_model = FittedModel(
         label=label,
         model_type=model_type,
         setup=setup,
         run_tag=run_tag,
         df_subject=df_subject,
         df_long=df_long,
-        df_trajectory=df_trajectory,
+        df_trajectory=pd.DataFrame(),
+        cols_biomarker=cols_biomarker,
+        trajectory_fn=trajectory_fn,
+        time_factor=time_factor,
     )
+    fitted_model.df_trajectory = fitted_model.get_df_trajectory(
+        _get_trajectory_grid(t_shifted) * time_factor
+    )
+    return fitted_model
 
 
 def get_fitted_models(
@@ -662,7 +682,6 @@ def get_fitted_models(
                 subjects.map(df_shift_acc[COL_ACCELERATION_FACTOR]).to_numpy() * t_all
                 + subjects.map(df_shift_acc[COL_TIME_SHIFT]).to_numpy()
             )
-            t_grid = _get_trajectory_grid(t_shifted)
             fitted_models.append(
                 _build_fitted_model(
                     label=get_model_label(model_type, setup, n_setups),
@@ -674,8 +693,7 @@ def get_fitted_models(
                     df_shift_acc=df_shift_acc,
                     t_shifted=t_shifted,
                     y_pred=predict_leaspy(model, df_ip, df_leaspy_all),
-                    t_grid=t_grid,
-                    y_grid=predict_group_trajectory_leaspy(model, t_grid),
+                    trajectory_fn=partial(predict_group_trajectory_leaspy, model),
                     time_factor=time_factor,
                 )
             )
@@ -719,7 +737,6 @@ def get_fitted_models(
             index=pd.Index(subject_order),
         )
         t_shifted = get_shifted_time(params, t_all, subject_ids_all, model_type)
-        t_grid = _get_trajectory_grid(t_shifted)
         fitted_models.append(
             _build_fitted_model(
                 label=get_model_label(model_type, setup, n_setups),
@@ -731,8 +748,9 @@ def get_fitted_models(
                 df_shift_acc=df_shift_acc,
                 t_shifted=t_shifted,
                 y_pred=predict_fn(params, t_all, subject_ids_all),
-                t_grid=t_grid,
-                y_grid=predict_group_trajectory(params, t_grid, predict_fn),
+                trajectory_fn=partial(
+                    predict_group_trajectory, params, predict_fn=predict_fn
+                ),
                 time_factor=time_factor,
             )
         )

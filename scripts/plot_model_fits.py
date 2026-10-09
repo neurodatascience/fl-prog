@@ -116,8 +116,19 @@ def plot_group_trajectories_by_model(
 
 
 def plot_group_trajectories_by_biomarker(
-    df_trajectory: pd.DataFrame, model_order: list[str], biomarker_order: list[str]
+    fitted_models: list[FittedModel],
+    model_order: list[str],
+    biomarker_order: list[str],
+    n_points: int = 500,
 ) -> sns.FacetGrid:
+    # evaluate all models on a common grid spanning every model's time range
+    t_min = min(m.df_trajectory[COL_TIME_SHIFTED].min() for m in fitted_models)
+    t_max = max(m.df_trajectory[COL_TIME_SHIFTED].max() for m in fitted_models)
+    t_grid = np.linspace(t_min, t_max, n_points)
+    df_trajectory = pd.concat(
+        [m.get_df_trajectory(t_grid) for m in fitted_models], ignore_index=True
+    )
+
     grid = sns.relplot(
         data=df_trajectory,
         x=COL_TIME_SHIFTED,
@@ -133,6 +144,7 @@ def plot_group_trajectories_by_biomarker(
         height=3,
         aspect=1.3,
     )
+    grid.set(xlim=(t_min, t_max))
     grid.set_titles("{col_name}")
     grid.set_axis_labels(LABEL_TIME_SHIFTED, LABEL_BIOMARKER)
     return grid
@@ -353,7 +365,7 @@ def plot_model_fits(
     )
     _save(
         plot_group_trajectories_by_biomarker(
-            df_trajectory, model_order, biomarker_order
+            fitted_models, model_order, biomarker_order
         ),
         "group_trajectories-by_biomarker",
     )

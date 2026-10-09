@@ -9,7 +9,7 @@ import pandas as pd
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_ID_CENTRALIZED
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, save_json
 
-DEFAULT_SAME_SCALING_ACROSS_SITES = False
+DEFAULT_SAME_SCALING_ACROSS_SITES = True
 
 
 def _get_fname_merged(tag: str) -> str:

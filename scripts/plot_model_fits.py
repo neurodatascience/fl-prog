@@ -33,6 +33,7 @@ from fl_prog.results import (
     DEFAULT_LEASPY_SEED,
     MODEL_TYPES,
     FittedModel,
+    LeaspyIndividualParametersNotFoundError,
     get_fitted_models,
     iter_result_files,
 )
@@ -327,16 +328,25 @@ def plot_model_fits(
     fitted_models: list[FittedModel] = []
     for fpath_json_results, json_results in iter_result_files(dpath_results_tag):
         print(f"fpath_json_results: {fpath_json_results}")
-        fitted_models.extend(
-            get_fitted_models(
-                fpath_json_results,
-                json_results,
-                tag,
-                leaspy_algorithm_name=leaspy_algorithm_name,
-                leaspy_seed=leaspy_seed,
-                leaspy_n_jobs=leaspy_n_jobs,
+        try:
+            fitted_models.extend(
+                get_fitted_models(
+                    fpath_json_results,
+                    json_results,
+                    tag,
+                    leaspy_algorithm_name=leaspy_algorithm_name,
+                    leaspy_seed=leaspy_seed,
+                    leaspy_n_jobs=leaspy_n_jobs,
+                )
             )
-        )
+        except LeaspyIndividualParametersNotFoundError as exception:
+            raise click.ClickException(
+                f"{exception} in {fpath_json_results}. Run scripts/get_metrics.py "
+                f"--tag {tag} --results-dir {dpath_results} "
+                f"--leaspy-algorithm-name {leaspy_algorithm_name} "
+                f"--leaspy-seed {leaspy_seed} --leaspy-n-jobs {leaspy_n_jobs} "
+                "first to personalize the Leaspy model."
+            ) from exception
     if not fitted_models:
         raise click.ClickException(f"No results files found in {dpath_results_tag}")
 
@@ -418,14 +428,14 @@ def plot_model_fits(
     "--leaspy-algorithm-name",
     type=str,
     default=DEFAULT_LEASPY_ALGORITHM_NAME,
-    help="Algorithm name for Leaspy model personalization.",
+    help="Algorithm name of the Leaspy personalization to plot.",
     show_envvar=True,
 )
 @click.option(
     "--leaspy-seed",
     type=int,
     default=DEFAULT_LEASPY_SEED,
-    help="Random seed for Leaspy model personalization.",
+    help="Random seed of the Leaspy personalization to plot.",
     envvar="RNG_SEED",
     show_envvar=True,
 )
@@ -433,7 +443,7 @@ def plot_model_fits(
     "--leaspy-n-jobs",
     type=int,
     default=DEFAULT_LEASPY_N_JOBS,
-    help="Number of parallel jobs for Leaspy model personalization.",
+    help="Number of parallel jobs of the Leaspy personalization to plot.",
     envvar="LEASPY_N_JOBS",
     show_envvar=True,
 )

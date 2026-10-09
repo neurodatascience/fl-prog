@@ -15,11 +15,11 @@ from fl_prog.results import (
     DEFAULT_LEASPY_N_JOBS,
     DEFAULT_LEASPY_SEED,
     MODEL_LEASPY,
+    LeaspyIndividualParametersNotFoundError,
     PredictFn,
     estimated_params_by_setup,
     get_cols,
     get_dpath_data,
-    get_leaspy_individual_parameters,
     get_model_type,
     get_predict_fn,
     get_run_tag,
@@ -28,8 +28,11 @@ from fl_prog.results import (
     load_df_data,
     load_df_data_leaspy,
     load_json_data,
+    load_leaspy_individual_parameters,
     load_leaspy_model,
+    personalize_leaspy,
     predict_leaspy,
+    save_leaspy_individual_parameters,
     true_params_by_subject,
     validate_subject_ids,
 )
@@ -193,6 +196,46 @@ def get_metrics_single_run(
     return df_metrics, df_recovery
 
 
+def _get_leaspy_individual_parameters(
+    fpath_json_results: Path,
+    json_results: dict,
+    setup: str,
+    model,
+    df_leaspy: pd.DataFrame,
+    algorithm_name=DEFAULT_LEASPY_ALGORITHM_NAME,
+    seed=DEFAULT_LEASPY_SEED,
+    n_jobs=DEFAULT_LEASPY_N_JOBS,
+) -> pd.DataFrame:
+    """Load stored personalized parameters, or personalize and store them."""
+    personalization_kwargs = {
+        "algorithm_name": algorithm_name,
+        "seed": seed,
+        "n_jobs": n_jobs,
+    }
+    try:
+        df_individual_params = load_leaspy_individual_parameters(
+            json_results, setup, **personalization_kwargs
+        )
+    except LeaspyIndividualParametersNotFoundError:
+        pass
+    else:
+        print(f"\tUsing stored Leaspy individual parameters ({setup})")
+        return df_individual_params
+
+    print(f"\tPersonalizing Leaspy model ({setup})")
+    df_individual_params = personalize_leaspy(
+        model, df_leaspy, **personalization_kwargs
+    )
+    save_leaspy_individual_parameters(
+        fpath_json_results,
+        json_results,
+        setup,
+        df_individual_params,
+        **personalization_kwargs,
+    )
+    return df_individual_params
+
+
 def get_metrics_single_run_leaspy(
     fpath_json_results: Path,
     json_results: dict,
@@ -221,7 +264,7 @@ def get_metrics_single_run_leaspy(
 
         # get the individual parameters from the train data
         # (stored in the results file after the first run)
-        df_individual_params = get_leaspy_individual_parameters(
+        df_individual_params = _get_leaspy_individual_parameters(
             fpath_json_results,
             json_results,
             setup,

@@ -413,39 +413,49 @@ def personalize_leaspy(
     return individual_parameters.to_dataframe()
 
 
-def get_leaspy_individual_parameters(
-    fpath_json_results: Path,
+class LeaspyIndividualParametersNotFoundError(LookupError):
+    """Personalized Leaspy parameters are missing from a results file."""
+
+
+def load_leaspy_individual_parameters(
     json_results: dict,
     setup: str,
-    model,
-    df_leaspy: pd.DataFrame,
     algorithm_name: str = DEFAULT_LEASPY_ALGORITHM_NAME,
     seed: int = DEFAULT_LEASPY_SEED,
     n_jobs: int = DEFAULT_LEASPY_N_JOBS,
 ) -> pd.DataFrame:
-    """Load personalized Leaspy parameters from the results file, or compute them.
+    """Load personalized Leaspy parameters stored in a results file.
 
-    Computed parameters are written back to ``fpath_json_results`` under
+    They are stored under
     ``individual_parameters -> <algorithm_name>-<seed>-<n_jobs> -> <setup>``.
     """
     key = get_leaspy_personalization_key(algorithm_name, seed, n_jobs)
     stored = (
         json_results.get(KEY_LEASPY_INDIVIDUAL_PARAMETERS, {}).get(key, {}).get(setup)
     )
-    if stored is not None:
-        print(f"\tUsing stored Leaspy individual parameters ({key}, {setup})")
-        return pd.DataFrame(stored).set_index(LEASPY_COL_SUBJECT)
+    if stored is None:
+        raise LeaspyIndividualParametersNotFoundError(
+            f"No Leaspy individual parameters for personalization {key!r} and setup "
+            f"{setup!r}"
+        )
+    return pd.DataFrame(stored).set_index(LEASPY_COL_SUBJECT)
 
-    print(f"\tPersonalizing Leaspy model ({key}, {setup})")
-    df_ip = personalize_leaspy(
-        model, df_leaspy, algorithm_name=algorithm_name, seed=seed, n_jobs=n_jobs
-    )
+
+def save_leaspy_individual_parameters(
+    fpath_json_results: Path,
+    json_results: dict,
+    setup: str,
+    df_individual_params: pd.DataFrame,
+    algorithm_name: str = DEFAULT_LEASPY_ALGORITHM_NAME,
+    seed: int = DEFAULT_LEASPY_SEED,
+    n_jobs: int = DEFAULT_LEASPY_N_JOBS,
+):
+    key = get_leaspy_personalization_key(algorithm_name, seed, n_jobs)
     json_results.setdefault(KEY_LEASPY_INDIVIDUAL_PARAMETERS, {}).setdefault(key, {})[
         setup
-    ] = df_ip.reset_index().to_dict(orient="list")
+    ] = df_individual_params.reset_index().to_dict(orient="list")
     save_json(fpath_json_results, json_results)
     print(f"\tSaved Leaspy individual parameters to {fpath_json_results}")
-    return df_ip
 
 
 def predict_leaspy(model, df_ip: pd.DataFrame, df_leaspy: pd.DataFrame) -> np.ndarray:
@@ -647,7 +657,11 @@ def get_fitted_models(
     leaspy_seed: int = DEFAULT_LEASPY_SEED,
     leaspy_n_jobs: int = DEFAULT_LEASPY_N_JOBS,
 ) -> list[FittedModel]:
-    """Apply the fitted parameters of each setup in a results file to the data."""
+    """Apply the fitted parameters of each setup in a results file to the data.
+
+    Raises ``LeaspyIndividualParametersNotFoundError`` if a Leaspy model has not
+    been personalized yet (see ``scripts/get_metrics.py``).
+    """
     model_type = get_model_type(fpath_json_results)
     run_tag = get_run_tag(fpath_json_results)
 
@@ -662,16 +676,12 @@ def get_fitted_models(
 
     fitted_models = []
     if model_type == MODEL_LEASPY:
-        df_leaspy_train = to_df_leaspy(df_train, cols)
         df_leaspy_all = to_df_leaspy(df_all, cols)
         for setup, model_params in json_results["results"].items():
             model = load_leaspy_model(model_params)
-            df_ip = get_leaspy_individual_parameters(
-                fpath_json_results,
+            df_ip = load_leaspy_individual_parameters(
                 json_results,
                 setup,
-                model,
-                df_leaspy_train,
                 algorithm_name=leaspy_algorithm_name,
                 seed=leaspy_seed,
                 n_jobs=leaspy_n_jobs,

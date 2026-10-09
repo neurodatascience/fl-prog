@@ -30,6 +30,7 @@ def scale_adni_data(tag: str, dpath_data: Path, fpath_scaling_config: Path):
     settings["tag"] = tag
 
     json_data_old = load_json(fpath_json_old)
+    node_id_map_old = json_data_old["node_id_map"]
     scaling_references = json_data_old["scaling_references"]
     col_subject = json_data_old["cols"]["col_subject"]
     cols_biomarker = json_data_old["cols"]["cols_biomarker"]
@@ -39,6 +40,7 @@ def scale_adni_data(tag: str, dpath_data: Path, fpath_scaling_config: Path):
 
     min_max_by_measure_map = {}  # scaling reference -> min max by measure
 
+    node_id_map_new = {}
     for fname_to_scale, fname_reference in scaling_references.items():
         if fname_reference is None:
             click.secho(
@@ -49,6 +51,15 @@ def scale_adni_data(tag: str, dpath_data: Path, fpath_scaling_config: Path):
             sys.exit(1)
 
         fname_scaled = fname_to_scale.replace(old_tag, tag)
+        try:
+            node_id = node_id_map_old[fname_to_scale]
+            node_id_map_new[fname_scaled] = node_id
+        except KeyError:
+            click.secho(
+                f"WARNING: {fname_to_scale} not found in node_id_map_old. Make sure this file doesn't need to be added to a node.",
+                fg="yellow",
+                bold=True,
+            )
 
         fpath_to_scale = dpath_out_old / fname_to_scale
         fpath_reference = dpath_out_old / fname_reference
@@ -71,7 +82,7 @@ def scale_adni_data(tag: str, dpath_data: Path, fpath_scaling_config: Path):
 
     json_data_new = {}
     json_data_new["settings"] = settings
-    json_data_new["node_id_map"] = json_data_old["node_id_map"]
+    json_data_new["node_id_map"] = node_id_map_new
     json_data_new["cols"] = json_data_old["cols"]
     json_data_new["subjects_by_node"] = json_data_old["subjects_by_node"]
     json_data_new["need_scaling"] = False

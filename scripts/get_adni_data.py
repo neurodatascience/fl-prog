@@ -332,7 +332,8 @@ def get_adni_data(
         site_map = None
 
     cols_biomarkers = list(
-        set(df_idp.columns) - {COL_SUBJECT, COL_TIMEPOINT, COL_AGE_ADNIMERGE, COL_GROUP}
+        set(df_idp.columns)
+        - {COL_SUBJECT, COL_TIMEPOINT, COL_AGE_ADNIMERGE, COL_GROUP, COL_ADAPTATION}
     )
     df_idp = df_idp.dropna(axis="index", subset=cols_biomarkers, how="all")
 

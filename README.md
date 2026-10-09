@@ -169,6 +169,8 @@ fedbiomed node -p ./fedbiomed/node-<NODE_ID> start
 ./scripts/run_fedbiomed.py --tag adni_iid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
 ./scripts/run_fedbiomed.py --tag adni_noniid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
 ./scripts/run_fedbiomed.py --tag adni_noniid_diag --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
+
+./scripts/run_fedbiomed.py --tag adni_iid_harcmonized_split4_scaled_CN50_min --n-rounds 20 --n-updates 50 --learning-rate 0.05 --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01  --with-acceleration --with-scaling --training-replies --aggregated-params
 ```
 
 ### Plot

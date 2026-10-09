@@ -22,6 +22,9 @@ LEASPY_COL_TIMEPOINT = "TIME"
 DPMOST_COL_SUBJECT = "subj_id"
 DPMOST_COL_TIMEPOINT = "time"
 
+# normative modelling
+COL_ADAPTATION = "adaptation"
+
 
 class Setup(str, Enum):
     CENTRALIZED = "centralized"

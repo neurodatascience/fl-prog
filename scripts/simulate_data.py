@@ -228,6 +228,7 @@ def simulate_data(
         ),
     }
     json_data["subjects_by_node"] = subjects_by_node
+    json_data["need_scaling"] = False
 
     fpath_json = dpath_out / _get_fname_out(tag, suffix=".json")
     save_json(fpath_json, json_data)

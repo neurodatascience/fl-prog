@@ -19,10 +19,10 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from pcntoolkit import NormativeModel, NormData
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold
 
-from fl_prog.freesurfer import _rename_and_drop_cols, get_df_idp
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
+from fl_prog.freesurfer import COL_TIMEPOINT, _rename_and_drop_cols, get_df_idp
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, COL_ADAPTATION
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, load_json, save_json
 
 FNAME_SETTINGS = "settings.json"
@@ -43,7 +43,6 @@ COL_SITE_ADNIMERGE = "SITE"
 
 COL_ROW_ID = "row_id"
 COL_BATCH_ID = "batch_id"
-COL_ADAPTATION = "adaptation"
 
 COL_HARMONIZED_PCNTOOLKIT = "Y_harmonized"
 COL_ROW_ID_PCNTOOLKIT = "subject_ids"
@@ -116,9 +115,8 @@ class KnownError(Exception):
 
 
 def _get_merged_df(
-    fpath_idps: Path, fpath_adni_merge: Path, fpath_config: Path
+    fpath_idps: Path, fpath_adni_merge: Path, config: dict
 ) -> pd.DataFrame:
-    config = load_json(fpath_config)
     col_subject_original = config["col_subject_original"]
     col_session_original = config["col_session_original"]
     session_timepoint_map = config["session_timepoint_map"]
@@ -131,6 +129,12 @@ def _get_merged_df(
         session_timepoint_map=session_timepoint_map,
     )
     print(f"IDP dataframe: {df_idps.shape}")
+
+    max_time = config.get("max_time", None)
+    if max_time is not None:
+        df_idps = df_idps.query(f"{COL_TIMEPOINT} <= {max_time}")
+        df_idps.loc[:, COL_TIMEPOINT] = df_idps[COL_TIMEPOINT] / max_time
+        print(f"IDP dataframe after filtering by max_time={max_time}: {df_idps.shape}")
 
     df_adnimerge = pd.read_csv(
         fpath_adni_merge,
@@ -197,18 +201,25 @@ def _drop_batches(
 
 def _get_idx_adaptation(
     df: pd.DataFrame,
+    col_subject: str,
     groups: Iterable[str] = DEFAULT_ADAPTATION_GROUPS,
     frac: float = DEFAULT_ADAPTATION_FRAC,
     rng_seed: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     df_adaptation = df.loc[df[COL_GROUP_ADNIMERGE].isin(groups)]
     idx = np.arange(len(df_adaptation))
-    idx_adaptation, _ = train_test_split(
-        idx,
-        train_size=frac,
-        random_state=rng_seed,
-        shuffle=True,
-        stratify=df_adaptation[COL_BATCH_ID],
+    n_splits = int(1 / frac)
+    if not np.isclose(n_splits, 1 / frac):
+        raise ValueError("frac must result in an integer number of splits")
+    splitter = StratifiedGroupKFold(
+        n_splits=n_splits, shuffle=True, random_state=rng_seed
+    )
+    idx_adaptation, _ = next(
+        splitter.split(
+            idx,
+            y=df_adaptation[COL_BATCH_ID],
+            groups=df_adaptation[col_subject],
+        )
     )
     df_adaptation = df_adaptation.iloc[idx_adaptation]
     return df_adaptation.index
@@ -458,15 +469,16 @@ def apply_normative_models(
     fpath_harmonized = dpath_out / tag / FNAME_HARMONIZED
     settings = locals().copy()
 
-    fpath_settings.parent.mkdir(parents=True, exist_ok=True)
-    save_json(fpath_settings, settings)
-
     if fpath_harmonized.exists() and not overwrite:
         raise KnownError(
             f"Output file already exists: {fpath_harmonized}. Use --overwrite to overwrite."
         )
 
-    df_data = _get_merged_df(fpath_idps, fpath_adni_merge, fpath_config)
+    fpath_settings.parent.mkdir(parents=True, exist_ok=True)
+    save_json(fpath_settings, settings)
+
+    config = load_json(fpath_config)
+    df_data = _get_merged_df(fpath_idps, fpath_adni_merge, config)
     click.secho(f"Merged dataframe: {df_data.shape}")
 
     df_data = _drop_batches(
@@ -475,12 +487,9 @@ def apply_normative_models(
 
     click.secho(f"After dropping batches: {df_data.shape}")
 
-    import sys
-
-    sys.exit()
-
     idx_adaptation = _get_idx_adaptation(
         df_data,
+        col_subject=config["col_subject_original"],
         groups=adaptation_groups,
         frac=adaptation_frac,
         rng_seed=rng_seed,

@@ -63,12 +63,14 @@ Run the following command, passing the three simulated files' paths as CLI argum
 ./scripts/get_adni_data.py --tag adni_noniid_diag --non-iid --non-iid-strategy diagnosis
 ```
 
-<!-- ### Split into train and test sets
+### Split into train and test sets
+
+This will create a new tag, e.g. `adni_iid_split4`
 
 ```shell
-./scripts/split_train_test.py --tag adni_iid
-./scripts/split_train_test.py --tag adni_noniid
-``` -->
+./scripts/split_train_test.py --min-timepoints 4 --tag adni_iid
+./scripts/split_train_test.py --min-timepoints 4 --tag adni_noniid
+```
 
 ### Optional: Regress chronological age out from biomarkers
 
@@ -94,10 +96,17 @@ with --tag adni_\<iid / non_iid\>\_age_adjusted\_\<minmax / NOTHING\>
 
 ./scripts/merge_data.py --tag simulated_adni_timeshift
 
-./scripts/merge_data.py --tag adni_iid
-./scripts/merge_data.py --tag adni_noniid
-./scripts/merge_data.py --tag adni_noniid_diag
+./scripts/merge_data.py --tag adni_iid_split4
 ```
+
+### Scale data
+
+Respecting train/test separation, if any
+
+```shell
+./scripts/scale_adni_data.py --tag adni_iid_split4
+```
+
 
 ### Create Fed-BioMed nodes and update their `config.ini`
 
@@ -151,9 +160,17 @@ fedbiomed node -p ./fedbiomed/node-<NODE_ID> start
 
 ./scripts/run_fedbiomed.py --tag simulated_adni_timeshift --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
 
+./scripts/run_fedbiomed.py --tag adni_iid_split2 --learning-rate 0.05 --n-rounds 10 --n-updates 25 --training-replies --aggregated-params --with-acceleration --with-scaling
+./scripts/run_fedbiomed.py --tag adni_iid_split2 --learning-rate 0.05 --n-rounds 10 --n-updates 25 --training-replies --aggregated-params --no-acceleration --with-scaling
+
+./scripts/run_fedbiomed.py --tag adni_iid_split4 --learning-rate 0.05 --n-rounds 8 --n-updates 25 --training-replies --aggregated-params --with-acceleration --with-scaling --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01
+./scripts/run_fedbiomed.py --tag adni_iid_split4 --learning-rate 0.05 --n-rounds 8 --n-updates 25 --training-replies --aggregated-params --no-acceleration --no-scaling --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01
+
 ./scripts/run_fedbiomed.py --tag adni_iid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
 ./scripts/run_fedbiomed.py --tag adni_noniid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
 ./scripts/run_fedbiomed.py --tag adni_noniid_diag --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
+
+./scripts/run_fedbiomed.py --tag adni_iid_harcmonized_split4_scaled_CN50_min --n-rounds 20 --n-updates 50 --learning-rate 0.05 --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01  --with-acceleration --with-scaling --training-replies --aggregated-params
 ```
 
 ### Plot

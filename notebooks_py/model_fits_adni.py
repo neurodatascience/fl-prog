@@ -35,9 +35,15 @@ subjects_by_node = json_content["settings"]["config"]["subjects_by_node"]
 time_scaling_factor = json_content["settings"]["config"]["settings"]["config"][
     "max_time"
 ]
-min_max_by_measure = json_content["settings"]["config"]["settings"]["config"][
-    "min_max_by_measure"
-]
+min_max_by_measure = None
+for fname, candidate_min_max_by_measure in json_content["settings"]["config"][
+    "min_max_by_measure_map"
+].items():
+    if "merged" in fname:
+        min_max_by_measure = candidate_min_max_by_measure
+        break
+if min_max_by_measure is None:
+    raise ValueError("No min_max_by_measure found for merged data")
 flipped = json_content["settings"]["config"]["settings"]["config"].get("flip", True)
 results = json_content["results"]
 # results
@@ -93,6 +99,20 @@ def get_time_param_by_subject(
     return time_param_by_subject
 
 
+time_shift_by_subject = get_time_param_by_subject(
+    results["federated"]["estimated_time_shifts"],
+    subjects_by_node,
+    "estimated_time_shift",
+    time_scaling_factor=time_scaling_factor,
+)
+# time_shift_by_subject
+
+acceleration_factor_by_subject = get_time_param_by_subject(
+    results["federated"]["estimated_acceleration_factors"],
+    subjects_by_node,
+    "estimated_acceleration_factor",
+    time_scaling_factor=1,
+)
 time_shift_by_subject = get_time_param_by_subject(
     results["centralized"]["estimated_time_shifts"],
     subjects_by_node,

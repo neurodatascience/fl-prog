@@ -11,9 +11,8 @@ DIAGNOSIS_ORDER = ["CN", "SMC", "EMCI", "LMCI", "AD"]
 
 # colorblind-checked categorical palette (fixed order, never cycled)
 CATEGORICAL_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#4a3aa7", "#e87ba4"]
-DIAGNOSIS_COLORS = ["#2a78d6", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7"]
+DIAGNOSIS_PALETTE = "Set2"
 COLOR_OTHER = "#8a8a85"
-LINESTYLES = ["-", "--", ":"]
 
 
 def get_group_order(groups: Iterable) -> list[str]:
@@ -24,35 +23,32 @@ def get_group_order(groups: Iterable) -> list[str]:
     )
 
 
-def get_group_palette(group_order: list[str]) -> dict[str, str]:
+def get_group_palette(group_order: list[str]) -> dict[str, tuple]:
+    """Fixed color per known diagnosis; other labels take the remaining colors."""
+    colors = sns.color_palette(DIAGNOSIS_PALETTE)
+    other_colors = iter(colors[len(DIAGNOSIS_ORDER) :])
     return {
         group: (
-            DIAGNOSIS_COLORS[DIAGNOSIS_ORDER.index(group)]
+            colors[DIAGNOSIS_ORDER.index(group)]
             if group in DIAGNOSIS_ORDER
-            else COLOR_OTHER
+            else next(other_colors, COLOR_OTHER)
         )
         for group in group_order
     }
+
+
+def get_biomarker_palette(biomarker_order: list[str]) -> dict[str, tuple]:
+    """Seaborn's default palette, in biomarker order."""
+    return dict(zip(biomarker_order, sns.color_palette(n_colors=len(biomarker_order))))
 
 
 def get_categorical_palette(labels: list[str]) -> dict[str, str]:
     if len(labels) > len(CATEGORICAL_COLORS):
         raise ValueError(
             f"Too many categories for a categorical palette ({len(labels)} > "
-            f"{len(CATEGORICAL_COLORS)}), use get_composite_styles instead"
+            f"{len(CATEGORICAL_COLORS)})"
         )
     return dict(zip(labels, CATEGORICAL_COLORS))
-
-
-def get_composite_styles(labels: list[str]) -> dict[str, tuple[str, str]]:
-    """``(color, linestyle)`` per label, for more labels than palette colors."""
-    n_colors = len(CATEGORICAL_COLORS)
-    if len(labels) > n_colors * len(LINESTYLES):
-        raise ValueError(f"Too many categories for composite styles: {len(labels)}")
-    return {
-        label: (CATEGORICAL_COLORS[i % n_colors], LINESTYLES[i // n_colors])
-        for i, label in enumerate(labels)
-    }
 
 
 def save_fig(fig: sns.FacetGrid | sns.PairGrid | plt.Figure, fpath: Path, **kwargs):

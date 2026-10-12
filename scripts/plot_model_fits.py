@@ -13,8 +13,8 @@ from matplotlib.lines import Line2D
 from scipy.stats import pearsonr, spearmanr
 
 from fl_prog.plotting import (
+    get_biomarker_palette,
     get_categorical_palette,
-    get_composite_styles,
     get_group_order,
     get_group_palette,
     save_fig,
@@ -79,7 +79,7 @@ def _make_labels_unique(fitted_models: list[FittedModel]):
 def plot_group_trajectories_by_model(
     df_trajectory: pd.DataFrame, model_order: list[str], biomarker_order: list[str]
 ) -> plt.Figure:
-    styles = get_composite_styles(biomarker_order)
+    palette = get_biomarker_palette(biomarker_order)
     fig, axes = plt.subplots(
         ncols=len(model_order),
         figsize=(4 * len(model_order), 3.5),
@@ -90,12 +90,10 @@ def plot_group_trajectories_by_model(
         df_model = df_trajectory.query(f"{COL_MODEL} == @model")
         for biomarker in biomarker_order:
             df_biomarker = df_model.query(f"{COL_BIOMARKER} == @biomarker")
-            color, linestyle = styles[biomarker]
             ax.plot(
                 df_biomarker[COL_TIME_SHIFTED],
                 df_biomarker[COL_Y],
-                color=color,
-                linestyle=linestyle,
+                color=palette[biomarker],
                 linewidth=2,
                 label=biomarker,
             )
@@ -165,6 +163,7 @@ def plot_spaghetti(
         col_wrap=3,
         height=3,
         aspect=1.3,
+        sharey=False,
     )
     for biomarker, ax in grid.axes_dict.items():
         df_biomarker = df_long.query(f"{COL_BIOMARKER} == @biomarker").sort_values(

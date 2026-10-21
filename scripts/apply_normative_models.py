@@ -381,6 +381,7 @@ def _apply_model(
             f"None of the response variables in the model are in the dataframe: {pretrained_model.response_vars}"
         )
 
+    # NOTE: dropped rows will be replaced by NA in final dataframe
     df = df.dropna(
         subset=covariates + batch_effects + response_vars, axis="index", how="any"
     )
@@ -433,7 +434,7 @@ def _apply_model(
                 f"Duplicate harmonized columns across chunks: {sorted(overlapping)}"
             )
         seen_columns.update(df_harmonized.columns)
-        df_original.loc[df_harmonized.index, df_harmonized.columns] = df_harmonized
+        df_original[df_harmonized.columns] = df_harmonized
         harmonized_vars_model.extend(harmonized_vars_chunk)
 
     return df_original, harmonized_vars_model

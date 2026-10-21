@@ -38,6 +38,11 @@ def scale_adni_data(tag: str, dpath_data: Path, fpath_scaling_config: Path):
     config_old = json_data_old["settings"]["config"]
     settings["config"] = config_old
 
+    if json_data_old["need_scaling"] is False:
+        raise RuntimeError(
+            "Data has already been scaled. Make sure the correct tag has been provided."
+        )
+
     min_max_by_measure_map = {}  # scaling reference -> min max by measure
 
     node_id_map_new = {}

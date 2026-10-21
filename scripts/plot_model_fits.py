@@ -9,7 +9,9 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.collections import LineCollection
+from matplotlib.legend_handler import HandlerTuple
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from scipy.stats import pearsonr, spearmanr
 
 from fl_prog.plotting import (
@@ -42,6 +44,8 @@ from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, get_dpath_latest
 
 DNAME_FIGURES = "figures"
 SETUP_ORDER = [Setup.FEDERATED.value, Setup.CENTRALIZED.value]
+SETUP_LINESTYLES = {Setup.FEDERATED.value: "-", Setup.CENTRALIZED.value: "--"}
+SETUP_HATCHES = {Setup.FEDERATED.value: "", Setup.CENTRALIZED.value: "///"}
 
 LABEL_TIME_SHIFTED = "Disease time (months)"
 LABEL_TIME_SHIFT = "Time shift (months)"
@@ -109,6 +113,125 @@ def plot_group_trajectories_by_model(
         bbox_to_anchor=(1.0, 0.5),
         frameon=False,
     )
+    sns.despine(fig)
+    fig.tight_layout()
+    return fig
+
+
+def plot_group_trajectories_by_setup(
+    fitted_models: list[FittedModel],
+    biomarker_order: list[str],
+    group_order: list[str],
+    group_palette: dict[str, str],
+    title: str,
+    n_points: int = 500,
+) -> plt.Figure:
+    """Group trajectories (one line style per setup) and time shifts (one hatch
+    style per setup) for e.g. federated vs centralized."""
+    palette = get_biomarker_palette(biomarker_order)
+    t_min = min(m.df_trajectory[COL_TIME_SHIFTED].min() for m in fitted_models)
+    t_max = max(m.df_trajectory[COL_TIME_SHIFTED].max() for m in fitted_models)
+    t_grid = np.linspace(t_min, t_max, n_points)
+
+    fig, (ax_trajectory, ax_time_shift) = plt.subplots(
+        ncols=2, figsize=(10, 3.5), gridspec_kw={"width_ratios": [4.5, 5]}
+    )
+
+    for fitted_model in fitted_models:
+        df_model = fitted_model.get_df_trajectory(t_grid)
+        for biomarker in biomarker_order:
+            df_biomarker = df_model.query(f"{COL_BIOMARKER} == @biomarker")
+            ax_trajectory.plot(
+                df_biomarker[COL_TIME_SHIFTED],
+                df_biomarker[COL_Y],
+                color=palette[biomarker],
+                linestyle=SETUP_LINESTYLES[fitted_model.setup],
+                linewidth=2,
+                alpha=0.7,
+            )
+    ax_trajectory.set_xlim(t_min, t_max)
+    ax_trajectory.set_title("Group trajectories")
+    ax_trajectory.set_xlabel(LABEL_TIME_SHIFTED)
+    ax_trajectory.set_ylabel(LABEL_BIOMARKER)
+
+    # single legend with section headers, so that it is vertically centered
+    def _header():
+        return Line2D([], [], linestyle="none")
+
+    setups = [m.setup for m in fitted_models]
+    handles = (
+        [_header()]
+        + [
+            Line2D([], [], color=palette[biomarker], linewidth=2)
+            for biomarker in biomarker_order
+        ]
+        + [_header(), _header()]
+        + [
+            (
+                Line2D(
+                    [],
+                    [],
+                    color="black",
+                    linestyle=SETUP_LINESTYLES[setup],
+                    linewidth=2,
+                ),
+                Patch(
+                    facecolor="white",
+                    edgecolor="#3f3f3f",
+                    hatch=SETUP_HATCHES[setup],
+                ),
+            )
+            for setup in setups
+        ]
+    )
+    labels = (
+        ["Biomarker"]
+        + biomarker_order
+        + ["", "Setup"]
+        + [setup.capitalize() for setup in setups]
+    )
+    legend = fig.legend(
+        handles,
+        labels,
+        handler_map={tuple: HandlerTuple(ndivide=None, pad=0.6)},
+        handlelength=3,
+        loc="center left",
+        bbox_to_anchor=(1.0, 0.5),
+        frameon=False,
+    )
+    for text in legend.get_texts():
+        if text.get_text() in ("Biomarker", "Setup"):
+            text.set_fontweight("bold")
+
+    # time shifts: color by diagnosis group, hatch by setup
+    df_subject = pd.concat(
+        [m.df_subject.assign(setup=m.setup) for m in fitted_models],
+        ignore_index=True,
+    )
+    sns.boxplot(
+        data=df_subject,
+        x=COL_GROUP,
+        y=COL_TIME_SHIFT,
+        order=group_order,
+        hue="setup",
+        hue_order=setups,
+        fliersize=2,
+        legend=False,
+        ax=ax_time_shift,
+        gap=0.2,
+    )
+    for patch in ax_time_shift.patches:
+        # boxes are dodged left/right of each group's tick, in setup order
+        x_center = patch.get_path().vertices[:, 0].mean()
+        i_group = round(x_center)
+        i_setup = 0 if x_center < i_group else 1
+        patch.set_facecolor(group_palette[group_order[i_group]])
+        patch.set_hatch(SETUP_HATCHES[setups[i_setup]])
+    ax_time_shift.set_title("Time shifts")
+    ax_time_shift.set_xlabel("Diagnosis")
+    ax_time_shift.set_ylabel(LABEL_TIME_SHIFT)
+
+    # fig.suptitle(title)
     sns.despine(fig)
     fig.tight_layout()
     return fig
@@ -325,18 +448,18 @@ def plot_model_fits(
     dpath_figures = dpath_results_tag / DNAME_FIGURES
 
     fitted_models: list[FittedModel] = []
+    # results files with both federated and centralized setups
+    setup_comparisons: list[list[FittedModel]] = []
     for fpath_json_results, json_results in iter_result_files(dpath_results_tag):
         print(f"fpath_json_results: {fpath_json_results}")
         try:
-            fitted_models.extend(
-                get_fitted_models(
-                    fpath_json_results,
-                    json_results,
-                    tag,
-                    leaspy_algorithm_name=leaspy_algorithm_name,
-                    leaspy_seed=leaspy_seed,
-                    leaspy_n_jobs=leaspy_n_jobs,
-                )
+            fitted_models_file = get_fitted_models(
+                fpath_json_results,
+                json_results,
+                tag,
+                leaspy_algorithm_name=leaspy_algorithm_name,
+                leaspy_seed=leaspy_seed,
+                leaspy_n_jobs=leaspy_n_jobs,
             )
         except LeaspyIndividualParametersNotFoundError as exception:
             raise click.ClickException(
@@ -346,6 +469,14 @@ def plot_model_fits(
                 f"--leaspy-seed {leaspy_seed} --leaspy-n-jobs {leaspy_n_jobs} "
                 "first to personalize the Leaspy model."
             ) from exception
+        fitted_models.extend(fitted_models_file)
+        if set(SETUP_LINESTYLES) <= {m.setup for m in fitted_models_file}:
+            setup_comparisons.append(
+                sorted(
+                    (m for m in fitted_models_file if m.setup in SETUP_LINESTYLES),
+                    key=_sort_key,
+                )
+            )
     if not fitted_models:
         raise click.ClickException(f"No results files found in {dpath_results_tag}")
 
@@ -378,6 +509,19 @@ def plot_model_fits(
         ),
         "group_trajectories-by_biomarker",
     )
+    for fitted_models_file in setup_comparisons:
+        model_type = fitted_models_file[0].model_type
+        run_tag = fitted_models_file[0].run_tag
+        _save(
+            plot_group_trajectories_by_setup(
+                fitted_models_file,
+                biomarker_order,
+                group_order,
+                group_palette,
+                title=model_type,
+            ),
+            f"group_trajectories-by_setup-{_slugify(run_tag)}",
+        )
 
     # 2) spaghetti plots
     for fitted_model in fitted_models:

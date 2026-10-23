@@ -45,6 +45,8 @@ DEFAULT_PENALTY_TIME_SHIFTS = Penalty.L2
 DEFAULT_WITH_ACCELERATION = True
 DEFAULT_LAMBDA_ACCELERATION_FACTORS = 0.1
 DEFAULT_PENALTY_ACCELERATION_FACTORS = Penalty.L1
+DEFAULT_LAMBDA_K_VALUES = 0.01
+DEFAULT_PENALTY_K_VALUES = Penalty.L2
 DEFAULT_WITH_SCALING = False
 DEFAULT_AGGREGATOR_NAME = "fedavg"
 
@@ -97,10 +99,12 @@ def _get_model_args(
     node_id_map: dict[str, str],
     lambda_time_shifts: float = DEFAULT_LAMBDA_TIME_SHIFTS,
     lambda_acceleration_factors: float = DEFAULT_LAMBDA_ACCELERATION_FACTORS,
+    lambda_k_values: float = DEFAULT_LAMBDA_K_VALUES,
     estimated_time_shift_range: Iterable[float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
     with_acceleration: bool = DEFAULT_WITH_ACCELERATION,
     penalty_time_shifts: str = DEFAULT_PENALTY_TIME_SHIFTS,
     penalty_acceleration_factors: str = DEFAULT_PENALTY_ACCELERATION_FACTORS,
+    penalty_k_values: Penalty = DEFAULT_PENALTY_K_VALUES,
     with_scaling: bool = DEFAULT_WITH_SCALING,
 ):
     return {
@@ -118,6 +122,8 @@ def _get_model_args(
             "lambda_acceleration_factors": lambda_acceleration_factors,
             "penalty_acceleration_factors": penalty_acceleration_factors.value,
             "with_scaling": with_scaling,
+            "lambda_k_values": lambda_k_values,
+            "penalty_k_values": penalty_k_values.value,
         },
         "node_specific_args": {
             "n_participants": _get_n_participants_map(
@@ -288,6 +294,8 @@ def run_fedbiomed(
     penalty_acceleration_factors: Penalty = DEFAULT_PENALTY_ACCELERATION_FACTORS,
     estimated_time_shift_range: tuple[float, float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
     with_scaling: bool = DEFAULT_WITH_SCALING,
+    lambda_k_values: float = DEFAULT_LAMBDA_K_VALUES,
+    penalty_k_values: Penalty = DEFAULT_PENALTY_K_VALUES,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
     with_tensorboard: bool = False,
     save_training_replies: bool = False,
@@ -311,6 +319,7 @@ def run_fedbiomed(
             "accel" if with_acceleration else "no_accel",
             f"{penalty_acceleration_factors.value}",
             f"{lambda_acceleration_factors}",
+            f"k_{penalty_k_values.value}_{lambda_k_values}",
             "scaling" if with_scaling else "no_scaling",
             aggregator_name,
             f"{random_seed}" if random_seed is not None else "no_seed",
@@ -348,6 +357,8 @@ def run_fedbiomed(
             penalty_time_shifts=penalty_time_shifts,
             penalty_acceleration_factors=penalty_acceleration_factors,
             with_scaling=with_scaling,
+            lambda_k_values=lambda_k_values,
+            penalty_k_values=penalty_k_values,
         )
     except KeyError:
         raise RuntimeError(
@@ -502,6 +513,19 @@ def run_fedbiomed(
     "--with-scaling/--no-scaling",
     default=DEFAULT_WITH_SCALING,
     help="Whether to include scaling factors in the model",
+)
+@click.option(
+    "--lambda-k-values",
+    "lambda_k_values",
+    type=click.FloatRange(min=0),
+    default=DEFAULT_LAMBDA_K_VALUES,
+    help="Regularization strength for (log) k values",
+)
+@click.option(
+    "--penalty-k-values",
+    type=click.Choice(Penalty, case_sensitive=False),
+    default=DEFAULT_PENALTY_K_VALUES,
+    help="Penalty type for (log) k values",
 )
 @click.option(
     "--aggregator",

@@ -59,8 +59,10 @@ Run the following command, passing the three simulated files' paths as CLI argum
 
 ```shell
 ./scripts/get_adni_data.py --tag adni_iid --iid
+./scripts/get_adni_data.py --tag adni_harmonized_iid --iid --idps /home/bic/mwang/projects/fl-prog/data/_harmonized_data/ADNI_freesurfer7p1p1-forSantiago.csv-10-CN-0.5-3791-HBR_Sb_ct_DK_lifespan_79K_100sites-HBR_Sb_sa_lifespan_DK_46K_59sites-HBR_Sb_sc_lifespan_79K_100sites/harmonized.csv
 ./scripts/get_adni_data.py --tag adni_noniid --non-iid
 ./scripts/get_adni_data.py --tag adni_noniid_diag --non-iid --non-iid-strategy diagnosis
+./scripts/get_adni_data.py --tag adni_harmonized_noniid_diag --non-iid --non-iid-strategy diagnosis --idps /home/bic/mwang/projects/fl-prog/data/_harmonized_data/ADNI_freesurfer7p1p1-forSantiago.csv-10-CN-0.5-3791-HBR_Sb_ct_DK_lifespan_79K_100sites-HBR_Sb_sa_lifespan_DK_46K_59sites-HBR_Sb_sc_lifespan_79K_100sites/harmonized.csv
 ```
 
 ### Split into train and test sets
@@ -68,8 +70,10 @@ Run the following command, passing the three simulated files' paths as CLI argum
 This will create a new tag, e.g. `adni_iid_split4`
 
 ```shell
+./scripts/split_train_test.py --min-timepoints 4 --tag adni_harmonized_iid
 ./scripts/split_train_test.py --min-timepoints 4 --tag adni_iid
 ./scripts/split_train_test.py --min-timepoints 4 --tag adni_noniid
+./scripts/split_train_test.py --min-timepoints 4 --tag adni_harmonized_noniid_diag
 ```
 
 ### Optional: Regress chronological age out from biomarkers
@@ -97,6 +101,7 @@ with --tag adni_\<iid / non_iid\>\_age_adjusted\_\<minmax / NOTHING\>
 ./scripts/merge_data.py --tag simulated_adni_timeshift
 
 ./scripts/merge_data.py --tag adni_iid_split4
+./scripts/merge_data.py --tag adni_harmonized_iid_split4
 ```
 
 ### Scale data
@@ -104,7 +109,7 @@ with --tag adni_\<iid / non_iid\>\_age_adjusted\_\<minmax / NOTHING\>
 Respecting train/test separation, if any
 
 ```shell
-./scripts/scale_adni_data.py --tag adni_iid_split4
+./scripts/scale_adni_data.py --tag adni_harmonized_iid_split4
 ```
 
 
@@ -138,6 +143,7 @@ If needed, use `--wipe` to clear existing datasets from each node.
 ./scripts/add_datasets_to_nodes.py --tag adni_iid
 ./scripts/add_datasets_to_nodes.py --tag adni_noniid
 ./scripts/add_datasets_to_nodes.py --tag adni_noniid_diag
+./scripts/add_datasets_to_nodes.py --tag adni_harmonized_iid_split4_scaled_CN50_min
 ```
 
 ### Start the nodes in separate processes

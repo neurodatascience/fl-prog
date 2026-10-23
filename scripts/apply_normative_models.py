@@ -44,7 +44,7 @@ COL_SITE_ADNIMERGE = "SITE"
 COL_ROW_ID = "row_id"
 COL_BATCH_ID = "batch_id"
 
-COL_HARMONIZED_PCNTOOLKIT = "Y_harmonized"
+COL_Z_SCORE_PCNTOOLKIT = "Z"
 COL_ROW_ID_PCNTOOLKIT = "subject_ids"
 
 SEX_MAP_PER_MODEL = {
@@ -323,18 +323,18 @@ def _transfer_chunk(
 ) -> tuple[pd.DataFrame, list[str]]:
     pretrained_model = _get_pretrained_model(model_name, dpath_models)
     new_model = pretrained_model.transfer(data_adaptation, save_dir=str(dpath_chunk))
-    data_harmonized = new_model.harmonize(data_to_harmonize)
+    data_z_scores = new_model.compute_zscores(data_to_harmonize)
 
-    df_harmonized = data_harmonized.to_dataframe()[
-        [COL_HARMONIZED_PCNTOOLKIT, COL_ROW_ID_PCNTOOLKIT]
+    df_z_scores = data_z_scores.to_dataframe()[
+        [COL_Z_SCORE_PCNTOOLKIT, COL_ROW_ID_PCNTOOLKIT]
     ]
 
-    df_harmonized.columns = df_harmonized.columns.droplevel(0)
-    df_harmonized = df_harmonized.rename(columns=col_map)
-    df_harmonized = df_harmonized.rename(columns={COL_ROW_ID_PCNTOOLKIT: COL_ROW_ID})
-    df_harmonized = df_harmonized.set_index(COL_ROW_ID)
+    df_z_scores.columns = df_z_scores.columns.droplevel(0)
+    df_z_scores = df_z_scores.rename(columns=col_map)
+    df_z_scores = df_z_scores.rename(columns={COL_ROW_ID_PCNTOOLKIT: COL_ROW_ID})
+    df_z_scores = df_z_scores.set_index(COL_ROW_ID)
 
-    return df_harmonized, list(new_model.response_vars)
+    return df_z_scores, list(new_model.response_vars)
 
 
 def _apply_model(
@@ -381,6 +381,7 @@ def _apply_model(
             f"None of the response variables in the model are in the dataframe: {pretrained_model.response_vars}"
         )
 
+    # NOTE: dropped rows will be replaced by NA in final dataframe
     df = df.dropna(
         subset=covariates + batch_effects + response_vars, axis="index", how="any"
     )
@@ -433,7 +434,7 @@ def _apply_model(
                 f"Duplicate harmonized columns across chunks: {sorted(overlapping)}"
             )
         seen_columns.update(df_harmonized.columns)
-        df_original.loc[df_harmonized.index, df_harmonized.columns] = df_harmonized
+        df_original[df_harmonized.columns] = df_harmonized
         harmonized_vars_model.extend(harmonized_vars_chunk)
 
     return df_original, harmonized_vars_model
@@ -605,14 +606,7 @@ def apply_normative_models(
     type=int,
     default=DEFAULT_N_JOBS,
     show_default=True,
-    help="Number of response-variable chunks to process in parallel. "
-    "Each chunk runs in its own process, so this also bounds how many "
-    "JIT compilations accumulate per process. Note that 1 reproduces the "
-    "original single-process behaviour and can exhaust address space when "
-    "fitting all models in one invocation. Each worker also needs roughly 100 "
-    "OS threads (nutpie starts a Tokio runtime sized by the core count), so "
-    "this must stay low enough that n_jobs * 100 fits within the per-user "
-    "thread limit.",
+    help="Number of response-variable chunks to process in parallel.",
 )
 @click.option(
     "--overwrite",

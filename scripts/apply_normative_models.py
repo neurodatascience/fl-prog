@@ -40,6 +40,7 @@ COL_GROUP_ADNIMERGE = "DX_bl"
 COL_AGE_ADNIMERGE = "AGE"
 COL_SEX_ADNIMERGE = "PTGENDER"
 COL_SITE_ADNIMERGE = "SITE"
+VISITS_BASELINE = ("BL",)
 
 COL_ROW_ID = "row_id"
 COL_BATCH_ID = "batch_id"
@@ -174,6 +175,16 @@ def _get_merged_df(
     )
     df_merged = df_merged.reset_index(drop=False)
     df_merged = df_merged.set_index(COL_ROW_ID)
+
+    # compute age at visit
+    visits = df_merged[col_session_original]
+    months = visits.str.extract(r"^M(\d+)$", expand=False).astype(float)
+    months = months.mask(visits.isin(VISITS_BASELINE), 0.0)
+    if months.isna().any():
+        raise KnownError(
+            f"Could not get months from visit IDs: {sorted(visits[months.isna()].unique())}"
+        )
+    df_merged[COL_AGE_ADNIMERGE] = df_merged[COL_AGE_ADNIMERGE] + months / 12
 
     # TODO (maybe): include age in stratification? How?
     # How? Within each sex/site combination, create age bins

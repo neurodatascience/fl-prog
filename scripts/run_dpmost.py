@@ -97,7 +97,7 @@ def run_dpmost(
     model_args = {
         "n_clusters": 1,
         "verbose": True,
-        "do_normalisation": False,
+        "do_normalisation": True,
         "time_shift_eval": True,
         "noise_std_eval": True,
         "theta_eval": True,
@@ -108,14 +108,17 @@ def run_dpmost(
     optimize_args = {
         "n_outer_iterations": n_outer_iter,
         "n_final_iterations": 50,
-        "n_inner_iterations_time_shift": 30,
-        "n_inner_iterations_theta": 30,
-        "n_inner_iterations_noise": 30,
+        "n_inner_iterations_time_shift": 50,
+        "n_inner_iterations_theta": 50,
+        "n_inner_iterations_noise": 50,
         "lr_theta": 1e-1,
         "lr_noise": 1e-1,
-        "lr_time_shift": 1e-2,
+        "lr_time_shift": 1e-2,  # decrease
         "stopping_criteria": True,
         "threshold": 1e-3,
+        # regularize time shifts
+        # - lambda_reg_noise
+        # - lambda_reg_xi -> memberships
     }
 
     json_data = {"settings": locals()}

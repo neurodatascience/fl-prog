@@ -113,12 +113,9 @@ def run_dpmost(
         "n_inner_iterations_noise": 50,
         "lr_theta": 1e-1,
         "lr_noise": 1e-1,
-        "lr_time_shift": 1e-2,  # decrease
+        "lr_time_shift": 1e-2,
         "stopping_criteria": True,
         "threshold": 1e-3,
-        # regularize time shifts
-        # - lambda_reg_noise
-        # - lambda_reg_xi -> memberships
     }
 
     json_data = {"settings": locals()}

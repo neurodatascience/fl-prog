@@ -14,6 +14,7 @@ from fl_prog.results import (
     DEFAULT_LEASPY_ALGORITHM_NAME,
     DEFAULT_LEASPY_N_JOBS,
     DEFAULT_LEASPY_SEED,
+    MODEL_DPMOST,
     MODEL_LEASPY,
     LeaspyIndividualParametersNotFoundError,
     PredictFn,
@@ -27,6 +28,7 @@ from fl_prog.results import (
     iter_result_files,
     load_df_data,
     load_df_data_leaspy,
+    load_dpmost_normalisation,
     load_json_data,
     load_leaspy_individual_parameters,
     load_leaspy_model,
@@ -50,8 +52,9 @@ def get_metrics_single_run(
     json_results: dict,
     tag: str,
     predict_fn: PredictFn,
+    skip_recovery: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    print(f"\tUsing predict_fn: {predict_fn.__name__}")
+    print(f"\tUsing predict_fn: {getattr(predict_fn, 'func', predict_fn).__name__}")
 
     dpath_data = get_dpath_data(json_results)
     print(f"\tdpath_data: {dpath_data}")
@@ -60,9 +63,15 @@ def get_metrics_single_run(
 
     cols = get_cols(json_data)
     subjects_by_node = json_data["subjects_by_node"]
-    try:
+    if skip_recovery:
+        true_params = None
+        click.secho(
+            "\tEstimated parameters are in normalized units. Skipping recovery metrics.",
+            fg="yellow",
+        )
+    elif "params" in json_data:
         true_params = json_data["params"]
-    except KeyError:
+    else:
         true_params = None
         click.secho(
             f"\tTrue parameters not found in {json_results['settings']['fpath_config']}."
@@ -321,8 +330,20 @@ def get_metrics(
             df_recovery = pd.DataFrame()
             suffix = f"-{leaspy_algorithm_name}_{leaspy_seed}"
         else:
+            normalisation = None
+            if model_type == MODEL_DPMOST:
+                normalisation = load_dpmost_normalisation(
+                    fpath_json_results,
+                    json_results,
+                    get_cols(load_json_data(json_results))["cols_biomarker"],
+                )
+                if normalisation is not None:
+                    print("\tApplying DPMoSt data normalization")
             df_metrics, df_recovery = get_metrics_single_run(
-                json_results, tag, predict_fn=get_predict_fn(model_type)
+                json_results,
+                tag,
+                predict_fn=get_predict_fn(model_type, normalisation=normalisation),
+                skip_recovery=normalisation is not None,
             )
             suffix = ""
 

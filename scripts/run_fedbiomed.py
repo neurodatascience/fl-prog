@@ -312,13 +312,13 @@ def run_fedbiomed(
             f"{n_rounds}",
             f"{n_updates}",
             f"{batch_size}",
-            f"{learning_rate}",
-            f"{estimated_time_shift_range[0]}_{estimated_time_shift_range[1]}",
-            f"{penalty_time_shifts.value}",
-            f"{lambda_time_shifts}",
-            "accel" if with_acceleration else "no_accel",
-            f"{penalty_acceleration_factors.value}",
-            f"{lambda_acceleration_factors}",
+            f"lr{learning_rate}",
+            f"timeshifts_{estimated_time_shift_range[0]}_{estimated_time_shift_range[1]}_{penalty_time_shifts.value}_{lambda_time_shifts}",
+            (
+                f"accel_{penalty_acceleration_factors.value}_{lambda_acceleration_factors}"
+                if with_acceleration
+                else "no_accel"
+            ),
             f"k_{penalty_k_values.value}_{lambda_k_values}",
             "scaling" if with_scaling else "no_scaling",
             aggregator_name,

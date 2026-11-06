@@ -112,6 +112,18 @@ def get_run_tag(fpath_json_results: Path) -> str:
     return fpath_json_results.name.removesuffix(SUFFIX_ESTIMATED_PARAMS)
 
 
+def get_short_labels(run_tags: list[str]) -> dict[str, str]:
+    """Only keep the run tag fields that differ between runs."""
+    fields = [run_tag.split("-") for run_tag in run_tags]
+    if len({len(f) for f in fields}) != 1:
+        return {run_tag: run_tag for run_tag in run_tags}
+    i_differ = [i for i, values in enumerate(zip(*fields)) if len(set(values)) > 1]
+    return {
+        run_tag: "-".join(f[i] for i in i_differ) or run_tag
+        for run_tag, f in zip(run_tags, fields)
+    }
+
+
 def iter_result_files(dpath_results_tag: Path) -> Iterator[tuple[Path, dict]]:
     """Yield ``(fpath, json_results)`` for each results file, sorted by name."""
     for fpath_json_results in sorted(

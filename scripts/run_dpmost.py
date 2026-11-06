@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -37,6 +38,15 @@ def _results_exist(fpath_out_json: Path, fpath_model_out: Path) -> bool:
 
     json_results = load_json(fpath_out_json)
     return "results" in json_results
+
+
+def _get_normalisation_ranges() -> dict[str, tuple[float, float]]:
+    # DPMoSt.__init__ calls normalise_data_and_time with its default arguments
+    params = inspect.signature(DPMoSt.normalise_data_and_time).parameters
+    return {
+        "data": (params["new_min_data"].default, params["new_max_data"].default),
+        "time": (params["new_min_time"].default, params["new_max_time"].default),
+    }
 
 
 def _get_results(model: DPMoSt, fpath_model: Path) -> dict:
@@ -97,7 +107,7 @@ def run_dpmost(
     model_args = {
         "n_clusters": 1,
         "verbose": True,
-        "do_normalisation": False,
+        "do_normalisation": True,
         "time_shift_eval": True,
         "noise_std_eval": True,
         "theta_eval": True,
@@ -108,15 +118,18 @@ def run_dpmost(
     optimize_args = {
         "n_outer_iterations": n_outer_iter,
         "n_final_iterations": 50,
-        "n_inner_iterations_time_shift": 30,
-        "n_inner_iterations_theta": 30,
-        "n_inner_iterations_noise": 30,
+        "n_inner_iterations_time_shift": 50,
+        "n_inner_iterations_theta": 50,
+        "n_inner_iterations_noise": 50,
         "lr_theta": 1e-1,
         "lr_noise": 1e-1,
         "lr_time_shift": 1e-2,
         "stopping_criteria": True,
         "threshold": 1e-3,
     }
+
+    # target ranges of the data normalisation (needed to un-normalise predictions)
+    normalisation_ranges = _get_normalisation_ranges()
 
     json_data = {"settings": locals()}
 

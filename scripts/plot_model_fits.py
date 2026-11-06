@@ -37,6 +37,7 @@ from fl_prog.results import (
     FittedModel,
     LeaspyIndividualParametersNotFoundError,
     get_fitted_models,
+    get_short_labels,
     iter_result_files,
 )
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, Setup
@@ -66,18 +67,32 @@ def _sort_key(fitted_model: FittedModel) -> tuple:
 
 
 def _make_labels_unique(fitted_models: list[FittedModel]):
-    """Disambiguate models with the same label (e.g. runs with different seeds)."""
-    labels = [fitted_model.label for fitted_model in fitted_models]
+    """Disambiguate models with the same label (e.g. runs with different seeds).
+
+    Only the run tag fields that differ between the duplicates are appended.
+    """
+    run_tags_by_label: dict[str, list[str]] = {}
     for fitted_model in fitted_models:
-        if labels.count(fitted_model.label) > 1:
-            label = f"{fitted_model.label} [{fitted_model.run_tag}]"
-            fitted_model.label = label
-            for df in (
-                fitted_model.df_subject,
-                fitted_model.df_long,
-                fitted_model.df_trajectory,
-            ):
-                df[COL_MODEL] = label
+        run_tags_by_label.setdefault(fitted_model.label, []).append(
+            fitted_model.run_tag
+        )
+    short_labels_by_label = {
+        label: get_short_labels(run_tags)
+        for label, run_tags in run_tags_by_label.items()
+        if len(run_tags) > 1
+    }
+    for fitted_model in fitted_models:
+        if fitted_model.label not in short_labels_by_label:
+            continue
+        short_label = short_labels_by_label[fitted_model.label][fitted_model.run_tag]
+        label = f"{fitted_model.label} [{short_label}]"
+        fitted_model.label = label
+        for df in (
+            fitted_model.df_subject,
+            fitted_model.df_long,
+            fitted_model.df_trajectory,
+        ):
+            df[COL_MODEL] = label
 
 
 def plot_group_trajectories_by_model(

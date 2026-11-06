@@ -11,6 +11,7 @@ DIAGNOSIS_ORDER = ["CN", "SMC", "EMCI", "LMCI", "AD"]
 
 # colorblind-checked categorical palette (fixed order, never cycled)
 CATEGORICAL_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#4a3aa7", "#e87ba4"]
+CATEGORICAL_PALETTE_FALLBACK = "husl"  # for more categories than CATEGORICAL_COLORS
 DIAGNOSIS_PALETTE = "Set2"
 COLOR_OTHER = "#8a8a85"
 
@@ -42,13 +43,16 @@ def get_biomarker_palette(biomarker_order: list[str]) -> dict[str, tuple]:
     return dict(zip(biomarker_order, sns.color_palette(n_colors=len(biomarker_order))))
 
 
-def get_categorical_palette(labels: list[str]) -> dict[str, str]:
+def get_categorical_palette(labels: list[str]) -> dict[str, str | tuple]:
+    """Colorblind-checked colors if there are few enough labels.
+
+    Otherwise, evenly spaced hues (one distinct color per label).
+    """
     if len(labels) > len(CATEGORICAL_COLORS):
-        raise ValueError(
-            f"Too many categories for a categorical palette ({len(labels)} > "
-            f"{len(CATEGORICAL_COLORS)})"
-        )
-    return dict(zip(labels, CATEGORICAL_COLORS))
+        colors = sns.color_palette(CATEGORICAL_PALETTE_FALLBACK, n_colors=len(labels))
+    else:
+        colors = CATEGORICAL_COLORS
+    return dict(zip(labels, colors))
 
 
 def save_fig(fig: sns.FacetGrid | sns.PairGrid | plt.Figure, fpath: Path, **kwargs):

@@ -1,5 +1,6 @@
 """Load model fitting results and apply fitted parameters to subject data."""
 
+import pickle
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
@@ -55,6 +56,9 @@ DEFAULT_LEASPY_SEED = 0
 DEFAULT_LEASPY_N_JOBS = 1
 
 DPATH_DPMOST = DPATH_PROJECT / "vendored" / "dpmost" / "models" / "dpmost"
+
+# key in DPMoSt results JSON settings for the target ranges of the normalisation
+KEY_DPMOST_NORMALISATION_RANGES = "normalisation_ranges"
 
 # column names for fitted data tables
 COL_MODEL = "model"
@@ -305,17 +309,113 @@ def predict_fl_prog(
     return model.forward(t, subject_ids, params=params).detach().numpy()
 
 
-def predict_dpmost(
-    params: ModelParams, t: np.ndarray, subject_ids: np.ndarray
-) -> np.ndarray:
-    """Predict individual datapoints for DPMoSt.
-
-    Returns predictions of shape (n_entries, n_features)
-    """
+def _add_dpmost_to_path():
     if str(DPATH_DPMOST) not in sys.path:
         sys.path.append(str(DPATH_DPMOST))
 
+
+@dataclass
+class DPMoStNormalisation:
+    """Min/max values used by DPMoSt to normalise the data and time."""
+
+    y_min: np.ndarray
+    y_max: np.ndarray
+    t_min: float | None
+    t_max: float | None
+    range_data: tuple[float, float]
+    range_time: tuple[float, float]
+
+    def normalise_time(self, t: np.ndarray) -> np.ndarray:
+        # DPMoSt does not normalise time if it has zero variance
+        if self.t_min is None or self.t_max is None:
+            return t
+        new_min, new_max = self.range_time
+        return (t - self.t_min) / (self.t_max - self.t_min) * (
+            new_max - new_min
+        ) + new_min
+
+    def unnormalise_time_shifts(self, time_shifts: np.ndarray) -> np.ndarray:
+        """Convert time shifts from normalised to original time units."""
+        if self.t_min is None or self.t_max is None:
+            return time_shifts
+        new_min, new_max = self.range_time
+        return time_shifts * (self.t_max - self.t_min) / (new_max - new_min)
+
+    def unnormalise_y(self, y: np.ndarray) -> np.ndarray:
+        new_min, new_max = self.range_data
+        return (y - new_min) / (new_max - new_min) * (
+            self.y_max - self.y_min
+        ) + self.y_min
+
+
+def load_dpmost_normalisation(
+    fpath_json_results: Path, json_results: dict, cols_biomarker: list[str]
+) -> DPMoStNormalisation | None:
+    """Get the normalisation applied by DPMoSt.
+
+    Min/max values come from the fitted model pickle and target ranges from the
+    results JSON settings. Returns None if the model was fit without
+    normalisation.
+    """
+    fpath_model = fpath_json_results.with_name(
+        f"{get_run_tag(fpath_json_results)}-model.pkl"
+    )
+    if not fpath_model.exists():
+        if json_results["settings"]["model_args"].get("do_normalisation", False):
+            raise FileNotFoundError(
+                f"DPMoSt model was fit with normalisation but {fpath_model} "
+                "does not exist"
+            )
+        return None
+
+    _add_dpmost_to_path()
+    with fpath_model.open("rb") as file_model:
+        model = pickle.load(file_model)
+
+    if not model.do_normalisation:
+        return None
+
+    def _to_float(value) -> float | None:
+        return None if value is None else float(value)
+
+    try:
+        ranges = json_results["settings"][KEY_DPMOST_NORMALISATION_RANGES]
+    except KeyError:
+        raise KeyError(
+            f"DPMoSt model was fit with normalisation but the results file for "
+            f"{fpath_model} does not record {KEY_DPMOST_NORMALISATION_RANGES!r}"
+        )
+    data_min = model.data_normalisation_min
+    data_max = model.data_normalisation_max
+    return DPMoStNormalisation(
+        y_min=np.array([_to_float(data_min[col]) for col in cols_biomarker]),
+        y_max=np.array([_to_float(data_max[col]) for col in cols_biomarker]),
+        t_min=_to_float(data_min["time"]),
+        t_max=_to_float(data_max["time"]),
+        range_data=tuple(ranges["data"]),
+        range_time=tuple(ranges["time"]),
+    )
+
+
+def predict_dpmost(
+    params: ModelParams,
+    t: np.ndarray,
+    subject_ids: np.ndarray,
+    normalisation: DPMoStNormalisation | None = None,
+) -> np.ndarray:
+    """Predict individual datapoints for DPMoSt.
+
+    If ``normalisation`` is given, ``t`` is normalised before prediction and
+    the predictions are converted back to the original data units.
+
+    Returns predictions of shape (n_entries, n_features)
+    """
+    _add_dpmost_to_path()
+
     from utility import sigmoid_eval
+
+    if normalisation is not None:
+        t = normalisation.normalise_time(t)
 
     t = torch.tensor(t + params.time_shifts[subject_ids], dtype=torch.float).reshape(
         -1, 1
@@ -331,12 +431,19 @@ def predict_dpmost(
         dtype=torch.float,
     )
 
-    return sigmoid_eval(t, theta).detach().numpy()
+    y_pred = sigmoid_eval(t, theta).detach().numpy()
+    if normalisation is not None:
+        y_pred = normalisation.unnormalise_y(y_pred)
+    return y_pred
 
 
-def get_predict_fn(model_type: str) -> PredictFn:
+def get_predict_fn(
+    model_type: str, normalisation: DPMoStNormalisation | None = None
+) -> PredictFn:
     match model_type:
         case "dpmost":
+            if normalisation is not None:
+                return partial(predict_dpmost, normalisation=normalisation)
             return predict_dpmost
         case "fedbiomed":
             return predict_fl_prog
@@ -344,11 +451,27 @@ def get_predict_fn(model_type: str) -> PredictFn:
             raise ValueError(f"No predict function for model type {model_type!r}")
 
 
-def get_shifted_time(
-    params: ModelParams, t: np.ndarray, subject_ids: np.ndarray, model_type: str
+def get_time_shifts(
+    params: ModelParams, normalisation: DPMoStNormalisation | None = None
 ) -> np.ndarray:
-    """Reparametrized (disease) time of each entry, matching the predict functions."""
-    shifts = params.time_shifts[subject_ids]
+    """Per-subject time shifts in the same time units as the data."""
+    if normalisation is None:
+        return params.time_shifts
+    return normalisation.unnormalise_time_shifts(params.time_shifts)
+
+
+def get_shifted_time(
+    params: ModelParams,
+    t: np.ndarray,
+    subject_ids: np.ndarray,
+    model_type: str,
+    normalisation: DPMoStNormalisation | None = None,
+) -> np.ndarray:
+    """Reparametrized (disease) time of each entry, matching the predict functions.
+
+    Returned in the same time units as ``t``.
+    """
+    shifts = get_time_shifts(params, normalisation)[subject_ids]
     if model_type == MODEL_DPMOST:
         # DPMoSt has no acceleration factors
         return t + shifts
@@ -709,7 +832,12 @@ def get_fitted_models(
             )
         return fitted_models
 
-    predict_fn = get_predict_fn(model_type)
+    normalisation = None
+    if model_type == MODEL_DPMOST:
+        normalisation = load_dpmost_normalisation(
+            fpath_json_results, json_results, cols["cols_biomarker"]
+        )
+    predict_fn = get_predict_fn(model_type, normalisation=normalisation)
     subjects_by_node = json_data["subjects_by_node"]
     params_by_setup = estimated_params_by_setup(json_results, subjects_by_node)
     subject_order_by_setup = subjects_by_setup(json_results, subjects_by_node)
@@ -737,7 +865,7 @@ def get_fitted_models(
 
         df_shift_acc = pd.DataFrame(
             {
-                COL_TIME_SHIFT: params.time_shifts,
+                COL_TIME_SHIFT: get_time_shifts(params, normalisation),
                 COL_ACCELERATION_FACTOR: (
                     np.ones_like(params.acceleration_factors)
                     if model_type == MODEL_DPMOST
@@ -746,7 +874,9 @@ def get_fitted_models(
             },
             index=pd.Index(subject_order),
         )
-        t_shifted = get_shifted_time(params, t_all, subject_ids_all, model_type)
+        t_shifted = get_shifted_time(
+            params, t_all, subject_ids_all, model_type, normalisation=normalisation
+        )
         fitted_models.append(
             _build_fitted_model(
                 label=get_model_label(model_type, setup, n_setups),

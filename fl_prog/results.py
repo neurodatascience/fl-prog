@@ -60,11 +60,6 @@ DPATH_DPMOST = DPATH_PROJECT / "vendored" / "dpmost" / "models" / "dpmost"
 # key in DPMoSt results JSON settings for the target ranges of the normalisation
 KEY_DPMOST_NORMALISATION_RANGES = "normalisation_ranges"
 
-# fallback target ranges for results files that do not record them
-# (default arguments of DPMoSt.normalise_data_and_time)
-DPMOST_NORMALISED_RANGE_DATA = (0.0, 3.0)
-DPMOST_NORMALISED_RANGE_TIME = (0.0, 20.0)
-
 # column names for fitted data tables
 COL_MODEL = "model"
 COL_SUBJECT = "subject"
@@ -327,8 +322,8 @@ class DPMoStNormalisation:
     y_max: np.ndarray
     t_min: float | None
     t_max: float | None
-    range_data: tuple[float, float] = DPMOST_NORMALISED_RANGE_DATA
-    range_time: tuple[float, float] = DPMOST_NORMALISED_RANGE_TIME
+    range_data: tuple[float, float]
+    range_time: tuple[float, float]
 
     def normalise_time(self, t: np.ndarray) -> np.ndarray:
         # DPMoSt does not normalise time if it has zero variance
@@ -376,7 +371,13 @@ def load_dpmost_normalisation(
     def _to_float(value) -> float | None:
         return None if value is None else float(value)
 
-    ranges = json_results["settings"].get(KEY_DPMOST_NORMALISATION_RANGES, {})
+    try:
+        ranges = json_results["settings"][KEY_DPMOST_NORMALISATION_RANGES]
+    except KeyError:
+        raise KeyError(
+            f"DPMoSt model was fit with normalisation but the results file for "
+            f"{fpath_model} does not record {KEY_DPMOST_NORMALISATION_RANGES!r}"
+        )
     data_min = model.data_normalisation_min
     data_max = model.data_normalisation_max
     return DPMoStNormalisation(
@@ -384,8 +385,8 @@ def load_dpmost_normalisation(
         y_max=np.array([_to_float(data_max[col]) for col in cols_biomarker]),
         t_min=_to_float(data_min["time"]),
         t_max=_to_float(data_max["time"]),
-        range_data=tuple(ranges.get("data", DPMOST_NORMALISED_RANGE_DATA)),
-        range_time=tuple(ranges.get("time", DPMOST_NORMALISED_RANGE_TIME)),
+        range_data=tuple(ranges["data"]),
+        range_time=tuple(ranges["time"]),
     )
 
 

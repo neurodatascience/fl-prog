@@ -57,7 +57,11 @@ DEFAULT_LEASPY_N_JOBS = 1
 
 DPATH_DPMOST = DPATH_PROJECT / "vendored" / "dpmost" / "models" / "dpmost"
 
-# target ranges used by DPMoSt (default arguments, not stored in the fitted model)
+# key in DPMoSt results JSON settings for the target ranges of the normalisation
+KEY_DPMOST_NORMALISATION_RANGES = "normalisation_ranges"
+
+# fallback target ranges for results files that do not record them
+# (default arguments of DPMoSt.normalise_data_and_time)
 DPMOST_NORMALISED_RANGE_DATA = (0.0, 3.0)
 DPMOST_NORMALISED_RANGE_TIME = (0.0, 20.0)
 
@@ -323,18 +327,20 @@ class DPMoStNormalisation:
     y_max: np.ndarray
     t_min: float | None
     t_max: float | None
+    range_data: tuple[float, float] = DPMOST_NORMALISED_RANGE_DATA
+    range_time: tuple[float, float] = DPMOST_NORMALISED_RANGE_TIME
 
     def normalise_time(self, t: np.ndarray) -> np.ndarray:
         # DPMoSt does not normalise time if it has zero variance
         if self.t_min is None or self.t_max is None:
             return t
-        new_min, new_max = DPMOST_NORMALISED_RANGE_TIME
+        new_min, new_max = self.range_time
         return (t - self.t_min) / (self.t_max - self.t_min) * (
             new_max - new_min
         ) + new_min
 
     def unnormalise_y(self, y: np.ndarray) -> np.ndarray:
-        new_min, new_max = DPMOST_NORMALISED_RANGE_DATA
+        new_min, new_max = self.range_data
         return (y - new_min) / (new_max - new_min) * (
             self.y_max - self.y_min
         ) + self.y_min
@@ -343,9 +349,11 @@ class DPMoStNormalisation:
 def load_dpmost_normalisation(
     fpath_json_results: Path, json_results: dict, cols_biomarker: list[str]
 ) -> DPMoStNormalisation | None:
-    """Get the normalisation applied by DPMoSt from the fitted model pickle.
+    """Get the normalisation applied by DPMoSt.
 
-    Returns None if the model was fit without normalisation.
+    Min/max values come from the fitted model pickle and target ranges from the
+    results JSON settings. Returns None if the model was fit without
+    normalisation.
     """
     fpath_model = fpath_json_results.with_name(
         f"{get_run_tag(fpath_json_results)}-model.pkl"
@@ -368,6 +376,7 @@ def load_dpmost_normalisation(
     def _to_float(value) -> float | None:
         return None if value is None else float(value)
 
+    ranges = json_results["settings"].get(KEY_DPMOST_NORMALISATION_RANGES, {})
     data_min = model.data_normalisation_min
     data_max = model.data_normalisation_max
     return DPMoStNormalisation(
@@ -375,6 +384,8 @@ def load_dpmost_normalisation(
         y_max=np.array([_to_float(data_max[col]) for col in cols_biomarker]),
         t_min=_to_float(data_min["time"]),
         t_max=_to_float(data_max["time"]),
+        range_data=tuple(ranges.get("data", DPMOST_NORMALISED_RANGE_DATA)),
+        range_time=tuple(ranges.get("time", DPMOST_NORMALISED_RANGE_TIME)),
     )
 
 

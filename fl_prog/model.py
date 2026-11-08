@@ -1,6 +1,6 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Self
 
 import numpy as np
 import torch
@@ -39,6 +39,14 @@ class LogisticRegressionModelWithShift(nn.Module):
         "scaling_factors": (Positive(),),
         "acceleration_factors": (Positive(),),
     }
+
+    # fitted at the population level, frozen during personalization
+    population_param_names: ClassVar = (
+        "k_values",
+        "x0_values",
+        "sigma",
+        "scaling_factors",
+    )
 
     sigmoid_levels = torch.tensor([0.05, 0.95])  # for computing initial k_values
     x0_init_std_fraction = (
@@ -223,8 +231,8 @@ class LogisticRegressionModelWithShift(nn.Module):
         output = output * scaling_factors
         return output
 
-    def get_loss(self, predicted: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:
-
+    def _get_nll(self, predicted: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:
+        """Negative Gaussian log-likelihood of each entry (summed over features)."""
         sigma_sq = self.sigma**2
 
         # trick to handle missing data (NAs)
@@ -232,33 +240,48 @@ class LogisticRegressionModelWithShift(nn.Module):
         actual_mask = ~torch.isnan(actual)
         actual_no_na = torch.where(actual_mask, actual, predicted)
 
-        # negative Gaussian log-likelihood
-        loss = torch.mean(
+        return (
             (actual_no_na - predicted) ** 2 / (2 * sigma_sq)
             + torch.where(
                 actual_mask, 0.5 * torch.log(2 * torch.pi * sigma_sq), torch.tensor(0.0)
             )
-        )
+        ).sum(dim=1)
+
+    def _get_participant_penalties(
+        self,
+        time_shifts: torch.Tensor | None = None,
+        acceleration_factors: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Penalty on each participant's time shift and acceleration factor."""
+        if time_shifts is None:
+            time_shifts = self.time_shifts
+        if acceleration_factors is None:
+            acceleration_factors = self.acceleration_factors
 
         # penalize time shifts that are outside the expected range
         # equivalent to normal L1/L2 regularization if expected_time_shift_range is (0, 0)
-        loss += self.lambda_time_shifts * torch.mean(
+        penalties = self.lambda_time_shifts * (
             self._apply_penalty(
-                torch.relu(self.expected_time_shift_range[0] - self.time_shifts),
+                torch.relu(self.expected_time_shift_range[0] - time_shifts),
                 self.penalty_time_shifts,
             )
             + self._apply_penalty(
-                torch.relu(self.time_shifts - self.expected_time_shift_range[1]),
+                torch.relu(time_shifts - self.expected_time_shift_range[1]),
                 self.penalty_time_shifts,
             )
         )
 
         # also penalize acceleration factors
-        loss += self.lambda_acceleration_factors * torch.mean(
-            self._apply_penalty(
-                torch.log(self.acceleration_factors),
-                self.penalty_acceleration_factors,
-            )
+        penalties += self.lambda_acceleration_factors * self._apply_penalty(
+            torch.log(acceleration_factors), self.penalty_acceleration_factors
+        )
+        return penalties
+
+    def get_loss(self, predicted: torch.Tensor, actual: torch.Tensor) -> torch.Tensor:
+        # subject-dependent component
+        loss = (
+            self._get_nll(predicted, actual).sum() / actual.numel()
+            + self._get_participant_penalties().mean()
         )
 
         # penalize slopes too, otherwise the sigmoids collapse to step functions
@@ -267,3 +290,100 @@ class LogisticRegressionModelWithShift(nn.Module):
         )
 
         return loss
+
+    @classmethod
+    def get_personalization_model(
+        cls, params: ModelParams, n_participants: int, /, **kwargs
+    ) -> Self:
+        """Model with fitted (frozen) population parameters, for new participants."""
+        kwargs.pop("n_participants", None)
+        n_features = kwargs.pop("n_features", len(params.k_values))
+        if n_features != len(params.k_values):
+            raise ValueError(
+                f"n_features={n_features} but params have {len(params.k_values)} "
+                "features"
+            )
+        model = cls(n_participants=n_participants, n_features=n_features, **kwargs)
+
+        # set and freeze biomarker-specific params
+        with torch.no_grad():
+            for name in cls.population_param_names:
+                value = torch.as_tensor(getattr(params, name), dtype=torch.float)
+                if parametrize.is_parametrized(model, name):
+                    # assignment goes through the parametrization's right_inverse
+                    setattr(model, name, value)
+                    model.parametrizations[name].original.requires_grad_(False)
+                elif isinstance(getattr(model, name), nn.Parameter):
+                    getattr(model, name).copy_(value)
+                    getattr(model, name).requires_grad_(False)
+                else:
+                    # not a parameter (e.g. scaling factors if with_scaling=False)
+                    setattr(model, name, value)
+            model.time_shifts = torch.full(
+                (n_participants,), float(np.mean(params.time_shifts))
+            )
+            if model.with_acceleration:
+                model.acceleration_factors = torch.ones(n_participants)
+        return model
+
+    def get_loss_per_subject(
+        self,
+        predicted: torch.Tensor,
+        actual: torch.Tensor,
+        participant_ids: torch.Tensor,
+        penalty_weight: float,
+        time_shifts: torch.Tensor | None = None,
+        acceleration_factors: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Per-participant loss: summed negative log-likelihood + weighted penalties."""
+        penalties = self._get_participant_penalties(time_shifts, acceleration_factors)
+        nll_per_participant = torch.zeros(len(penalties)).index_add(
+            0, participant_ids.to(torch.long), self._get_nll(predicted, actual)
+        )
+        return nll_per_participant + penalty_weight * penalties
+
+    def personalize(
+        self,
+        t: torch.Tensor,
+        participant_ids: torch.Tensor,
+        actual: torch.Tensor,
+        penalty_weight: float,
+        max_iter: int = 1000,
+    ):
+        """Fit the per-participant parameters, with population parameters frozen.
+
+        Minimizes ``get_loss_per_subject`` with L-BFGS (the participants'
+        losses are independent, so they are fit jointly). Use
+        ``get_personalization_model`` to create the model.
+        """
+        params = [param for param in self.parameters() if param.requires_grad]
+        optimizer = torch.optim.LBFGS(
+            params,
+            max_iter=max_iter,
+            line_search_fn="strong_wolfe",
+            tolerance_grad=1e-9,
+            tolerance_change=1e-12,
+        )
+
+        def closure():
+            optimizer.zero_grad()
+            loss = self.get_loss_per_subject(
+                self(t, participant_ids), actual, participant_ids, penalty_weight
+            ).sum()
+            loss.backward()
+            return loss
+
+        optimizer.step(closure)
+
+    def to_params(self) -> ModelParams:
+        with torch.no_grad():
+            return ModelParams(
+                **{
+                    name: torch.as_tensor(getattr(self, name)).numpy().astype(float)
+                    for name in (
+                        *self.population_param_names,
+                        "time_shifts",
+                        "acceleration_factors",
+                    )
+                }
+            )

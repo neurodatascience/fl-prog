@@ -1,5 +1,6 @@
 """Estimate individual parameters of new (held-out) subjects with a fitted model."""
 
+import dataclasses
 import pickle
 from collections.abc import Callable
 from pathlib import Path
@@ -7,10 +8,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
 
-from fl_prog.model import LogisticRegressionModelWithShift, ModelParams, Positive
-from fl_prog.utils.constants import Penalty
+from fl_prog.model import LogisticRegressionModelWithShift, ModelParams
 from fl_prog.utils.io import add_dpmost_to_path, format_df_for_dpmost
 
 PERSONALIZE_MINIMIZE = "minimize"
@@ -50,121 +49,6 @@ EnergyFn = Callable[[dict[str, torch.Tensor]], torch.Tensor]
 def get_penalty_weight(n_entries: int, n_features: int, n_subjects: int) -> float:
     """Weight of the per-subject penalties relative to the summed data term."""
     return n_entries * n_features / n_subjects
-
-
-def _get_fl_prog_energy(
-    params: ModelParams,
-    model_args: dict,
-    t: np.ndarray,
-    subject_ids: np.ndarray,
-    y: np.ndarray,
-    n_subjects: int,
-    penalty_weight: float,
-) -> EnergyFn:
-    """Per-subject negative log-posterior of the fl_prog model (up to a constant).
-
-    Returns a function of the per-subject variables giving one value per subject.
-    """
-    lambda_time_shifts = model_args["lambda_time_shifts"]
-    lambda_acceleration_factors = model_args["lambda_acceleration_factors"]
-    penalty_time_shifts = Penalty(model_args["penalty_time_shifts"])
-    penalty_acceleration_factors = Penalty(model_args["penalty_acceleration_factors"])
-    time_shift_min, time_shift_max = model_args["expected_time_shift_range"]
-
-    model = LogisticRegressionModelWithShift(
-        n_participants=n_subjects, n_features=len(params.k_values)
-    )
-    apply_penalty = LogisticRegressionModelWithShift._apply_penalty
-
-    t = torch.tensor(t, dtype=torch.float)
-    subject_ids = torch.tensor(subject_ids, dtype=torch.long)
-    y = torch.tensor(y, dtype=torch.float)
-    mask = ~torch.isnan(y)
-    y = torch.where(mask, y, 0.0)
-    sigma_sq = torch.tensor(params.sigma, dtype=torch.float) ** 2
-
-    def energy(variables: dict[str, torch.Tensor]) -> torch.Tensor:
-        time_shifts = variables[VAR_TIME_SHIFTS]
-        log_acceleration_factors = variables.get(
-            VAR_LOG_ACCELERATION_FACTORS, torch.zeros(n_subjects)
-        )
-        y_pred = model.forward(
-            t,
-            subject_ids,
-            params=ModelParams(
-                k_values=params.k_values,
-                x0_values=params.x0_values,
-                scaling_factors=params.scaling_factors,
-                sigma=params.sigma,
-                time_shifts=time_shifts,
-                acceleration_factors=torch.exp(log_acceleration_factors),
-            ),
-        )
-
-        # Gaussian negative log-likelihood (missing values do not contribute)
-        nll = torch.where(
-            mask,
-            (y - y_pred) ** 2 / (2 * sigma_sq)
-            + 0.5 * torch.log(2 * torch.pi * sigma_sq),
-            0.0,
-        ).sum(dim=1)
-        attachment = torch.zeros(n_subjects).index_add(0, subject_ids, nll)
-
-        regularity = lambda_time_shifts * (
-            apply_penalty(torch.relu(time_shift_min - time_shifts), penalty_time_shifts)
-            + apply_penalty(
-                torch.relu(time_shifts - time_shift_max), penalty_time_shifts
-            )
-        ) + lambda_acceleration_factors * apply_penalty(
-            log_acceleration_factors, penalty_acceleration_factors
-        )
-        return attachment + penalty_weight * regularity
-
-    return energy
-
-
-def _minimize(
-    energy: EnergyFn,
-    init: dict[str, torch.Tensor],
-    max_iter: int = DEFAULT_MINIMIZE_MAX_ITER,
-) -> dict[str, torch.Tensor]:
-    """MAP estimate of the per-subject variables (analogous to Leaspy scipy_minimize).
-
-    Time shifts are optimized through the same softplus parametrization as during
-    training to keep them positive. The energy is a sum of independent per-subject
-    terms, so all subjects are optimized jointly.
-    """
-    positive = Positive()
-    unconstrained = {
-        name: (positive.right_inverse(value) if name == VAR_TIME_SHIFTS else value)
-        .clone()
-        .requires_grad_(True)
-        for name, value in init.items()
-    }
-
-    def _constrain(name: str, value: torch.Tensor) -> torch.Tensor:
-        return F.softplus(value) if name == VAR_TIME_SHIFTS else value
-
-    optimizer = torch.optim.LBFGS(
-        list(unconstrained.values()),
-        max_iter=max_iter,
-        line_search_fn="strong_wolfe",
-        tolerance_grad=1e-9,
-        tolerance_change=1e-12,
-    )
-
-    def closure():
-        optimizer.zero_grad()
-        loss = energy(
-            {name: _constrain(name, value) for name, value in unconstrained.items()}
-        ).sum()
-        loss.backward()
-        return loss
-
-    optimizer.step(closure)
-    return {
-        name: _constrain(name, value).detach() for name, value in unconstrained.items()
-    }
 
 
 def _sample(
@@ -281,45 +165,65 @@ def personalize_fl_prog(
         )
 
     n_subjects = int(subject_ids.max()) + 1
-    with_acceleration = model_args["with_acceleration"]
+    model = LogisticRegressionModelWithShift.get_personalization_model(
+        params, n_subjects, **model_args
+    )
+    t = torch.tensor(t, dtype=torch.float)
+    subject_ids = torch.tensor(subject_ids, dtype=torch.long)
+    y = torch.tensor(y, dtype=torch.float)
 
-    # start from the average training subject
-    init = {
-        VAR_TIME_SHIFTS: torch.full((n_subjects,), float(np.mean(params.time_shifts)))
-    }
+    if algorithm == PERSONALIZE_MINIMIZE:
+        model.personalize(t, subject_ids, y, penalty_weight)
+        return model.to_params()
+
+    population_params = model.to_params()
+
+    def energy(variables: dict[str, torch.Tensor]) -> torch.Tensor:
+        time_shifts = variables[VAR_TIME_SHIFTS]
+        acceleration_factors = torch.exp(
+            variables.get(VAR_LOG_ACCELERATION_FACTORS, torch.zeros(n_subjects))
+        )
+        y_pred = model(
+            t,
+            subject_ids,
+            params=dataclasses.replace(
+                population_params,
+                time_shifts=time_shifts,
+                acceleration_factors=acceleration_factors,
+            ),
+        )
+        return model.get_loss_per_subject(
+            y_pred,
+            y,
+            subject_ids,
+            penalty_weight,
+            time_shifts=time_shifts,
+            acceleration_factors=acceleration_factors,
+        )
+
+    # start from the average training subject (as in get_personalization_model)
+    init = {VAR_TIME_SHIFTS: torch.as_tensor(population_params.time_shifts).float()}
     init_std = {VAR_TIME_SHIFTS: _get_init_std(params.time_shifts)}
-    if with_acceleration:
+    if model.with_acceleration:
         init[VAR_LOG_ACCELERATION_FACTORS] = torch.zeros(n_subjects)
         init_std[VAR_LOG_ACCELERATION_FACTORS] = _get_init_std(
             np.log(params.acceleration_factors)
         )
 
-    energy = _get_fl_prog_energy(
-        params, model_args, t, subject_ids, y, n_subjects, penalty_weight
-    )
-    if algorithm == PERSONALIZE_MINIMIZE:
-        estimates = _minimize(energy, init)
-    else:
-        estimates, acceptance_rates = _sample(
-            energy, init, init_std, algorithm, seed=seed
+    estimates, acceptance_rates = _sample(energy, init, init_std, algorithm, seed=seed)
+    for name, rates in acceptance_rates.items():
+        print(
+            f"\t{name} acceptance rate: mean {rates.mean():.1%}, "
+            f"range [{rates.min():.1%}, {rates.max():.1%}]"
         )
-        for name, rates in acceptance_rates.items():
-            print(
-                f"\t{name} acceptance rate: mean {rates.mean():.1%}, "
-                f"range [{rates.min():.1%}, {rates.max():.1%}]"
-            )
 
-    if with_acceleration:
-        acceleration_factors = torch.exp(estimates[VAR_LOG_ACCELERATION_FACTORS])
-    else:
-        acceleration_factors = torch.ones(n_subjects)
-    return ModelParams(
-        k_values=params.k_values,
-        x0_values=params.x0_values,
-        scaling_factors=params.scaling_factors,
-        sigma=params.sigma,
+    acceleration_factors = np.ones(n_subjects)
+    if model.with_acceleration:
+        acceleration_factors = np.exp(estimates[VAR_LOG_ACCELERATION_FACTORS].numpy())
+    return dataclasses.replace(
+        population_params,
         time_shifts=estimates[VAR_TIME_SHIFTS].numpy().astype(float),
-        acceleration_factors=acceleration_factors.numpy().astype(float),
+        acceleration_factors=acceleration_factors.astype(float),
     )
 
 

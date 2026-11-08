@@ -18,6 +18,8 @@ from fl_prog.model import LogisticRegressionModelWithShift, ModelParams
 from fl_prog.utils.constants import (
     LEASPY_COL_SUBJECT,
     LEASPY_COL_TIMEPOINT,
+    NODE_ID_CENTRALIZED,
+    NODE_ID_TEST,
     NODE_PREFIX,
 )
 from fl_prog.utils.io import (
@@ -202,23 +204,32 @@ def true_params_by_subject(
 ) -> ModelParams:
     """Align true simulation parameters to the canonical subject order.
 
-    True per-subject parameters are stored as lists per site in file order.
-    Site ``i`` (0-indexed) corresponds to node ``str(i + 1)``, whose subjects
-    are listed in ``subjects_by_node`` in the same order as in the site TSV.
+    True per-subject parameters are stored as lists per site in file order,
+    aligned with the entries of ``subjects_by_node`` (in order, excluding the
+    centralized node). Each site's subjects are listed in ``subjects_by_node`` in
+    the same order as in the site TSV. Held-out test subjects (if any) are
+    excluded from the returned parameters.
     """
+    node_ids = [
+        node_id for node_id in subjects_by_node if node_id != NODE_ID_CENTRALIZED
+    ]
     feature_arrays = {
         field: np.asarray(params[source_key], dtype=float)
         for field, source_key in TRUE_FEATURE_KEYS.items()
     }
 
     per_node = {
-        str(i_site + 1): {
+        node_id: {
             "time_shifts": time_shifts_site,
             "acceleration_factors": acc_site,
         }
-        for i_site, (time_shifts_site, acc_site) in enumerate(
-            zip(params["time_shifts"], params["acceleration_factors"], strict=True)
+        for node_id, time_shifts_site, acc_site in zip(
+            node_ids,
+            params["time_shifts"],
+            params["acceleration_factors"],
+            strict=True,
         )
+        if node_id != NODE_ID_TEST
     }
 
     return build_model_params(feature_arrays, per_node, subjects_by_node)

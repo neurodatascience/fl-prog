@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import shutil
 import warnings
 from enum import Enum
 from pathlib import Path
@@ -8,7 +9,13 @@ import click
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, COL_ADAPTATION
+from fl_prog.metrics import PER_SUBJECT_FIELDS
+from fl_prog.utils.constants import (
+    CLICK_CONTEXT_SETTINGS,
+    COL_ADAPTATION,
+    NODE_ID_CENTRALIZED,
+    NODE_ID_TEST,
+)
 from fl_prog.utils.io import (
     DEFAULT_DPATH_DATA,
     get_dpath_latest,
@@ -122,6 +129,51 @@ def _get_new_tag(
     return new_tag
 
 
+def _get_true_params_by_subject(
+    params: dict, subjects_by_node: dict[str, list[str]]
+) -> dict[str, dict[str, float]]:
+    """Map true per-subject parameters to subject IDs.
+
+    Per-subject parameters are stored as lists per site, aligned with
+    ``subjects_by_node`` (in order, excluding the centralized node).
+    """
+    subjects_by_site = [
+        subjects
+        for node_id, subjects in subjects_by_node.items()
+        if node_id != NODE_ID_CENTRALIZED
+    ]
+    params_by_subject = {}
+    for param_name in PER_SUBJECT_FIELDS:
+        params_by_subject[param_name] = {}
+        for subjects, values in zip(subjects_by_site, params[param_name], strict=True):
+            if len(subjects) != len(values):
+                raise ValueError(
+                    f"{param_name}: got {len(values)} values for {len(subjects)} "
+                    "subjects"
+                )
+            params_by_subject[param_name].update(
+                zip(map(str, subjects), values, strict=True)
+            )
+    return params_by_subject
+
+
+def _realign_params(
+    params: dict,
+    subjects_by_node_old: dict[str, list[str]],
+    subjects_by_node_new: dict[str, list[str]],
+) -> dict:
+    """Realign true per-subject parameters to the new ``subjects_by_node``."""
+    params_by_subject = _get_true_params_by_subject(params, subjects_by_node_old)
+
+    params_new = params.copy()
+    for param_name, values_by_subject in params_by_subject.items():
+        params_new[param_name] = [
+            [values_by_subject[subject] for subject in subjects]
+            for subjects in subjects_by_node_new.values()
+        ]
+    return params_new
+
+
 def split_train_test(
     tag: str,
     dpath_data: Path,
@@ -129,6 +181,7 @@ def split_train_test(
     min_n_timepoints: int = DEFAULT_MIN_N_TIMEPOINTS,
     test_fraction: float = DEFAULT_TEST_FRACTION,
     random_seed: int | None = None,
+    overwrite: bool = False,
     suffix_test: str = SUFFIX_TEST,
 ):
     mode = SplitMode(mode)
@@ -152,11 +205,24 @@ def split_train_test(
     settings = locals().copy()
 
     json_data_old = load_json(fpath_json_old)
+
+    # avoid mixing outputs (e.g. merged data) from a previous run
+    if dpath_out_new.exists():
+        if not overwrite:
+            click.secho(
+                f"{dpath_out_new} already exists. Use --overwrite to overwrite.",
+                fg="red",
+                bold=True,
+            )
+            return
+        click.secho(f"Removing existing {dpath_out_new}", fg="yellow")
+        shutil.rmtree(dpath_out_new)
+
     node_id_map_old = json_data_old["node_id_map"]
     col_subject = json_data_old["cols"]["col_subject"]
     col_timepoint = json_data_old["cols"]["col_timepoint"]
     col_subject_index = json_data_old["cols"]["col_subject_index"]
-    config_old = json_data_old["settings"]["config"]
+    config_old = json_data_old["settings"].get("config")
     settings["config"] = config_old
 
     dfs_test = []
@@ -228,6 +294,7 @@ def split_train_test(
             )
         # held-out subjects have no index in the train data
         df_test = df_test.drop(columns=col_subject_index)
+        subjects_by_node[NODE_ID_TEST] = df_test[col_subject].unique().tolist()
 
     fpath_test = dpath_out_new / f"{tag}{suffix_test}.tsv"
     df_test.to_csv(fpath_test, sep="\t", index=False)
@@ -243,6 +310,10 @@ def split_train_test(
     json_data_new["node_id_map"] = node_id_map_new
     json_data_new["cols"] = json_data_old["cols"]
     json_data_new["subjects_by_node"] = subjects_by_node
+    if "params" in json_data_old:
+        json_data_new["params"] = _realign_params(
+            json_data_old["params"], json_data_old["subjects_by_node"], subjects_by_node
+        )
     json_data_new["need_scaling"] = json_data_old["need_scaling"]
     json_data_new["scaling_references"] = scaling_references
     json_data_new["do_not_merge"] = json_data_old.get("do_not_merge", [])
@@ -289,6 +360,11 @@ def split_train_test(
     ),
 )
 @click.option("--random-seed", type=int, envvar="RNG_SEED", show_envvar=True)
+@click.option(
+    "--overwrite/--no-overwrite",
+    default=False,
+    help="Delete the output directory first if it already exists.",
+)
 def main(*args, **kwargs):
     """
     Split into train/test sets.

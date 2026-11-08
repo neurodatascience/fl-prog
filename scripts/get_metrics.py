@@ -38,7 +38,11 @@ from fl_prog.results import (
     true_params_by_subject,
     validate_subject_ids,
 )
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, NODE_ID_CENTRALIZED
+from fl_prog.utils.constants import (
+    CLICK_CONTEXT_SETTINGS,
+    NODE_ID_CENTRALIZED,
+    NODE_ID_TEST,
+)
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, get_dpath_latest
 
 
@@ -97,7 +101,7 @@ def get_metrics_single_run(
         {
             str(subject)
             for node_id, subjects in subjects_by_node.items()
-            if node_id != NODE_ID_CENTRALIZED
+            if node_id not in (NODE_ID_CENTRALIZED, NODE_ID_TEST)
             for subject in subjects
         },
     )

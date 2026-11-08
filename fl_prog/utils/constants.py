@@ -13,6 +13,7 @@ DATE_FORMAT = "%Y_%m_%d"
 # federation
 NODE_PREFIX = "node_"
 NODE_ID_CENTRALIZED = "centralized"
+NODE_ID_TEST = "test"  # not an actual node
 
 # Leaspy
 LEASPY_COL_SUBJECT = "ID"

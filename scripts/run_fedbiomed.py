@@ -379,6 +379,7 @@ def run_fedbiomed(
         ]
     )
 
+    dpath_tensorboard = None
     if with_tensorboard:
         dpath_tensorboard = dpath_out / f"{PREFIX_DNAME_TENSORBOARD}{run_tag}"
 

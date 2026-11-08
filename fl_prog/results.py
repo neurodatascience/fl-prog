@@ -1,8 +1,8 @@
 """Load model fitting results and apply fitted parameters to subject data."""
 
 import pickle
-import sys
 import tempfile
+import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from functools import partial
@@ -23,7 +23,7 @@ from fl_prog.utils.constants import (
     NODE_PREFIX,
 )
 from fl_prog.utils.io import (
-    DPATH_PROJECT,
+    add_dpmost_to_path,
     format_df_for_leaspy,
     load_json,
     save_json,
@@ -57,7 +57,6 @@ DEFAULT_LEASPY_ALGORITHM_NAME = "scipy_minimize"
 DEFAULT_LEASPY_SEED = 0
 DEFAULT_LEASPY_N_JOBS = 1
 
-DPATH_DPMOST = DPATH_PROJECT / "vendored" / "dpmost" / "models" / "dpmost"
 
 # key in DPMoSt results JSON settings for the target ranges of the normalisation
 KEY_DPMOST_NORMALISATION_RANGES = "normalisation_ranges"
@@ -199,8 +198,40 @@ def build_model_params(
     )
 
 
+def has_heldout_subjects(subjects_by_node: dict[str, list[str]]) -> bool:
+    """Whether the test set consists of subjects held out from training."""
+    return NODE_ID_TEST in subjects_by_node
+
+
+def _get_node_ids(subjects_by_node: dict[str, list[str]], test: bool) -> list[str]:
+    """Nodes with the training subjects (sites) or the held-out test subjects."""
+    if test:
+        return [NODE_ID_TEST] if NODE_ID_TEST in subjects_by_node else []
+    return [
+        node_id
+        for node_id in subjects_by_node
+        if node_id not in (NODE_ID_CENTRALIZED, NODE_ID_TEST)
+    ]
+
+
+def get_subjects(
+    subjects_by_node: dict[str, list[str]], test: bool = False
+) -> list[str]:
+    """Training (or held-out test) subject IDs, in the order of their parameters.
+
+    The centralized node is excluded since it duplicates the site subjects.
+    """
+    return [
+        str(subject)
+        for node_id in _get_node_ids(subjects_by_node, test)
+        for subject in subjects_by_node[node_id]
+    ]
+
+
 def true_params_by_subject(
-    subjects_by_node: dict[str, list[str]], params: dict[str, Any]
+    subjects_by_node: dict[str, list[str]],
+    params: dict[str, Any],
+    test: bool = False,
 ) -> ModelParams:
     """Align true simulation parameters to the canonical subject order.
 
@@ -208,11 +239,13 @@ def true_params_by_subject(
     aligned with the entries of ``subjects_by_node`` (in order, excluding the
     centralized node). Each site's subjects are listed in ``subjects_by_node`` in
     the same order as in the site TSV. Held-out test subjects (if any) are
-    excluded from the returned parameters.
+    excluded from the returned parameters, unless ``test`` is True, in which case
+    only the held-out test subjects are returned.
     """
     node_ids = [
         node_id for node_id in subjects_by_node if node_id != NODE_ID_CENTRALIZED
     ]
+    node_ids_kept = _get_node_ids(subjects_by_node, test)
     feature_arrays = {
         field: np.asarray(params[source_key], dtype=float)
         for field, source_key in TRUE_FEATURE_KEYS.items()
@@ -229,8 +262,10 @@ def true_params_by_subject(
             params["acceleration_factors"],
             strict=True,
         )
-        if node_id != NODE_ID_TEST
+        if node_id in node_ids_kept
     }
+    if test and not per_node:
+        raise ValueError("No held-out test subjects in subjects_by_node")
 
     return build_model_params(feature_arrays, per_node, subjects_by_node)
 
@@ -332,11 +367,6 @@ def predict_fl_prog(
     return model.forward(t, subject_ids, params=params).detach().numpy()
 
 
-def _add_dpmost_to_path():
-    if str(DPATH_DPMOST) not in sys.path:
-        sys.path.append(str(DPATH_DPMOST))
-
-
 @dataclass
 class DPMoStNormalisation:
     """Min/max values used by DPMoSt to normalise the data and time."""
@@ -391,7 +421,7 @@ def load_dpmost_normalisation(
             )
         return None
 
-    _add_dpmost_to_path()
+    add_dpmost_to_path()
     with fpath_model.open("rb") as file_model:
         model = pickle.load(file_model)
 
@@ -433,7 +463,7 @@ def predict_dpmost(
 
     Returns predictions of shape (n_entries, n_features)
     """
-    _add_dpmost_to_path()
+    add_dpmost_to_path()
 
     from utility import sigmoid_eval
 
@@ -704,23 +734,37 @@ def get_model_label(model_type: str, setup: str, n_setups: int) -> str:
     return f"{model_type} ({setup})"
 
 
-def _load_df_data_all(
+def _load_df_data_train_test(
     dpath_data: Path, tag: str, cols: dict
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return ``(df_train, df_all)`` with ``df_all`` = train + test (if any)."""
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """Load train and test data.
+
+    test is None if there is no test file.
+    """
     df_train = load_df_data(dpath_data, tag, cols, test=False)
-    dfs = [df_train.assign(**{COL_SET_NAME: "train"})]
     try:
         df_test = load_df_data(dpath_data, tag, cols, test=True)
     except FileNotFoundError:
-        pass
-    else:
+        df_test = None
+    return df_train, df_test
+
+
+def _concat_train_test(
+    df_train: pd.DataFrame, df_test: pd.DataFrame | None, cols: dict
+) -> pd.DataFrame:
+    """Stack train and test (if any) rows, with a set name column.
+
+    Test subjects should be a subset of train subjects. They are indexed
+    by their index in the train data.
+    """
+    dfs = [df_train.assign(**{COL_SET_NAME: "train"})]
+    if df_test is not None:
         df_test = df_test.copy()
         df_test[cols["col_subject_index"]] = get_subject_ids_from_frame(
             df_test, cols, df_train
         )
         dfs.append(df_test.assign(**{COL_SET_NAME: "test"}))
-    return df_train, pd.concat(dfs, ignore_index=True)
+    return pd.concat(dfs, ignore_index=True)
 
 
 def _get_trajectory_grid(t_shifted: np.ndarray, n_points: int = 200) -> np.ndarray:
@@ -816,7 +860,17 @@ def get_fitted_models(
     max_time = get_max_time(json_data)
     time_factor = 1.0 if max_time is None else float(max_time)
 
-    df_train, df_all = _load_df_data_all(get_dpath_data(json_results), tag, cols)
+    df_train, df_test = _load_df_data_train_test(
+        get_dpath_data(json_results), tag, cols
+    )
+    if df_test is not None and has_heldout_subjects(json_data["subjects_by_node"]):
+        # held-out subjects have no fitted parameters
+        warnings.warn(
+            "Skipping test data with held-out subjects (not supported yet)",
+            stacklevel=2,
+        )
+        df_test = None
+    df_all = _concat_train_test(df_train, df_test, cols)
     t_all = df_all[cols["col_timepoint"]].to_numpy(dtype=float)
     n_setups = len(json_results["results"])
 

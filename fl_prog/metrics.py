@@ -181,13 +181,14 @@ def compute_per_subject_recovery(
     param_true: ModelParams,
     param_estimated: ModelParams,
     setup: str,
+    set_name: str = "recovery_per_subject",
 ) -> list[dict[str, str | float]]:
     """Per-subject recovery metrics for time shifts and acceleration factors.
 
-    Correlations isolate ordering (gauge-robust); the slope (est vs true)
-    shows magnitude recovery, with the intercept absorbing recentering.
-    Acceleration factors additionally get a scale median (median est/true) and
-    a mean-abs-relative error, since they are multiplicative and positive.
+    Metrics are: Pearson and Spearman correlations, slope (estimated vs true),
+    mean absolute error (MAE). Acceleration factors have two additional metrics
+    (scale median (median estimated/true) and mean-abs-relative error), since they
+    are multiplicative and positive.
     """
     rows: list[dict[str, str | float]] = []
     for field_name in PER_SUBJECT_FIELDS:
@@ -214,5 +215,5 @@ def compute_per_subject_recovery(
                 ]
             )
 
-        rows.extend(_metric_rows(setup, "recovery_per_subject", "all", items))
+        rows.extend(_metric_rows(setup, set_name, "all", items))
     return rows

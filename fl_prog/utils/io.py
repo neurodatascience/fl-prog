@@ -2,6 +2,7 @@ import datetime
 import enum
 import json
 import os
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -22,6 +23,7 @@ DPATH_PROJECT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_DPATH_DATA = DPATH_PROJECT / "data"
 DEFAULT_DPATH_FEDBIOMED = DPATH_PROJECT / "fedbiomed"
 DEFAULT_DPATH_RESULTS = DPATH_PROJECT / "results"
+DPATH_DPMOST = DPATH_PROJECT / "vendored" / "dpmost" / "models" / "dpmost"
 
 
 def infer_sep(fpath: Path) -> str:
@@ -33,6 +35,11 @@ def infer_sep(fpath: Path) -> str:
         raise ValueError(
             f"Could not infer separator from file extension {fpath.suffix}."
         )
+
+
+def add_dpmost_to_path():
+    if str(DPATH_DPMOST) not in sys.path:
+        sys.path.append(str(DPATH_DPMOST))
 
 
 def get_dpath_latest(dpath_parent, use_today=False):

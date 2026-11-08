@@ -10,12 +10,8 @@ import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 
 from fl_prog.metrics import PER_SUBJECT_FIELDS
-from fl_prog.utils.constants import (
-    CLICK_CONTEXT_SETTINGS,
-    COL_ADAPTATION,
-    NODE_ID_CENTRALIZED,
-    NODE_ID_TEST,
-)
+from fl_prog.results import get_subjects, true_params_by_subject
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, COL_ADAPTATION, NODE_ID_TEST
 from fl_prog.utils.io import (
     DEFAULT_DPATH_DATA,
     get_dpath_latest,
@@ -132,29 +128,13 @@ def _get_new_tag(
 def _get_true_params_by_subject(
     params: dict, subjects_by_node: dict[str, list[str]]
 ) -> dict[str, dict[str, float]]:
-    """Map true per-subject parameters to subject IDs.
-
-    Per-subject parameters are stored as lists per site, aligned with
-    ``subjects_by_node`` (in order, excluding the centralized node).
-    """
-    subjects_by_site = [
-        subjects
-        for node_id, subjects in subjects_by_node.items()
-        if node_id != NODE_ID_CENTRALIZED
-    ]
-    params_by_subject = {}
-    for param_name in PER_SUBJECT_FIELDS:
-        params_by_subject[param_name] = {}
-        for subjects, values in zip(subjects_by_site, params[param_name], strict=True):
-            if len(subjects) != len(values):
-                raise ValueError(
-                    f"{param_name}: got {len(values)} values for {len(subjects)} "
-                    "subjects"
-                )
-            params_by_subject[param_name].update(
-                zip(map(str, subjects), values, strict=True)
-            )
-    return params_by_subject
+    """Map true per-subject parameters to subject IDs."""
+    true_params = true_params_by_subject(subjects_by_node, params)
+    subjects = get_subjects(subjects_by_node)
+    return {
+        param_name: dict(zip(subjects, getattr(true_params, param_name), strict=True))
+        for param_name in PER_SUBJECT_FIELDS
+    }
 
 
 def _realign_params(
@@ -222,7 +202,7 @@ def split_train_test(
     col_subject = json_data_old["cols"]["col_subject"]
     col_timepoint = json_data_old["cols"]["col_timepoint"]
     col_subject_index = json_data_old["cols"]["col_subject_index"]
-    config_old = json_data_old["settings"].get("config")
+    config_old = json_data_old["settings"].get("config", {})
     settings["config"] = config_old
 
     dfs_test = []

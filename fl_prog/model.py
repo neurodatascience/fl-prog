@@ -206,11 +206,11 @@ class LogisticRegressionModelWithShift(nn.Module):
             acceleration_factors = self.acceleration_factors
         # inference
         else:
-            k_values = torch.tensor(params.k_values, dtype=torch.float)
-            x0_values = torch.tensor(params.x0_values, dtype=torch.float)
-            scaling_factors = torch.tensor(params.scaling_factors, dtype=torch.float)
-            time_shifts = torch.tensor(params.time_shifts, dtype=torch.float)
-            acceleration_factors = torch.tensor(
+            k_values = torch.as_tensor(params.k_values, dtype=torch.float)
+            x0_values = torch.as_tensor(params.x0_values, dtype=torch.float)
+            scaling_factors = torch.as_tensor(params.scaling_factors, dtype=torch.float)
+            time_shifts = torch.as_tensor(params.time_shifts, dtype=torch.float)
+            acceleration_factors = torch.as_tensor(
                 params.acceleration_factors, dtype=torch.float
             )
 

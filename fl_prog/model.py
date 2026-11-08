@@ -52,10 +52,12 @@ class LogisticRegressionModelWithShift(nn.Module):
         expected_time_shift_range: Iterable[float] = (0.0, 0.0),
         lambda_time_shifts: float = 1.0,
         lambda_acceleration_factors: float = 1.0,
+        lambda_k_values: float = 0.01,
         with_acceleration=False,
         with_scaling=False,
         penalty_time_shifts: Penalty = "l2",
         penalty_acceleration_factors: Penalty = "l1",
+        penalty_k_values: Penalty = "l2",
     ):
         super().__init__()
 
@@ -71,6 +73,10 @@ class LogisticRegressionModelWithShift(nn.Module):
         if lambda_acceleration_factors < 0:
             raise ValueError(
                 f"lambda_acceleration_factors must be non-negative, got {lambda_acceleration_factors}"
+            )
+        if lambda_k_values < 0:
+            raise ValueError(
+                f"lambda_k_values must be non-negative, got {lambda_k_values}"
             )
 
         expected_time_shift_range = torch.tensor(
@@ -96,10 +102,12 @@ class LogisticRegressionModelWithShift(nn.Module):
         self.expected_time_shift_range = expected_time_shift_range
         self.lambda_time_shifts = lambda_time_shifts
         self.lambda_acceleration_factors = lambda_acceleration_factors
+        self.lambda_k_values = lambda_k_values
         self.with_acceleration = with_acceleration
         self.with_scaling = with_scaling
         self.penalty_time_shifts = penalty_time_shifts
         self.penalty_acceleration_factors = penalty_acceleration_factors
+        self.penalty_k_values = penalty_k_values
 
         # slopes
         self.k_values = nn.Parameter(torch.rand(self.n_features) + starting_k_value)
@@ -251,6 +259,11 @@ class LogisticRegressionModelWithShift(nn.Module):
                 torch.log(self.acceleration_factors),
                 self.penalty_acceleration_factors,
             )
+        )
+
+        # penalize slopes too, otherwise the sigmoids collapse to step functions
+        loss += self.lambda_k_values * torch.mean(
+            self._apply_penalty(torch.log(self.k_values), self.penalty_k_values)
         )
 
         return loss

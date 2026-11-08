@@ -154,7 +154,8 @@ Use Ctrl+C to stop a node when done.
 
 ```bash
 # replace <NODE_ID> by '1', '2', '3', ..., or 'centralized'
-fedbiomed node -p ./fedbiomed/node-<NODE_ID> start
+# POLARS_MAX_THREADS=1 makes data loading much faster
+POLARS_MAX_THREADS=1 fedbiomed node -p ./fedbiomed/node-<NODE_ID> start
 ```
 
 ### Run model fitting
@@ -164,19 +165,19 @@ fedbiomed node -p ./fedbiomed/node-<NODE_ID> start
 ./scripts/run_fedbiomed.py --tag non_overlapping_t0 --n-rounds 5 --n-updates 100 --learning-rate 0.05 --time-shift-range 0 1
 ./scripts/run_fedbiomed.py --tag unequal_sigma --n-rounds 5 --n-updates 100 --learning-rate 0.05 --time-shift-range 0 1
 
-./scripts/run_fedbiomed.py --tag simulated_adni_timeshift --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
+./scripts/run_fedbiomed.py --tag simulated_adni_timeshift --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda-time-shifts 10 --training-replies --aggregated-params
 
-./scripts/run_fedbiomed.py --tag adni_iid_split2 --learning-rate 0.05 --n-rounds 10 --n-updates 25 --training-replies --aggregated-params --with-acceleration --with-scaling
-./scripts/run_fedbiomed.py --tag adni_iid_split2 --learning-rate 0.05 --n-rounds 10 --n-updates 25 --training-replies --aggregated-params --no-acceleration --with-scaling
+./scripts/run_fedbiomed.py --tag adni_iid_split2 --learning-rate 0.05 --n-rounds 30 --n-updates 25 --training-replies --aggregated-params --with-acceleration --with-scaling
+./scripts/run_fedbiomed.py --tag adni_iid_split2 --learning-rate 0.05 --n-rounds 30 --n-updates 25 --training-replies --aggregated-params --no-acceleration --with-scaling
 
-./scripts/run_fedbiomed.py --tag adni_iid_split4 --learning-rate 0.05 --n-rounds 8 --n-updates 25 --training-replies --aggregated-params --with-acceleration --with-scaling --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01
-./scripts/run_fedbiomed.py --tag adni_iid_split4 --learning-rate 0.05 --n-rounds 8 --n-updates 25 --training-replies --aggregated-params --no-acceleration --no-scaling --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01
+./scripts/run_fedbiomed.py --tag adni_iid_split4 --learning-rate 0.05 --n-rounds 30 --n-updates 25 --training-replies --aggregated-params --with-acceleration --with-scaling --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01
+./scripts/run_fedbiomed.py --tag adni_iid_split4 --learning-rate 0.05 --n-rounds 30 --n-updates 25 --training-replies --aggregated-params --no-acceleration --no-scaling --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01
 
-./scripts/run_fedbiomed.py --tag adni_iid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
-./scripts/run_fedbiomed.py --tag adni_noniid --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
-./scripts/run_fedbiomed.py --tag adni_noniid_diag --learning-rate 0.05 --n-rounds 6 --n-updates 25 --time-shift-range 0 3 --lambda 10 --training-replies --aggregated-params
+./scripts/run_fedbiomed.py --tag adni_iid --learning-rate 0.05 --n-rounds 30 --n-updates 25 --time-shift-range 0 3 --lambda-time-shifts 10 --training-replies --aggregated-params
+./scripts/run_fedbiomed.py --tag adni_noniid --learning-rate 0.05 --n-rounds 30 --n-updates 25 --time-shift-range 0 3 --lambda-time-shifts 10 --training-replies --aggregated-params
+./scripts/run_fedbiomed.py --tag adni_noniid_diag --learning-rate 0.05 --n-rounds 30 --n-updates 25 --time-shift-range 0 3 --lambda-time-shifts 10 --training-replies --aggregated-params
 
-./scripts/run_fedbiomed.py --tag adni_iid_harcmonized_split4_scaled_CN50_min --n-rounds 20 --n-updates 50 --learning-rate 0.05 --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01  --with-acceleration --with-scaling --training-replies --aggregated-params
+./scripts/run_fedbiomed.py --tag adni_harmonized_iid_split4_scaled_CN50_min --n-rounds 30 --n-updates 25 --learning-rate 0.05 --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01 --with-acceleration --with-scaling --training-replies --aggregated-params
 ```
 
 ### Plot

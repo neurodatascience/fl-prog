@@ -1,10 +1,9 @@
 """Load model fitting results and apply fitted parameters to subject data."""
 
 import pickle
-import sys
 import tempfile
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -15,13 +14,21 @@ import torch
 
 from fl_prog.metrics import PER_SUBJECT_FIELDS
 from fl_prog.model import LogisticRegressionModelWithShift, ModelParams
+from fl_prog.personalization import (
+    DEFAULT_DPMOST_N_OUTER_ITER,
+    DEFAULT_PERSONALIZE_ALGORITHM,
+    DEFAULT_PERSONALIZE_SEED,
+    get_n_timepoints_suffix,
+)
 from fl_prog.utils.constants import (
     LEASPY_COL_SUBJECT,
     LEASPY_COL_TIMEPOINT,
+    NODE_ID_CENTRALIZED,
+    NODE_ID_TEST,
     NODE_PREFIX,
 )
 from fl_prog.utils.io import (
-    DPATH_PROJECT,
+    add_dpmost_to_path,
     format_df_for_leaspy,
     load_json,
     save_json,
@@ -51,11 +58,14 @@ SUFFIX_ESTIMATED_PARAMS = "-estimated_params.json"
 # top-level key in Leaspy results JSON files for personalized parameters
 KEY_LEASPY_INDIVIDUAL_PARAMETERS = "individual_parameters"
 
+# top-level key in Fed-BioMed/DPMoSt results JSON files for personalized parameters
+# of held-out test subjects
+KEY_INDIVIDUAL_PARAMETERS_TEST = "individual_parameters_test"
+
 DEFAULT_LEASPY_ALGORITHM_NAME = "scipy_minimize"
 DEFAULT_LEASPY_SEED = 0
 DEFAULT_LEASPY_N_JOBS = 1
 
-DPATH_DPMOST = DPATH_PROJECT / "vendored" / "dpmost" / "models" / "dpmost"
 
 # key in DPMoSt results JSON settings for the target ranges of the normalisation
 KEY_DPMOST_NORMALISATION_RANGES = "normalisation_ranges"
@@ -96,6 +106,12 @@ def get_cols(json_data: dict) -> dict[str, Any]:
 def get_max_time(json_data: dict) -> float | None:
     """Factor converting scaled timepoints back to months, if available."""
     return json_data.get("settings", {}).get("config", {}).get("max_time")
+
+
+def get_time_factor(json_data: dict) -> float:
+    """Factor converting model time to months (1 if not available)."""
+    max_time = get_max_time(json_data)
+    return 1.0 if max_time is None else float(max_time)
 
 
 def get_model_type(fpath_json_results: Path) -> str:
@@ -197,29 +213,74 @@ def build_model_params(
     )
 
 
+def has_heldout_subjects(subjects_by_node: dict[str, list[str]]) -> bool:
+    """Whether the test set consists of subjects held out from training."""
+    return NODE_ID_TEST in subjects_by_node
+
+
+def _get_node_ids(subjects_by_node: dict[str, list[str]], test: bool) -> list[str]:
+    """Nodes with the training subjects (sites) or the held-out test subjects."""
+    if test:
+        return [NODE_ID_TEST] if NODE_ID_TEST in subjects_by_node else []
+    return [
+        node_id
+        for node_id in subjects_by_node
+        if node_id not in (NODE_ID_CENTRALIZED, NODE_ID_TEST)
+    ]
+
+
+def get_subjects(
+    subjects_by_node: dict[str, list[str]], test: bool = False
+) -> list[str]:
+    """Training (or held-out test) subject IDs, in the order of their parameters.
+
+    The centralized node is excluded since it duplicates the site subjects.
+    """
+    return [
+        str(subject)
+        for node_id in _get_node_ids(subjects_by_node, test)
+        for subject in subjects_by_node[node_id]
+    ]
+
+
 def true_params_by_subject(
-    subjects_by_node: dict[str, list[str]], params: dict[str, Any]
+    subjects_by_node: dict[str, list[str]],
+    params: dict[str, Any],
+    test: bool = False,
 ) -> ModelParams:
     """Align true simulation parameters to the canonical subject order.
 
-    True per-subject parameters are stored as lists per site in file order.
-    Site ``i`` (0-indexed) corresponds to node ``str(i + 1)``, whose subjects
-    are listed in ``subjects_by_node`` in the same order as in the site TSV.
+    True per-subject parameters are stored as lists per site in file order,
+    aligned with the entries of ``subjects_by_node`` (in order, excluding the
+    centralized node). Each site's subjects are listed in ``subjects_by_node`` in
+    the same order as in the site TSV. Held-out test subjects (if any) are
+    excluded from the returned parameters, unless ``test`` is True, in which case
+    only the held-out test subjects are returned.
     """
+    node_ids = [
+        node_id for node_id in subjects_by_node if node_id != NODE_ID_CENTRALIZED
+    ]
+    node_ids_kept = _get_node_ids(subjects_by_node, test)
     feature_arrays = {
         field: np.asarray(params[source_key], dtype=float)
         for field, source_key in TRUE_FEATURE_KEYS.items()
     }
 
     per_node = {
-        str(i_site + 1): {
+        node_id: {
             "time_shifts": time_shifts_site,
             "acceleration_factors": acc_site,
         }
-        for i_site, (time_shifts_site, acc_site) in enumerate(
-            zip(params["time_shifts"], params["acceleration_factors"], strict=True)
+        for node_id, time_shifts_site, acc_site in zip(
+            node_ids,
+            params["time_shifts"],
+            params["acceleration_factors"],
+            strict=True,
         )
+        if node_id in node_ids_kept
     }
+    if test and not per_node:
+        raise ValueError("No held-out test subjects in subjects_by_node")
 
     return build_model_params(feature_arrays, per_node, subjects_by_node)
 
@@ -321,11 +382,6 @@ def predict_fl_prog(
     return model.forward(t, subject_ids, params=params).detach().numpy()
 
 
-def _add_dpmost_to_path():
-    if str(DPATH_DPMOST) not in sys.path:
-        sys.path.append(str(DPATH_DPMOST))
-
-
 @dataclass
 class DPMoStNormalisation:
     """Min/max values used by DPMoSt to normalise the data and time."""
@@ -380,7 +436,7 @@ def load_dpmost_normalisation(
             )
         return None
 
-    _add_dpmost_to_path()
+    add_dpmost_to_path()
     with fpath_model.open("rb") as file_model:
         model = pickle.load(file_model)
 
@@ -422,7 +478,7 @@ def predict_dpmost(
 
     Returns predictions of shape (n_entries, n_features)
     """
-    _add_dpmost_to_path()
+    add_dpmost_to_path()
 
     from utility import sigmoid_eval
 
@@ -507,6 +563,110 @@ def predict_group_trajectory(
         acceleration_factors=np.ones(1),
     )
     return predict_fn(params_group, t_shifted, np.zeros(len(t_shifted), dtype=int))
+
+
+# ----- personalized parameters of held-out subjects (Fed-BioMed/DPMoSt) -----
+
+
+def get_heldout_personalization_key(
+    model_type: str,
+    fedbiomed_personalize_algorithm: str = DEFAULT_PERSONALIZE_ALGORITHM,
+    personalize_seed: int = DEFAULT_PERSONALIZE_SEED,
+    dpmost_personalize_n_outer_iter: int = DEFAULT_DPMOST_N_OUTER_ITER,
+    personalize_n_timepoints: int | None = None,
+) -> str:
+    """Key identifying how held-out subjects were personalized (also used in
+    metrics file names)."""
+    match model_type:
+        case "fedbiomed":
+            key = f"{fedbiomed_personalize_algorithm}_{personalize_seed}"
+        case "dpmost":
+            key = f"{dpmost_personalize_n_outer_iter}"
+        case _:
+            raise ValueError(f"No held-out personalization for {model_type!r}")
+    return f"{key}{get_n_timepoints_suffix(personalize_n_timepoints)}"
+
+
+def get_leaspy_heldout_setup(setup: str, n_timepoints: int | None = None) -> str:
+    """Setup name under which held-out subjects' Leaspy parameters are stored."""
+    return f"{setup}-test{get_n_timepoints_suffix(n_timepoints)}"
+
+
+class PersonalizedParametersNotFoundError(LookupError):
+    """Personalized parameters of held-out subjects are missing from a results
+    file."""
+
+
+def save_personalized_params(
+    fpath_json_results: Path,
+    json_results: dict,
+    personalization_key: str,
+    setup: str,
+    subjects: list[str],
+    params: ModelParams,
+):
+    """Store held-out subjects' per-subject parameters in a results file.
+
+    They are stored (in model units, like the training subjects' estimates) under
+    ``individual_parameters_test -> <personalization_key> -> <setup>``.
+    """
+    json_results.setdefault(KEY_INDIVIDUAL_PARAMETERS_TEST, {}).setdefault(
+        personalization_key, {}
+    )[setup] = {
+        COL_SUBJECT: list(subjects),
+        "time_shifts": params.time_shifts,
+        "acceleration_factors": params.acceleration_factors,
+    }
+    save_json(fpath_json_results, json_results)
+    print(f"\tSaved personalized parameters of held-out subjects ({setup})")
+
+
+def load_personalized_params(
+    json_results: dict, personalization_key: str, setup: str
+) -> pd.DataFrame:
+    """Held-out subjects' per-subject parameters, indexed by subject."""
+    stored = (
+        json_results.get(KEY_INDIVIDUAL_PARAMETERS_TEST, {})
+        .get(personalization_key, {})
+        .get(setup)
+    )
+    if stored is None:
+        raise PersonalizedParametersNotFoundError(
+            f"No personalized parameters of held-out subjects for "
+            f"{personalization_key!r} and setup {setup!r}"
+        )
+    return pd.DataFrame(stored).set_index(COL_SUBJECT)
+
+
+def get_df_true_subject(json_data: dict) -> pd.DataFrame | None:
+    """True per-subject parameters, in months if possible.
+
+    One row per subject (subject, set_name, time_shift, acceleration_factor),
+    with held-out test subjects (if any) as ``test``. Returns None if the data
+    have no true parameters.
+    """
+    params = json_data.get("params")
+    if params is None or not set(PER_SUBJECT_FIELDS) <= set(params):
+        return None
+
+    subjects_by_node = json_data["subjects_by_node"]
+    time_factor = get_time_factor(json_data)
+    dfs = []
+    for set_name, test in [("train", False), ("test", True)]:
+        if test and not has_heldout_subjects(subjects_by_node):
+            continue
+        true_params = true_params_by_subject(subjects_by_node, params, test=test)
+        dfs.append(
+            pd.DataFrame(
+                {
+                    COL_SUBJECT: get_subjects(subjects_by_node, test=test),
+                    COL_SET_NAME: set_name,
+                    COL_TIME_SHIFT: true_params.time_shifts * time_factor,
+                    COL_ACCELERATION_FACTOR: true_params.acceleration_factors,
+                }
+            )
+        )
+    return pd.concat(dfs, ignore_index=True)
 
 
 # ----- Leaspy -----
@@ -651,8 +811,8 @@ def leaspy_to_shift_acc(df_ip: pd.DataFrame) -> pd.DataFrame:
 class FittedModel:
     """Fitted parameters applied to subject data, in months if possible.
 
-    - ``df_subject``: one row per subject (subject, group, time_shift,
-      acceleration_factor)
+    - ``df_subject``: one row per subject (subject, group, set_name, time_shift,
+      acceleration_factor), with held-out test subjects (if any) as ``test``
     - ``df_long``: one row per visit and biomarker (subject, group, set_name,
       biomarker, t, t_shifted, y_obs, y_pred)
     - ``df_trajectory``: group trajectory (biomarker, t_shifted, y) over the
@@ -693,23 +853,50 @@ def get_model_label(model_type: str, setup: str, n_setups: int) -> str:
     return f"{model_type} ({setup})"
 
 
-def _load_df_data_all(
+def _load_df_data_train_test(
     dpath_data: Path, tag: str, cols: dict
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return ``(df_train, df_all)`` with ``df_all`` = train + test (if any)."""
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """Load train and test data.
+
+    test is None if there is no test file.
+    """
     df_train = load_df_data(dpath_data, tag, cols, test=False)
-    dfs = [df_train.assign(**{COL_SET_NAME: "train"})]
     try:
         df_test = load_df_data(dpath_data, tag, cols, test=True)
     except FileNotFoundError:
-        pass
-    else:
+        df_test = None
+    return df_train, df_test
+
+
+def _concat_train_test(
+    df_train: pd.DataFrame,
+    df_test: pd.DataFrame | None,
+    cols: dict,
+    heldout_subjects: list[str] | None = None,
+) -> pd.DataFrame:
+    """Stack train and test (if any) rows, with a set name column.
+
+    Test subjects are either train subjects (e.g. timepoint split), indexed by
+    their index in the (merged) train data, or held-out subjects (given in
+    ``heldout_subjects``), indexed after the train subjects in that order.
+    """
+    dfs = [df_train.assign(**{COL_SET_NAME: "train"})]
+    if df_test is not None:
         df_test = df_test.copy()
-        df_test[cols["col_subject_index"]] = get_subject_ids_from_frame(
-            df_test, cols, df_train
-        )
+        if heldout_subjects is None:
+            subject_ids = get_subject_ids_from_frame(df_test, cols, df_train)
+        else:
+            n_subjects_train = df_train[cols["col_subject_index"]].nunique()
+            subject_ids = (
+                df_test[cols["col_subject"]]
+                .astype(str)
+                .map({s: n_subjects_train + i for i, s in enumerate(heldout_subjects)})
+            )
+            if subject_ids.isna().any():
+                raise ValueError("Test subjects are not all in heldout_subjects")
+        df_test[cols["col_subject_index"]] = subject_ids
         dfs.append(df_test.assign(**{COL_SET_NAME: "test"}))
-    return df_train, pd.concat(dfs, ignore_index=True)
+    return pd.concat(dfs, ignore_index=True)
 
 
 def _get_trajectory_grid(t_shifted: np.ndarray, n_points: int = 200) -> np.ndarray:
@@ -741,11 +928,22 @@ def _build_fitted_model(
         group_by_subject = pd.Series("unknown", index=df_all[col_subject].unique())
     group_by_subject.index = group_by_subject.index.astype(str)
 
+    # subjects with only test rows are held-out subjects
+    is_train_by_subject = df_all.groupby(col_subject)[COL_SET_NAME].agg(
+        lambda set_names: (set_names == "train").any()
+    )
+    is_train_by_subject.index = is_train_by_subject.index.astype(str)
+
     df_subject = df_shift_acc.copy()
     df_subject[COL_TIME_SHIFT] *= time_factor
     df_subject.index.name = COL_SUBJECT
     df_subject = df_subject.reset_index()
     df_subject.insert(1, COL_GROUP, df_subject[COL_SUBJECT].map(group_by_subject))
+    df_subject.insert(
+        2,
+        COL_SET_NAME,
+        np.where(df_subject[COL_SUBJECT].map(is_train_by_subject), "train", "test"),
+    )
     df_subject.insert(0, COL_MODEL, label)
 
     df_wide = pd.DataFrame(
@@ -791,21 +989,35 @@ def get_fitted_models(
     leaspy_algorithm_name: str = DEFAULT_LEASPY_ALGORITHM_NAME,
     leaspy_seed: int = DEFAULT_LEASPY_SEED,
     leaspy_n_jobs: int = DEFAULT_LEASPY_N_JOBS,
+    fedbiomed_personalize_algorithm: str = DEFAULT_PERSONALIZE_ALGORITHM,
+    personalize_seed: int = DEFAULT_PERSONALIZE_SEED,
+    dpmost_personalize_n_outer_iter: int = DEFAULT_DPMOST_N_OUTER_ITER,
+    personalize_n_timepoints: int | None = None,
 ) -> list[FittedModel]:
     """Apply the fitted parameters of each setup in a results file to the data.
 
+    Held-out test subjects (if any) use their personalized parameters.
+
     Raises ``LeaspyIndividualParametersNotFoundError`` if a Leaspy model has not
-    been personalized yet (see ``scripts/get_metrics.py``).
+    been personalized yet, or ``PersonalizedParametersNotFoundError`` if
+    held-out subjects of a Fed-BioMed/DPMoSt model have not been personalized
+    yet (see ``scripts/get_metrics.py``).
     """
     model_type = get_model_type(fpath_json_results)
     run_tag = get_run_tag(fpath_json_results)
 
     json_data = load_json_data(json_results)
     cols = get_cols(json_data)
-    max_time = get_max_time(json_data)
-    time_factor = 1.0 if max_time is None else float(max_time)
+    time_factor = get_time_factor(json_data)
+    subjects_by_node = json_data["subjects_by_node"]
 
-    df_train, df_all = _load_df_data_all(get_dpath_data(json_results), tag, cols)
+    df_train, df_test = _load_df_data_train_test(
+        get_dpath_data(json_results), tag, cols
+    )
+    heldout_subjects = None
+    if df_test is not None and has_heldout_subjects(subjects_by_node):
+        heldout_subjects = get_subjects(subjects_by_node, test=True)
+    df_all = _concat_train_test(df_train, df_test, cols, heldout_subjects)
     t_all = df_all[cols["col_timepoint"]].to_numpy(dtype=float)
     n_setups = len(json_results["results"])
 
@@ -814,13 +1026,25 @@ def get_fitted_models(
         df_leaspy_all = to_df_leaspy(df_all, cols)
         for setup, model_params in json_results["results"].items():
             model = load_leaspy_model(model_params)
+            personalization_kwargs = {
+                "algorithm_name": leaspy_algorithm_name,
+                "seed": leaspy_seed,
+                "n_jobs": leaspy_n_jobs,
+            }
             df_ip = load_leaspy_individual_parameters(
-                json_results,
-                setup,
-                algorithm_name=leaspy_algorithm_name,
-                seed=leaspy_seed,
-                n_jobs=leaspy_n_jobs,
+                json_results, setup, **personalization_kwargs
             )
+            if heldout_subjects is not None:
+                df_ip = pd.concat(
+                    [
+                        df_ip,
+                        load_leaspy_individual_parameters(
+                            json_results,
+                            get_leaspy_heldout_setup(setup, personalize_n_timepoints),
+                            **personalization_kwargs,
+                        ),
+                    ]
+                )
             df_shift_acc = leaspy_to_shift_acc(df_ip)
             subjects = df_all[cols["col_subject"]].astype(str)
             t_shifted = (
@@ -850,7 +1074,13 @@ def get_fitted_models(
             fpath_json_results, json_results, cols["cols_biomarker"]
         )
     predict_fn = get_predict_fn(model_type, normalisation=normalisation)
-    subjects_by_node = json_data["subjects_by_node"]
+    personalization_key = get_heldout_personalization_key(
+        model_type,
+        fedbiomed_personalize_algorithm=fedbiomed_personalize_algorithm,
+        personalize_seed=personalize_seed,
+        dpmost_personalize_n_outer_iter=dpmost_personalize_n_outer_iter,
+        personalize_n_timepoints=personalize_n_timepoints,
+    )
     params_by_setup = estimated_params_by_setup(json_results, subjects_by_node)
     subject_order_by_setup = subjects_by_setup(json_results, subjects_by_node)
 
@@ -873,6 +1103,24 @@ def get_fitted_models(
                 f"{setup}: subject order in estimated parameters does not match "
                 f"{cols['col_subject_index']} in the data"
             )
+        if heldout_subjects is not None:
+            # held-out subjects are indexed after the train subjects
+            df_params_test = load_personalized_params(
+                json_results, personalization_key, setup
+            ).loc[heldout_subjects]
+            params = replace(
+                params,
+                time_shifts=np.concatenate(
+                    [params.time_shifts, df_params_test["time_shifts"]]
+                ),
+                acceleration_factors=np.concatenate(
+                    [
+                        params.acceleration_factors,
+                        df_params_test["acceleration_factors"],
+                    ]
+                ),
+            )
+            subject_order = subject_order + heldout_subjects
         validate_subject_ids(subject_ids_all, len(subject_order), setup)
 
         df_shift_acc = pd.DataFrame(

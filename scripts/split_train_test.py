@@ -1,11 +1,17 @@
 #!/usr/bin/env python
 
+import shutil
+import warnings
+from enum import Enum
 from pathlib import Path
 
 import click
 import pandas as pd
+from sklearn.model_selection import StratifiedKFold
 
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, COL_ADAPTATION
+from fl_prog.metrics import PER_SUBJECT_FIELDS
+from fl_prog.results import get_subjects, true_params_by_subject
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, COL_ADAPTATION, NODE_ID_TEST
 from fl_prog.utils.io import (
     DEFAULT_DPATH_DATA,
     get_dpath_latest,
@@ -13,18 +19,165 @@ from fl_prog.utils.io import (
     save_json,
 )
 
+
+# train/test split
+class SplitMode(str, Enum):
+    TIMEPOINT = "timepoint"
+    SUBJECT = "subject"
+
+
+DEFAULT_MODE = SplitMode.TIMEPOINT
 DEFAULT_MIN_N_TIMEPOINTS = 4
+DEFAULT_TEST_FRACTION = 0.14
 SUFFIX_TEST = "-test"
+
+
+def _is_adaptation_subject(
+    df_subject: pd.DataFrame, subject: str, has_adaptation: bool
+) -> bool:
+    if not has_adaptation:
+        return False
+    if df_subject[COL_ADAPTATION].all():
+        return True
+    if df_subject[COL_ADAPTATION].any():
+        raise ValueError(
+            f"Subject {subject} has a mix of adaptation and non-adaptation rows."
+        )
+    return False
+
+
+def _split_site_last_timepoint(
+    df_site: pd.DataFrame,
+    col_subject: str,
+    col_timepoint: str,
+    min_n_timepoints: int,
+) -> tuple[list[pd.DataFrame], list[pd.DataFrame], list[str]]:
+    """Leave out the last timepoint of subjects with enough timepoints."""
+    has_adaptation = COL_ADAPTATION in df_site.columns
+
+    dfs_train = []
+    dfs_test = []
+    subjects = []
+    for subject, df_subject in df_site.groupby(col_subject, sort=False):
+        if (
+            not _is_adaptation_subject(df_subject, subject, has_adaptation)
+            and len(df_subject) >= min_n_timepoints
+        ):
+            df_subject = df_subject.sort_values(col_timepoint, ascending=True)
+            dfs_test.append(df_subject.iloc[[-1]])
+            df_subject = df_subject.iloc[:-1]
+
+        dfs_train.append(df_subject)
+        subjects.append(subject)
+
+    return dfs_train, dfs_test, subjects
+
+
+def _split_site_subjects(
+    df_site: pd.DataFrame,
+    col_subject: str,
+    n_splits: int,
+    random_seed: int | None,
+) -> tuple[list[pd.DataFrame], list[pd.DataFrame], list[str]]:
+    """Leave out entire subjects, stratified by number of timepoints."""
+    has_adaptation = COL_ADAPTATION in df_site.columns
+
+    n_timepoints = pd.Series(
+        {
+            subject: len(df_subject)
+            for subject, df_subject in df_site.groupby(col_subject, sort=False)
+            if not _is_adaptation_subject(df_subject, subject, has_adaptation)
+        },
+        dtype=int,
+    )
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
+    with warnings.catch_warnings():
+        # allow fewer subjects than n_splits
+        warnings.filterwarnings("ignore", message="The least populated class")
+        _, idx_test = next(cv.split(n_timepoints.index, n_timepoints))
+    subjects_test = set(n_timepoints.index[idx_test])
+
+    dfs_train = []
+    dfs_test = []
+    subjects = []
+    for subject, df_subject in df_site.groupby(col_subject, sort=False):
+        if subject in subjects_test:
+            dfs_test.append(df_subject)
+        else:
+            dfs_train.append(df_subject)
+            subjects.append(subject)
+
+    return dfs_train, dfs_test, subjects
+
+
+def _get_new_tag(
+    tag: str,
+    mode: SplitMode,
+    min_n_timepoints: int,
+    n_splits: int,
+    random_seed: int | None,
+) -> str:
+    if mode == SplitMode.TIMEPOINT:
+        return f"{tag}_split{min_n_timepoints}"
+    new_tag = f"{tag}_heldout{round(100 / n_splits)}"
+    if random_seed is not None:
+        new_tag += f"_seed{random_seed}"
+    return new_tag
+
+
+def _get_true_params_by_subject(
+    params: dict, subjects_by_node: dict[str, list[str]]
+) -> dict[str, dict[str, float]]:
+    """Map true per-subject parameters to subject IDs."""
+    true_params = true_params_by_subject(subjects_by_node, params)
+    subjects = get_subjects(subjects_by_node)
+    return {
+        param_name: dict(zip(subjects, getattr(true_params, param_name), strict=True))
+        for param_name in PER_SUBJECT_FIELDS
+    }
+
+
+def _realign_params(
+    params: dict,
+    subjects_by_node_old: dict[str, list[str]],
+    subjects_by_node_new: dict[str, list[str]],
+) -> dict:
+    """Realign true per-subject parameters to the new ``subjects_by_node``."""
+    params_by_subject = _get_true_params_by_subject(params, subjects_by_node_old)
+
+    params_new = params.copy()
+    for param_name, values_by_subject in params_by_subject.items():
+        params_new[param_name] = [
+            [values_by_subject[subject] for subject in subjects]
+            for subjects in subjects_by_node_new.values()
+        ]
+    return params_new
 
 
 def split_train_test(
     tag: str,
     dpath_data: Path,
+    mode: SplitMode = DEFAULT_MODE,
     min_n_timepoints: int = DEFAULT_MIN_N_TIMEPOINTS,
+    test_fraction: float = DEFAULT_TEST_FRACTION,
+    random_seed: int | None = None,
+    overwrite: bool = False,
     suffix_test: str = SUFFIX_TEST,
 ):
+    mode = SplitMode(mode)
+
+    # held-out subjects are one fold of a stratified K-fold
+    n_splits = round(1 / test_fraction)
+    test_fraction_effective = 1 / n_splits
+    if mode == SplitMode.SUBJECT and test_fraction_effective != test_fraction:
+        click.secho(
+            f"WARNING: test fraction {test_fraction} rounded to 1/{n_splits}",
+            fg="yellow",
+            bold=True,
+        )
+
     old_tag = tag
-    tag = f"{tag}_split{min_n_timepoints}"
+    tag = _get_new_tag(tag, mode, min_n_timepoints, n_splits, random_seed)
     dpath_out_old = get_dpath_latest(dpath_data) / old_tag
     fpath_json_old = dpath_out_old / f"{old_tag}.json"
     dpath_out_new = get_dpath_latest(dpath_data, use_today=True) / tag
@@ -32,11 +185,24 @@ def split_train_test(
     settings = locals().copy()
 
     json_data_old = load_json(fpath_json_old)
+
+    # avoid mixing outputs (e.g. merged data) from a previous run
+    if dpath_out_new.exists():
+        if not overwrite:
+            click.secho(
+                f"{dpath_out_new} already exists. Use --overwrite to overwrite.",
+                fg="red",
+                bold=True,
+            )
+            return
+        click.secho(f"Removing existing {dpath_out_new}", fg="yellow")
+        shutil.rmtree(dpath_out_new)
+
     node_id_map_old = json_data_old["node_id_map"]
     col_subject = json_data_old["cols"]["col_subject"]
     col_timepoint = json_data_old["cols"]["col_timepoint"]
     col_subject_index = json_data_old["cols"]["col_subject_index"]
-    config_old = json_data_old["settings"]["config"]
+    config_old = json_data_old["settings"].get("config", {})
     settings["config"] = config_old
 
     dfs_test = []
@@ -57,26 +223,22 @@ def split_train_test(
 
         fpath_site = dpath_out_old / fname_site
         df_site = pd.read_csv(fpath_site, sep="\t", dtype={col_subject: str})
-        has_adaptation = COL_ADAPTATION in df_site.columns
         n_samples += len(df_site)
 
-        dfs_train = []
-        subjects = []
-        for subject, df_subject in df_site.groupby(col_subject, sort=False):
-            if has_adaptation and df_subject[COL_ADAPTATION].all():
-                dfs_train.append(df_subject)
-            elif has_adaptation and df_subject[COL_ADAPTATION].any():
-                raise ValueError(
-                    f"Subject {subject} has a mix of adaptation and non-adaptation rows."
-                )
-            elif len(df_subject) >= min_n_timepoints:
-                df_subject = df_subject.sort_values(col_timepoint, ascending=True)
-                dfs_test.append(df_subject.iloc[[-1]])
-                dfs_train.append(df_subject.iloc[:-1])
-            else:
-                dfs_train.append(df_subject)
-
-            subjects.append(subject)
+        if mode == SplitMode.TIMEPOINT:
+            dfs_train, dfs_test_site, subjects = _split_site_last_timepoint(
+                df_site, col_subject, col_timepoint, min_n_timepoints
+            )
+        else:
+            dfs_train, dfs_test_site, subjects = _split_site_subjects(
+                df_site, col_subject, n_splits, random_seed
+            )
+            n_subjects_test = sum(df[col_subject].nunique() for df in dfs_test_site)
+            print(
+                f"Node {node_id}: holding out {n_subjects_test} of "
+                f"{df_site[col_subject].nunique()} subjects"
+            )
+        dfs_test.extend(dfs_test_site)
 
         subjects_by_node[node_id] = subjects
         df_train = pd.concat(dfs_train)
@@ -95,10 +257,24 @@ def split_train_test(
 
     df_test = pd.concat(dfs_test)
 
-    # sanity check
-    if df_test[col_subject].nunique() != len(df_test):
-        print(df_test[col_subject].value_counts())
-        raise ValueError("Some subjects have multiple timepoints in the test set.")
+    # sanity checks
+    if mode == SplitMode.TIMEPOINT:
+        if df_test[col_subject].nunique() != len(df_test):
+            print(df_test[col_subject].value_counts())
+            raise ValueError("Some subjects have multiple timepoints in the test set.")
+    else:
+        subjects_train = {
+            subject for subjects in subjects_by_node.values() for subject in subjects
+        }
+        subjects_overlap = subjects_train & set(df_test[col_subject])
+        if subjects_overlap:
+            raise ValueError(
+                "Some held-out subjects are also in the train set: "
+                f"{sorted(subjects_overlap)[:5]}"
+            )
+        # held-out subjects have no index in the train data
+        df_test = df_test.drop(columns=col_subject_index)
+        subjects_by_node[NODE_ID_TEST] = df_test[col_subject].unique().tolist()
 
     fpath_test = dpath_out_new / f"{tag}{suffix_test}.tsv"
     df_test.to_csv(fpath_test, sep="\t", index=False)
@@ -114,6 +290,10 @@ def split_train_test(
     json_data_new["node_id_map"] = node_id_map_new
     json_data_new["cols"] = json_data_old["cols"]
     json_data_new["subjects_by_node"] = subjects_by_node
+    if "params" in json_data_old:
+        json_data_new["params"] = _realign_params(
+            json_data_old["params"], json_data_old["subjects_by_node"], subjects_by_node
+        )
     json_data_new["need_scaling"] = json_data_old["need_scaling"]
     json_data_new["scaling_references"] = scaling_references
     json_data_new["do_not_merge"] = json_data_old.get("do_not_merge", [])
@@ -133,14 +313,44 @@ def split_train_test(
     default=DEFAULT_DPATH_DATA,
 )
 @click.option(
+    "--mode",
+    type=click.Choice(SplitMode, case_sensitive=False),
+    default=DEFAULT_MODE.value,
+    show_default=True,
+    help=(
+        f"{SplitMode.TIMEPOINT.value!r}: leave out the last timepoint of each subject. "
+        f"{SplitMode.SUBJECT.value!r}: leave out entire subjects."
+    ),
+)
+@click.option(
     "--min-timepoints",
     "min_n_timepoints",
     type=click.IntRange(min=2, min_open=False),
     default=DEFAULT_MIN_N_TIMEPOINTS,
+    help=f"Only used in {SplitMode.TIMEPOINT.value!r} mode.",
+)
+@click.option(
+    "--test-fraction",
+    type=click.FloatRange(min=0, max=0.5, min_open=True),
+    default=DEFAULT_TEST_FRACTION,
+    show_default=True,
+    help=(
+        "Fraction of subjects to hold out per site. Must satisfy 1/K for an integer K."
+        f" Only used in {SplitMode.SUBJECT.value!r} mode."
+    ),
+)
+@click.option("--random-seed", type=int, envvar="RNG_SEED", show_envvar=True)
+@click.option(
+    "--overwrite/--no-overwrite",
+    default=False,
+    help="Delete the output directory first if it already exists.",
 )
 def main(*args, **kwargs):
     """
-    Split into train/test sets by leaving out the last timepoint for each subject.
+    Split into train/test sets.
+
+    Either leave out the last timepoint for each subject with enough timepoints, or
+    leave out entire subjects (stratified by number of timepoints within each site).
 
     Run before merging the data across sites.
     """

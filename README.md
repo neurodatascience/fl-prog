@@ -70,10 +70,14 @@ Run the following command, passing the three simulated files' paths as CLI argum
 This will create a new tag, e.g. `adni_iid_split4`
 
 ```shell
+# hold out last timepoint for subjects with at least min_timepoints
 ./scripts/split_train_test.py --min-timepoints 4 --tag adni_harmonized_iid
 ./scripts/split_train_test.py --min-timepoints 4 --tag adni_iid
 ./scripts/split_train_test.py --min-timepoints 4 --tag adni_noniid
 ./scripts/split_train_test.py --min-timepoints 4 --tag adni_harmonized_noniid_diag
+
+# hold out entire subjects (stratified by number of timepoints)
+./scripts/split_train_test.py --mode subject --test-fraction 0.2 --random-seed 0 --tag adni_harmonized_iid
 ```
 
 ### Optional: Regress chronological age out from biomarkers

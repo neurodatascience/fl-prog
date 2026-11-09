@@ -18,6 +18,8 @@ from fl_prog.personalization import (
     DEFAULT_PERSONALIZE_ALGORITHM,
     DEFAULT_PERSONALIZE_SEED,
     PERSONALIZE_ALGORITHMS,
+    get_first_timepoints_mask,
+    get_n_timepoints_suffix,
     get_penalty_weight,
     personalize_dpmost,
     personalize_fl_prog,
@@ -27,13 +29,14 @@ from fl_prog.results import (
     DEFAULT_LEASPY_N_JOBS,
     DEFAULT_LEASPY_SEED,
     MODEL_DPMOST,
-    MODEL_FEDBIOMED,
     MODEL_LEASPY,
     LeaspyIndividualParametersNotFoundError,
     PredictFn,
     estimated_params_by_setup,
     get_cols,
     get_dpath_data,
+    get_heldout_personalization_key,
+    get_leaspy_heldout_setup,
     get_model_type,
     get_predict_fn,
     get_run_tag,
@@ -50,11 +53,14 @@ from fl_prog.results import (
     personalize_leaspy,
     predict_leaspy,
     save_leaspy_individual_parameters,
+    save_personalized_params,
     true_params_by_subject,
     validate_subject_ids,
 )
 from fl_prog.utils.constants import (
     CLICK_CONTEXT_SETTINGS,
+    LEASPY_COL_SUBJECT,
+    LEASPY_COL_TIMEPOINT,
 )
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, get_dpath_latest
 
@@ -63,6 +69,44 @@ def _save_tsv(df_metrics: pd.DataFrame, fpath_out: Path):
     fpath_out.parent.mkdir(parents=True, exist_ok=True)
     df_metrics.to_csv(fpath_out, sep="\t", index=False)
     click.secho(f"\tSaved metrics to {fpath_out}", fg="green")
+
+
+def _get_test_row_sets(
+    subjects: np.ndarray | pd.Series | pd.Index,
+    timepoints: np.ndarray | pd.Series | pd.Index,
+    heldout: bool,
+    n_timepoints: int | None,
+) -> tuple[np.ndarray, list[tuple[str, np.ndarray]]]:
+    """Rows of the test data used for personalization, and the (set name, rows)
+    to compute metrics on.
+
+    Without ``n_timepoints``, held-out subjects are personalized and scored on
+    all their visits ("test"). Otherwise, they are personalized on their first
+    ``n_timepoints`` visits, and scored separately on these ("test_fit") and on
+    their later visits ("test_forecast"). Subjects with ``n_timepoints`` visits
+    or fewer have nothing to forecast and are excluded from both.
+    """
+    rows_all = np.ones(len(subjects), dtype=bool)
+    if n_timepoints is None:
+        return rows_all, [("test", rows_all)]
+    if not heldout:
+        raise click.UsageError(
+            "--personalize-n-timepoints only applies to held-out subjects "
+            "(split_train_test.py --mode subject)"
+        )
+    rows_fit = get_first_timepoints_mask(subjects, timepoints, n_timepoints)
+    n_visits = pd.Series(np.asarray(subjects)).map(pd.Series(subjects).value_counts())
+    rows_scored = (n_visits > n_timepoints).to_numpy()
+    n_excluded = pd.Series(subjects)[~rows_scored].nunique()
+    print(
+        f"\tPersonalizing held-out subjects on their first {n_timepoints} visit(s); "
+        f"excluding {n_excluded} of {pd.Series(subjects).nunique()} subjects "
+        f"with no later visits from scoring"
+    )
+    return rows_fit, [
+        ("test_fit", rows_fit & rows_scored),
+        ("test_forecast", ~rows_fit),
+    ]
 
 
 def _get_personalize_fn(
@@ -144,6 +188,7 @@ def get_metrics_single_run(
     personalize_algorithm: str = DEFAULT_PERSONALIZE_ALGORITHM,
     personalize_seed: int = DEFAULT_PERSONALIZE_SEED,
     dpmost_n_outer_iter: int = DEFAULT_DPMOST_N_OUTER_ITER,
+    personalize_n_timepoints: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Predictive and recovery metrics for a fl_prog (Fed-BioMed) or DPMoSt run."""
     print(f"\tUsing predict_fn: {getattr(predict_fn, 'func', predict_fn).__name__}")
@@ -243,6 +288,12 @@ def get_metrics_single_run(
     if df_data_test is not None:
         t_test = df_data_test[cols["col_timepoint"]].to_numpy(dtype=float)
         y_true_test = df_data_test[cols_biomarker].to_numpy(dtype=float)
+        rows_personalize, test_row_sets = _get_test_row_sets(
+            df_data_test[col_subject],
+            t_test,
+            heldout=heldout,
+            n_timepoints=personalize_n_timepoints,
+        )
         if heldout:
             # held-out subjects are indexed from 0, in subjects_by_node order
             subject_ids_test, subjects_test = pd.factorize(df_data_test[col_subject])
@@ -257,8 +308,8 @@ def get_metrics_single_run(
                 json_results,
                 cols,
                 df_data_train,
-                df_data_test,
-                subject_ids_test,
+                df_data_test[rows_personalize],
+                subject_ids_test[rows_personalize],
                 subjects_test,
                 algorithm=personalize_algorithm,
                 seed=personalize_seed,
@@ -288,6 +339,20 @@ def get_metrics_single_run(
             if personalize_fn is not None:
                 print(f"\tPersonalizing held-out test subjects ({setup})")
                 params_test = personalize_fn(estimated_params)
+                save_personalized_params(
+                    fpath_json_results,
+                    json_results,
+                    get_heldout_personalization_key(
+                        model_type,
+                        fedbiomed_personalize_algorithm=personalize_algorithm,
+                        personalize_seed=personalize_seed,
+                        dpmost_personalize_n_outer_iter=dpmost_n_outer_iter,
+                        personalize_n_timepoints=personalize_n_timepoints,
+                    ),
+                    setup,
+                    subjects_test,
+                    params_test,
+                )
                 if true_params is not None:
                     rows_recovery.extend(
                         compute_per_subject_recovery(
@@ -298,15 +363,16 @@ def get_metrics_single_run(
                         )
                     )
             y_pred_test = predict_fn(params_test, t_test, subject_ids_test)
-            rows.extend(
-                compute_predictive_metrics(
-                    y_true_test,
-                    y_pred_test,
-                    cols_biomarker,
-                    setup=setup,
-                    set_name="test",
+            for set_name, rows_set in test_row_sets:
+                rows.extend(
+                    compute_predictive_metrics(
+                        y_true_test[rows_set],
+                        y_pred_test[rows_set],
+                        cols_biomarker,
+                        setup=setup,
+                        set_name=set_name,
+                    )
                 )
-            )
         if true_params is not None:
             rows_recovery.extend(
                 compute_recovery_metrics(
@@ -381,6 +447,7 @@ def get_metrics_single_run_leaspy(
     algorithm_name=DEFAULT_LEASPY_ALGORITHM_NAME,
     seed=DEFAULT_LEASPY_SEED,
     n_jobs=DEFAULT_LEASPY_N_JOBS,
+    personalize_n_timepoints: int | None = None,
 ) -> pd.DataFrame:
     dpath_data = get_dpath_data(json_results)
     print(f"dpath_data: {dpath_data}")
@@ -396,6 +463,15 @@ def get_metrics_single_run_leaspy(
         df_data_test = load_df_data_leaspy(dpath_data, tag, cols, test=True)
     except FileNotFoundError:
         df_data_test = None
+
+    rows_personalize, test_row_sets = None, []
+    if df_data_test is not None:
+        rows_personalize, test_row_sets = _get_test_row_sets(
+            df_data_test.index.get_level_values(LEASPY_COL_SUBJECT),
+            df_data_test.index.get_level_values(LEASPY_COL_TIMEPOINT),
+            heldout=heldout,
+            n_timepoints=personalize_n_timepoints,
+        )
 
     rows: list[dict[str, str | float]] = []
     for setup, model_params in json_results["results"].items():
@@ -420,21 +496,19 @@ def get_metrics_single_run_leaspy(
             df_individual_params_test = _get_leaspy_individual_parameters(
                 fpath_json_results,
                 json_results,
-                f"{setup}-test",
+                get_leaspy_heldout_setup(setup, personalize_n_timepoints),
                 model,
-                df_data_test,
+                df_data_test[rows_personalize],
                 algorithm_name=algorithm_name,
                 seed=seed,
                 n_jobs=n_jobs,
             )
 
-        for df, df_ip, set_name in [
-            (df_data_train, df_individual_params, "train"),
-            (df_data_test, df_individual_params_test, "test"),
-        ]:
-            if df is None:
-                continue
-
+        datasets = [(df_data_train, df_individual_params, "train")] + [
+            (df_data_test[rows_set], df_individual_params_test, set_name)
+            for set_name, rows_set in test_row_sets
+        ]
+        for df, df_ip, set_name in datasets:
             rows.extend(
                 compute_predictive_metrics(
                     y_true=df[cols_biomarker].to_numpy(dtype=float),
@@ -459,6 +533,7 @@ def get_metrics(
     fedbiomed_personalize_algorithm=DEFAULT_PERSONALIZE_ALGORITHM,
     personalize_seed=DEFAULT_PERSONALIZE_SEED,
     dpmost_personalize_n_outer_iter=DEFAULT_DPMOST_N_OUTER_ITER,
+    personalize_n_timepoints: int | None = None,
 ):
     dpath_results_latest = get_dpath_latest(dpath_results)
     for fpath_json_results, json_results in iter_result_files(
@@ -476,9 +551,13 @@ def get_metrics(
                 algorithm_name=leaspy_algorithm_name,
                 seed=leaspy_seed,
                 n_jobs=leaspy_n_jobs,
+                personalize_n_timepoints=personalize_n_timepoints,
             )
             df_recovery = pd.DataFrame()
-            suffix = f"-{leaspy_algorithm_name}_{leaspy_seed}"
+            suffix = (
+                f"-{leaspy_algorithm_name}_{leaspy_seed}"
+                f"{get_n_timepoints_suffix(personalize_n_timepoints)}"
+            )
         else:
             normalisation = None
             if model_type == MODEL_DPMOST:
@@ -499,15 +578,18 @@ def get_metrics(
                 personalize_algorithm=fedbiomed_personalize_algorithm,
                 personalize_seed=personalize_seed,
                 dpmost_n_outer_iter=dpmost_personalize_n_outer_iter,
+                personalize_n_timepoints=personalize_n_timepoints,
             )
             suffix = ""
-            heldout = has_heldout_subjects(
-                load_json_data(json_results)["subjects_by_node"]
-            )
-            if heldout and model_type == MODEL_FEDBIOMED:
-                suffix = f"-{fedbiomed_personalize_algorithm}_{personalize_seed}"
-            elif heldout and model_type == MODEL_DPMOST:
-                suffix = f"-{dpmost_personalize_n_outer_iter}"
+            if has_heldout_subjects(load_json_data(json_results)["subjects_by_node"]):
+                personalization_key = get_heldout_personalization_key(
+                    model_type,
+                    fedbiomed_personalize_algorithm=fedbiomed_personalize_algorithm,
+                    personalize_seed=personalize_seed,
+                    dpmost_personalize_n_outer_iter=dpmost_personalize_n_outer_iter,
+                    personalize_n_timepoints=personalize_n_timepoints,
+                )
+                suffix = f"-{personalization_key}"
 
         fpath_metrics_out = fpath_json_results.with_name(
             f"{run_tag}-fit_quality{suffix}.tsv"
@@ -572,6 +654,14 @@ def get_metrics(
     type=click.IntRange(min=1),
     default=DEFAULT_DPMOST_N_OUTER_ITER,
     help="Number of outer iterations for estimating held-out subjects' time shifts (DPMoSt).",
+)
+@click.option(
+    "--personalize-n-timepoints",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Estimate held-out subjects' parameters from their first N visits only, "
+    "and score these (test_fit) and later visits (test_forecast) separately. "
+    "Subjects with N visits or fewer are not scored. Default: all visits.",
 )
 def main(**params):
     get_metrics(**params)

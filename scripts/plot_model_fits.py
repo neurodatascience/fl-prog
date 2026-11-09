@@ -14,6 +14,13 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from scipy.stats import pearsonr, spearmanr
 
+from fl_prog.personalization import (
+    DEFAULT_DPMOST_N_OUTER_ITER,
+    DEFAULT_PERSONALIZE_ALGORITHM,
+    DEFAULT_PERSONALIZE_SEED,
+    PERSONALIZE_ALGORITHMS,
+    get_n_timepoints_suffix,
+)
 from fl_prog.plotting import (
     get_biomarker_palette,
     get_categorical_palette,
@@ -22,23 +29,29 @@ from fl_prog.plotting import (
     save_fig,
 )
 from fl_prog.results import (
+    COL_ACCELERATION_FACTOR,
     COL_BIOMARKER,
     COL_GROUP,
     COL_MODEL,
+    COL_SET_NAME,
     COL_SUBJECT,
     COL_TIME_SHIFT,
     COL_TIME_SHIFTED,
     COL_Y,
     COL_Y_OBS,
+    COL_Y_PRED,
     DEFAULT_LEASPY_ALGORITHM_NAME,
     DEFAULT_LEASPY_N_JOBS,
     DEFAULT_LEASPY_SEED,
     MODEL_TYPES,
     FittedModel,
     LeaspyIndividualParametersNotFoundError,
+    PersonalizedParametersNotFoundError,
+    get_df_true_subject,
     get_fitted_models,
     get_short_labels,
     iter_result_files,
+    load_json_data,
 )
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, Setup
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, get_dpath_latest
@@ -50,7 +63,14 @@ SETUP_HATCHES = {Setup.FEDERATED.value: "", Setup.CENTRALIZED.value: "///"}
 
 LABEL_TIME_SHIFTED = "Disease time (months)"
 LABEL_TIME_SHIFT = "Time shift (months)"
+LABEL_ACCELERATION_FACTOR = "Acceleration factor"
 LABEL_BIOMARKER = "Biomarker value (scaled)"
+
+# subjects used for fitting vs held-out test subjects
+SET_TRAIN = "train"
+SET_TEST = "test"
+SET_LABELS = {SET_TRAIN: "Train", SET_TEST: "Held-out"}
+COLOR_TRAIN = "0.75"
 
 
 def _slugify(label: str) -> str:
@@ -222,7 +242,7 @@ def plot_group_trajectories_by_setup(
     df_subject = pd.concat(
         [m.df_subject.assign(setup=m.setup) for m in fitted_models],
         ignore_index=True,
-    )
+    ).query(f"{COL_SET_NAME} == @SET_TRAIN")
     sns.boxplot(
         data=df_subject,
         x=COL_GROUP,
@@ -287,13 +307,24 @@ def plot_group_trajectories_by_biomarker(
     return grid
 
 
+def get_subjects_in_set(fitted_model: FittedModel, set_name: str) -> set[str]:
+    """Train subjects (incl. their test visits, if any) or held-out subjects."""
+    df_subject = fitted_model.df_subject
+    return set(df_subject.loc[df_subject[COL_SET_NAME] == set_name, COL_SUBJECT])
+
+
 def plot_spaghetti(
     fitted_model: FittedModel,
     biomarker_order: list[str],
     group_order: list[str],
     palette: dict[str, str],
+    set_name: str = SET_TRAIN,
 ) -> sns.FacetGrid:
-    df_long = fitted_model.df_long.dropna(subset=[COL_Y_OBS, COL_TIME_SHIFTED])
+    """Observed trajectories of the train (or held-out) subjects in disease time."""
+    df_long = fitted_model.df_long
+    df_long = df_long[
+        df_long[COL_SUBJECT].isin(get_subjects_in_set(fitted_model, set_name))
+    ].dropna(subset=[COL_Y_OBS, COL_TIME_SHIFTED])
     grid = sns.FacetGrid(
         df_long,
         col=COL_BIOMARKER,
@@ -340,10 +371,13 @@ def plot_spaghetti(
     handles = [
         Line2D([], [], color=palette[group], linewidth=2) for group in group_order
     ] + [Line2D([], [], color="black", linewidth=2.5)]
+    title = fitted_model.label
+    if set_name == SET_TEST:
+        title = f"{title}\n(held-out subjects)"
     grid.figure.legend(
         handles,
         group_order + ["Group trajectory"],
-        title=fitted_model.label,
+        title=title,
         loc="center left",
         bbox_to_anchor=(1.0, 0.5),
         frameon=False,
@@ -451,6 +485,200 @@ def plot_time_shift_by_group(
     return grid
 
 
+def _get_df_long_by_subject_set(fitted_models: list[FittedModel]) -> pd.DataFrame:
+    """Visits of all models, with the set of each visit's subject (train/test)."""
+    dfs = []
+    for fitted_model in fitted_models:
+        subjects_test = get_subjects_in_set(fitted_model, SET_TEST)
+        dfs.append(
+            fitted_model.df_long.assign(
+                subject_set=np.where(
+                    fitted_model.df_long[COL_SUBJECT].isin(subjects_test),
+                    SET_TEST,
+                    SET_TRAIN,
+                )
+            )
+        )
+    return pd.concat(dfs, ignore_index=True).dropna(subset=[COL_Y_OBS, COL_Y_PRED])
+
+
+def plot_predicted_vs_observed(
+    fitted_models: list[FittedModel],
+    model_order: list[str],
+    biomarker_order: list[str],
+) -> sns.FacetGrid:
+    """Predicted vs observed values of held-out subjects (train subjects in grey)."""
+    df_long = _get_df_long_by_subject_set(fitted_models)
+    grid = sns.FacetGrid(
+        df_long,
+        row=COL_MODEL,
+        row_order=model_order,
+        col=COL_BIOMARKER,
+        col_order=biomarker_order,
+        height=2.3,
+    )
+    color_test = sns.color_palette()[0]
+    for (model, biomarker), ax in grid.axes_dict.items():
+        df_panel = df_long[
+            (df_long[COL_MODEL] == model) & (df_long[COL_BIOMARKER] == biomarker)
+        ]
+        for subject_set, color, size in [
+            (SET_TRAIN, COLOR_TRAIN, 4),
+            (SET_TEST, color_test, 8),
+        ]:
+            df_set = df_panel.query("subject_set == @subject_set")
+            ax.scatter(
+                df_set[COL_Y_OBS],
+                df_set[COL_Y_PRED],
+                s=size,
+                color=color,
+                linewidth=0,
+                alpha=0.6,
+                rasterized=True,
+            )
+        lims = [
+            min(df_panel[COL_Y_OBS].min(), df_panel[COL_Y_PRED].min()),
+            max(df_panel[COL_Y_OBS].max(), df_panel[COL_Y_PRED].max()),
+        ]
+        ax.plot(lims, lims, color="black", linewidth=1, linestyle="--")
+    # model names as y labels instead of (long, rotated) margin titles, which
+    # would leave large gaps between rows
+    grid.set_titles("")
+    for biomarker, ax in zip(biomarker_order, grid.axes[0]):
+        ax.set_title(biomarker)
+    grid.set_axis_labels("Observed", "")
+    for model, ax in zip(model_order, grid.axes[:, 0]):
+        ax.set_ylabel(f"{model}\nPredicted")
+    grid.figure.legend(
+        [
+            Line2D([], [], marker="o", linestyle="none", color=COLOR_TRAIN),
+            Line2D([], [], marker="o", linestyle="none", color=color_test),
+            Line2D([], [], color="black", linestyle="--"),
+        ],
+        [SET_LABELS[SET_TRAIN], SET_LABELS[SET_TEST], "Identity"],
+        title="Subjects",
+        loc="center left",
+        bbox_to_anchor=(1.0, 0.5),
+        frameon=False,
+    )
+    return grid
+
+
+def plot_time_shift_by_set(
+    df_subject: pd.DataFrame, model_order: list[str], group_order: list[str]
+) -> sns.FacetGrid:
+    """Time shifts of train vs held-out subjects, per model and group."""
+    df_subject = df_subject.assign(
+        **{COL_SET_NAME: df_subject[COL_SET_NAME].map(SET_LABELS)}
+    )
+    set_order = [SET_LABELS[SET_TRAIN], SET_LABELS[SET_TEST]]
+    grid = sns.catplot(
+        data=df_subject,
+        x=COL_GROUP,
+        y=COL_TIME_SHIFT,
+        order=group_order,
+        hue=COL_SET_NAME,
+        hue_order=set_order,
+        palette=dict(zip(set_order, [COLOR_TRAIN, sns.color_palette()[0]])),
+        col=COL_MODEL,
+        col_order=model_order,
+        kind="box",
+        fliersize=2,
+        sharey=False,
+        height=3,
+        aspect=1.1,
+    )
+    grid.set_titles("{col_name}")
+    grid.set_axis_labels("Diagnosis", LABEL_TIME_SHIFT)
+    grid.legend.set_title("Subjects")
+    return grid
+
+
+def plot_true_vs_estimated(
+    df_subject: pd.DataFrame,
+    df_true: pd.DataFrame,
+    col_param: str,
+    label: str,
+    model_order: list[str],
+    group_order: list[str],
+    palette: dict[str, str],
+) -> sns.FacetGrid:
+    """True vs estimated per-subject parameter of held-out subjects (train
+    subjects in grey), with the held-out subjects' correlation and MAE."""
+    df = df_subject.merge(
+        df_true[[COL_SUBJECT, col_param]].rename(columns={col_param: "true"}),
+        on=COL_SUBJECT,
+        how="inner",
+    )
+    grid = sns.FacetGrid(df, col=COL_MODEL, col_order=model_order, height=3)
+    for model, ax in grid.axes_dict.items():
+        df_model = df[df[COL_MODEL] == model]
+        df_train = df_model.query(f"{COL_SET_NAME} == @SET_TRAIN")
+        df_test = df_model.query(f"{COL_SET_NAME} == @SET_TEST")
+        ax.scatter(
+            df_train["true"],
+            df_train[col_param],
+            s=6,
+            color=COLOR_TRAIN,
+            linewidth=0,
+            rasterized=True,
+        )
+        for group in group_order:
+            df_group = df_test.query(f"{COL_GROUP} == @group")
+            ax.scatter(
+                df_group["true"],
+                df_group[col_param],
+                s=14,
+                color=palette[group],
+                linewidth=0,
+            )
+        lims = [
+            min(df_model["true"].min(), df_model[col_param].min()),
+            max(df_model["true"].max(), df_model[col_param].max()),
+        ]
+        ax.plot(lims, lims, color="black", linewidth=1, linestyle="--")
+
+        # correlation is undefined if estimates are constant (e.g. no acceleration)
+        if df_test[col_param].nunique() > 1 and df_test["true"].nunique() > 1:
+            pearson_r = pearsonr(df_test["true"], df_test[col_param]).statistic
+            text_r = f"r = {pearson_r:.2f}"
+        else:
+            text_r = "r = n/a"
+        mae = (df_test[col_param] - df_test["true"]).abs().mean()
+        ax.text(
+            0.04,
+            0.96,
+            f"Held-out: {text_r}\nMAE = {mae:.2g}",
+            ha="left",
+            va="top",
+            transform=ax.transAxes,
+        )
+    grid.set_titles("{col_name}")
+    grid.set_axis_labels(f"True {label.lower()}", f"Estimated {label.lower()}")
+    grid.figure.legend(
+        [Line2D([], [], marker="o", linestyle="none", color=COLOR_TRAIN)]
+        + [
+            Line2D([], [], marker="o", linestyle="none", color=palette[group])
+            for group in group_order
+        ]
+        + [Line2D([], [], color="black", linestyle="--")],
+        [SET_LABELS[SET_TRAIN]]
+        + [
+            # no group suffix if there is only one group (e.g. no diagnosis)
+            f"{SET_LABELS[SET_TEST]}: {group}"
+            if len(group_order) > 1
+            else SET_LABELS[SET_TEST]
+            for group in group_order
+        ]
+        + ["Identity"],
+        title="Subjects",
+        loc="center left",
+        bbox_to_anchor=(1.0, 0.5),
+        frameon=False,
+    )
+    return grid
+
+
 def plot_model_fits(
     tag: str,
     dpath_results: Path,
@@ -458,10 +686,23 @@ def plot_model_fits(
     leaspy_algorithm_name: str = DEFAULT_LEASPY_ALGORITHM_NAME,
     leaspy_seed: int = DEFAULT_LEASPY_SEED,
     leaspy_n_jobs: int = DEFAULT_LEASPY_N_JOBS,
+    fedbiomed_personalize_algorithm: str = DEFAULT_PERSONALIZE_ALGORITHM,
+    personalize_seed: int = DEFAULT_PERSONALIZE_SEED,
+    dpmost_personalize_n_outer_iter: int = DEFAULT_DPMOST_N_OUTER_ITER,
+    personalize_n_timepoints: int | None = None,
 ):
     dpath_results_tag = get_dpath_latest(dpath_results) / tag
     dpath_figures = dpath_results_tag / DNAME_FIGURES
 
+    option_n_timepoints = (
+        ""
+        if personalize_n_timepoints is None
+        else f"--personalize-n-timepoints {personalize_n_timepoints} "
+    )
+    # held-out figures depend on how held-out subjects were personalized
+    suffix_heldout = get_n_timepoints_suffix(personalize_n_timepoints)
+
+    df_true = None
     fitted_models: list[FittedModel] = []
     # results files with both federated and centralized setups
     setup_comparisons: list[list[FittedModel]] = []
@@ -475,16 +716,33 @@ def plot_model_fits(
                 leaspy_algorithm_name=leaspy_algorithm_name,
                 leaspy_seed=leaspy_seed,
                 leaspy_n_jobs=leaspy_n_jobs,
+                fedbiomed_personalize_algorithm=fedbiomed_personalize_algorithm,
+                personalize_seed=personalize_seed,
+                dpmost_personalize_n_outer_iter=dpmost_personalize_n_outer_iter,
+                personalize_n_timepoints=personalize_n_timepoints,
             )
+        except PersonalizedParametersNotFoundError as exception:
+            raise click.ClickException(
+                f"{exception} in {fpath_json_results}. Run scripts/get_metrics.py "
+                f"--tag {tag} --results-dir {dpath_results} "
+                f"--fedbiomed-personalize-algorithm {fedbiomed_personalize_algorithm} "
+                f"--personalize-seed {personalize_seed} "
+                f"--dpmost-personalize-n-outer-iter {dpmost_personalize_n_outer_iter} "
+                f"{option_n_timepoints}"
+                "first to personalize the held-out subjects."
+            ) from exception
         except LeaspyIndividualParametersNotFoundError as exception:
             raise click.ClickException(
                 f"{exception} in {fpath_json_results}. Run scripts/get_metrics.py "
                 f"--tag {tag} --results-dir {dpath_results} "
                 f"--leaspy-algorithm-name {leaspy_algorithm_name} "
                 f"--leaspy-seed {leaspy_seed} --leaspy-n-jobs {leaspy_n_jobs} "
+                f"{option_n_timepoints}"
                 "first to personalize the Leaspy model."
             ) from exception
         fitted_models.extend(fitted_models_file)
+        if df_true is None:
+            df_true = get_df_true_subject(load_json_data(json_results))
         if set(SETUP_LINESTYLES) <= {m.setup for m in fitted_models_file}:
             setup_comparisons.append(
                 sorted(
@@ -499,7 +757,10 @@ def plot_model_fits(
     _make_labels_unique(fitted_models)
     model_order = [fitted_model.label for fitted_model in fitted_models]
 
-    df_subject = pd.concat([m.df_subject for m in fitted_models], ignore_index=True)
+    df_subject_all = pd.concat([m.df_subject for m in fitted_models], ignore_index=True)
+    has_heldout = (df_subject_all[COL_SET_NAME] == SET_TEST).any()
+    # existing plots only show the train subjects
+    df_subject = df_subject_all.query(f"{COL_SET_NAME} == @SET_TRAIN")
     df_trajectory = pd.concat(
         [m.df_trajectory for m in fitted_models], ignore_index=True
     )
@@ -538,12 +799,23 @@ def plot_model_fits(
             f"group_trajectories-by_setup-{_slugify(run_tag)}",
         )
 
-    # 2) spaghetti plots
+    # 2) spaghetti plots (train and held-out subjects separately)
     for fitted_model in fitted_models:
         _save(
             plot_spaghetti(fitted_model, biomarker_order, group_order, group_palette),
             f"spaghetti-{_slugify(fitted_model.label)}",
         )
+        if has_heldout:
+            _save(
+                plot_spaghetti(
+                    fitted_model,
+                    biomarker_order,
+                    group_order,
+                    group_palette,
+                    set_name=SET_TEST,
+                ),
+                f"spaghetti-{_slugify(fitted_model.label)}-heldout{suffix_heldout}",
+            )
 
     # 3) time shift comparison between models
     df_wide = get_df_time_shifts_wide(df_subject, model_order)
@@ -564,6 +836,37 @@ def plot_model_fits(
         plot_time_shift_by_group(df_subject, model_order, group_order, group_palette),
         "time_shift_by_group",
     )
+
+    # 4) held-out subjects
+    if not has_heldout:
+        return
+    _save(
+        plot_predicted_vs_observed(fitted_models, model_order, biomarker_order),
+        f"heldout-predicted_vs_observed{suffix_heldout}",
+    )
+    _save(
+        plot_time_shift_by_set(df_subject_all, model_order, group_order),
+        f"heldout-time_shift_by_set{suffix_heldout}",
+    )
+    if df_true is None:
+        print("True parameters not available. Skipping true vs estimated plots.")
+        return
+    for col_param, label, name in [
+        (COL_TIME_SHIFT, LABEL_TIME_SHIFT, "time_shift"),
+        (COL_ACCELERATION_FACTOR, LABEL_ACCELERATION_FACTOR, "acceleration_factor"),
+    ]:
+        _save(
+            plot_true_vs_estimated(
+                df_subject_all,
+                df_true,
+                col_param,
+                label,
+                model_order,
+                group_order,
+                group_palette,
+            ),
+            f"heldout-true_vs_estimated-{name}{suffix_heldout}",
+        )
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -604,6 +907,33 @@ def plot_model_fits(
     help="Number of parallel jobs of the Leaspy personalization to plot.",
     envvar="LEASPY_N_JOBS",
     show_envvar=True,
+)
+@click.option(
+    "--fedbiomed-personalize-algorithm",
+    type=click.Choice(PERSONALIZE_ALGORITHMS),
+    default=DEFAULT_PERSONALIZE_ALGORITHM,
+    help="Algorithm of the held-out subjects' personalization to plot (Fed-BioMed).",
+)
+@click.option(
+    "--personalize-seed",
+    type=int,
+    default=DEFAULT_PERSONALIZE_SEED,
+    help="Random seed of the held-out subjects' personalization to plot (Fed-BioMed).",
+    envvar="RNG_SEED",
+    show_envvar=True,
+)
+@click.option(
+    "--dpmost-personalize-n-outer-iter",
+    type=click.IntRange(min=1),
+    default=DEFAULT_DPMOST_N_OUTER_ITER,
+    help="Number of outer iterations of the held-out subjects' personalization to plot (DPMoSt).",
+)
+@click.option(
+    "--personalize-n-timepoints",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Number of first visits the held-out subjects' personalization to plot "
+    "was based on. Default: all visits.",
 )
 def main(**params):
     plot_model_fits(**params)

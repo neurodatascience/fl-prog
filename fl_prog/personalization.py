@@ -43,6 +43,32 @@ VAR_LOG_ACCELERATION_FACTORS = "log_acceleration_factors"
 EnergyFn = Callable[[dict[str, torch.Tensor]], torch.Tensor]
 
 
+# ----- personalization on a subset of visits -----
+
+
+def get_first_timepoints_mask(
+    subjects: np.ndarray | pd.Series | pd.Index,
+    timepoints: np.ndarray | pd.Series | pd.Index,
+    n_timepoints: int | None,
+) -> np.ndarray:
+    """True for each subject's first ``n_timepoints`` visits (by time), in row
+    order. All True if ``n_timepoints`` is None."""
+    subjects = np.asarray(subjects)
+    if n_timepoints is None:
+        return np.ones(len(subjects), dtype=bool)
+    ranks = (
+        pd.Series(np.asarray(timepoints, dtype=float))
+        .groupby(subjects)
+        .rank(method="first")
+    )
+    return (ranks <= n_timepoints).to_numpy()
+
+
+def get_n_timepoints_suffix(n_timepoints: int | None) -> str:
+    """Suffix identifying personalization on each subject's first visits only."""
+    return "" if n_timepoints is None else f"-first{n_timepoints}"
+
+
 # ----- fl_prog (Fed-BioMed) model -----
 
 

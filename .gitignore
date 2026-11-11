@@ -11,6 +11,10 @@ __pycache__
 # project
 data
 results
-fedbiomed
+fedbiomed*
 notebooks/*.ipynb
 notebooks/*.json
+
+# Vim
+*~
+*.un~

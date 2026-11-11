@@ -73,30 +73,44 @@ def _split_site_last_timepoint(
     return dfs_train, dfs_test, subjects
 
 
-def _split_site_subjects(
-    df_site: pd.DataFrame,
+def _choose_test_subjects(
+    df: pd.DataFrame,
     col_subject: str,
     n_splits: int,
     random_seed: int | None,
-) -> tuple[list[pd.DataFrame], list[pd.DataFrame], list[str]]:
-    """Leave out entire subjects, stratified by number of timepoints."""
-    has_adaptation = COL_ADAPTATION in df_site.columns
+    sort_subjects: bool = False,
+) -> set[str]:
+    """Choose held-out subjects (one fold), stratified by number of timepoints.
+
+    With ``sort_subjects``, subjects are sorted by ID first so that the result only
+    depends on the set of subjects and the random seed (not on row order).
+    """
+    has_adaptation = COL_ADAPTATION in df.columns
 
     n_timepoints = pd.Series(
         {
             subject: len(df_subject)
-            for subject, df_subject in df_site.groupby(col_subject, sort=False)
+            for subject, df_subject in df.groupby(col_subject, sort=False)
             if not _is_adaptation_subject(df_subject, subject, has_adaptation)
         },
         dtype=int,
     )
+    if sort_subjects:
+        n_timepoints = n_timepoints.sort_index()
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
     with warnings.catch_warnings():
         # allow fewer subjects than n_splits
         warnings.filterwarnings("ignore", message="The least populated class")
         _, idx_test = next(cv.split(n_timepoints.index, n_timepoints))
-    subjects_test = set(n_timepoints.index[idx_test])
+    return set(n_timepoints.index[idx_test])
 
+
+def _split_site_subjects(
+    df_site: pd.DataFrame,
+    col_subject: str,
+    subjects_test: set[str],
+) -> tuple[list[pd.DataFrame], list[pd.DataFrame], list[str]]:
+    """Leave out entire (preselected) subjects."""
     dfs_train = []
     dfs_test = []
     subjects = []
@@ -116,10 +130,13 @@ def _get_new_tag(
     min_n_timepoints: int,
     n_splits: int,
     random_seed: int | None,
+    pooled: bool = False,
 ) -> str:
     if mode == SplitMode.TIMEPOINT:
         return f"{tag}_split{min_n_timepoints}"
     new_tag = f"{tag}_heldout{round(100 / n_splits)}"
+    if pooled:
+        new_tag += "pooled"
     if random_seed is not None:
         new_tag += f"_seed{random_seed}"
     return new_tag
@@ -161,6 +178,7 @@ def split_train_test(
     min_n_timepoints: int = DEFAULT_MIN_N_TIMEPOINTS,
     test_fraction: float = DEFAULT_TEST_FRACTION,
     random_seed: int | None = None,
+    pooled: bool = False,
     overwrite: bool = False,
     suffix_test: str = SUFFIX_TEST,
 ):
@@ -177,7 +195,7 @@ def split_train_test(
         )
 
     old_tag = tag
-    tag = _get_new_tag(tag, mode, min_n_timepoints, n_splits, random_seed)
+    tag = _get_new_tag(tag, mode, min_n_timepoints, n_splits, random_seed, pooled)
     dpath_out_old = get_dpath_latest(dpath_data) / old_tag
     fpath_json_old = dpath_out_old / f"{old_tag}.json"
     dpath_out_new = get_dpath_latest(dpath_data, use_today=True) / tag
@@ -205,12 +223,8 @@ def split_train_test(
     config_old = json_data_old["settings"].get("config", {})
     settings["config"] = config_old
 
-    dfs_test = []
-    node_id_map_new = {}
-    subjects_by_node = {}
-    scaling_references = {}
-    n_samples = 0
-    for fname_site, node_id in node_id_map_old.items():
+    fnames_site = []
+    for fname_site in node_id_map_old:
         if fname_site.endswith("-merged.tsv"):
             click.secho(
                 "WARNING: merged file found. Make sure to merge the data after this step.",
@@ -218,11 +232,34 @@ def split_train_test(
                 bold=True,
             )
             continue
+        fnames_site.append(fname_site)
+    dfs_site = {
+        fname_site: pd.read_csv(
+            dpath_out_old / fname_site, sep="\t", dtype={col_subject: str}
+        )
+        for fname_site in fnames_site
+    }
 
+    subjects_test_pooled = None
+    if mode == SplitMode.SUBJECT and pooled:
+        # same held-out subjects regardless of how subjects are split into sites
+        subjects_test_pooled = _choose_test_subjects(
+            pd.concat(dfs_site.values()),
+            col_subject,
+            n_splits,
+            random_seed,
+            sort_subjects=True,
+        )
+
+    dfs_test = []
+    node_id_map_new = {}
+    subjects_by_node = {}
+    scaling_references = {}
+    n_samples = 0
+    for fname_site, df_site in dfs_site.items():
+        node_id = node_id_map_old[fname_site]
         subjects_by_node[node_id] = []
 
-        fpath_site = dpath_out_old / fname_site
-        df_site = pd.read_csv(fpath_site, sep="\t", dtype={col_subject: str})
         n_samples += len(df_site)
 
         if mode == SplitMode.TIMEPOINT:
@@ -230,8 +267,14 @@ def split_train_test(
                 df_site, col_subject, col_timepoint, min_n_timepoints
             )
         else:
+            if subjects_test_pooled is not None:
+                subjects_test = subjects_test_pooled
+            else:
+                subjects_test = _choose_test_subjects(
+                    df_site, col_subject, n_splits, random_seed
+                )
             dfs_train, dfs_test_site, subjects = _split_site_subjects(
-                df_site, col_subject, n_splits, random_seed
+                df_site, col_subject, subjects_test
             )
             n_subjects_test = sum(df[col_subject].nunique() for df in dfs_test_site)
             print(
@@ -340,6 +383,16 @@ def split_train_test(
     ),
 )
 @click.option("--random-seed", type=int, envvar="RNG_SEED", show_envvar=True)
+@click.option(
+    "--pooled/--per-site",
+    default=False,
+    show_default=True,
+    help=(
+        "Choose held-out subjects across all sites pooled (same test set regardless "
+        "of the site split) or within each site."
+        f" Only used in {SplitMode.SUBJECT.value!r} mode."
+    ),
+)
 @click.option(
     "--overwrite/--no-overwrite",
     default=False,

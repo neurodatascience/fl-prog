@@ -20,6 +20,7 @@ from fl_prog.utils.constants import (
 )
 
 DPATH_PROJECT = Path(__file__).resolve().parent.parent.parent
+ENV_VAR_DATE = "FL_PROG_DATE"
 DEFAULT_DPATH_DATA = DPATH_PROJECT / "data"
 DEFAULT_DPATH_FEDBIOMED = DPATH_PROJECT / "fedbiomed"
 DEFAULT_DPATH_RESULTS = DPATH_PROJECT / "results"
@@ -46,9 +47,11 @@ def get_dpath_latest(dpath_parent, use_today=False):
     dpath_parent = Path(dpath_parent)
     dpath_latest = dpath_parent / DNAME_LATEST
 
-    dpath_today = dpath_parent / datetime.datetime.now().astimezone().strftime(
-        DATE_FORMAT
-    )
+    # override "today" (e.g. to keep long runs from moving "latest" at midnight)
+    date_str = os.environ.get(
+        ENV_VAR_DATE
+    ) or datetime.datetime.now().astimezone().strftime(DATE_FORMAT)
+    dpath_today = dpath_parent / date_str
     if (
         dpath_latest.exists()
         and use_today

@@ -51,16 +51,25 @@ def _get_fname_out(tag, i: int | None = None, suffix: str = ".tsv") -> str:
 
 
 def _split_participants_into_sites(
-    participant_ids: list, n_sites: int, site_map: dict | None = None
+    participant_ids: list,
+    n_sites: int,
+    site_map: dict | None = None,
+    random_state: int | None = None,
 ) -> list[np.ndarray]:
     if site_map is None:
+        # participant IDs are already shuffled: no need to shuffle groups
         site_map = {
             participant_id: i for i, participant_id in enumerate(participant_ids)
         }
+        splitter = GroupKFold(n_splits=n_sites)
+    elif random_state is not None:
+        # randomize which groups (e.g. ADNI sites) end up in the same node
+        splitter = GroupKFold(n_splits=n_sites, shuffle=True, random_state=random_state)
+    else:
+        splitter = GroupKFold(n_splits=n_sites)
 
     participant_ids = np.array(participant_ids)
 
-    splitter = GroupKFold(n_splits=n_sites)
     participant_ids_split = []
     for _, idx_test in splitter.split(
         participant_ids,
@@ -351,7 +360,9 @@ def get_adni_data(
     subjects_by_node = {}
     scaling_references = {}
     for i_site, site_participant_ids in enumerate(
-        _split_participants_into_sites(participant_ids, n_sites, site_map=site_map),
+        _split_participants_into_sites(
+            participant_ids, n_sites, site_map=site_map, random_state=rng_seed
+        ),
         start=1,
     ):
         node_id = str(i_site)

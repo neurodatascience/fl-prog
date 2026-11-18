@@ -13,8 +13,6 @@ PER_SUBJECT_FIELDS = ("time_shifts", "acceleration_factors")
 CORRELATED_FIELDS = ("k_values", "x0_values")
 # recovery after removing the arbitrary origin of the disease-time axis only
 SUFFIX_SHIFTED = "_shifted"
-# recovery after also removing a stretch of the axis (shape of the trajectories)
-SUFFIX_ALIGNED = "_aligned"
 # rows over all biomarkers: mean of the per-biomarker values of these metrics
 BIOMARKER_ALL = "all"
 METRICS_AVERAGED_OVER_BIOMARKERS = (
@@ -145,36 +143,9 @@ def average_over_biomarkers(df_metrics: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([df_biomarkers, df_mean[df_metrics.columns]], ignore_index=True)
 
 
-def get_time_axis_alignment(
-    param_true: ModelParams, param_estimated: ModelParams
-) -> tuple[float, float]:
-    """Affine map between the true and estimated disease-time axes.
-
-    The model is invariant to an affine change of the disease-time axis
-    t -> scale * t + offset, with time shifts -> scale * time shifts + offset,
-    x0 -> scale * x0 + offset, k -> k / scale and acceleration factors ->
-    scale * acceleration factors. The map is estimated by regressing the
-    estimated time shifts on the true ones (same subjects).
-
-    Returns (scale, offset), NaN if it cannot be estimated.
-    """
-    true_values = np.asarray(param_true.time_shifts, dtype=float)
-    est_values = np.asarray(param_estimated.time_shifts, dtype=float)
-    try:
-        result = linregress(true_values, est_values)
-    except ValueError:
-        return np.nan, np.nan
-    return float(result.slope), float(result.intercept)
-
-
 def get_midpoint_offset(param_true: ModelParams, param_estimated: ModelParams) -> float:
     """Offset of the estimated disease-time axis relative to the true one, as the
-    mean difference between estimated and true biomarker midpoints (x0).
-
-    Only the origin of the disease-time axis is arbitrary (the model is exactly
-    invariant to translations); its scale is tied to calendar time through the
-    acceleration factors, so it is not removed here.
-    """
+    mean difference between estimated and true biomarker midpoints (x0)."""
     return float(
         np.mean(
             np.asarray(param_estimated.x0_values, dtype=float)
@@ -183,33 +154,27 @@ def get_midpoint_offset(param_true: ModelParams, param_estimated: ModelParams) -
     )
 
 
-def align_time_axis(params: ModelParams, scale: float, offset: float) -> ModelParams:
-    """Express parameters on the true disease-time axis (inverse of the map from
-    ``get_time_axis_alignment``). Scaling factors and sigma are unchanged."""
+def shift_time_axis(params: ModelParams, offset: float) -> ModelParams:
+    """Translate the disease-time axis by ``-offset``.
+
+    x0 and time shifts are shifted, other parameters are unchanged."""
     return dataclasses.replace(
         params,
-        k_values=np.asarray(params.k_values, dtype=float) * scale,
-        x0_values=(np.asarray(params.x0_values, dtype=float) - offset) / scale,
-        time_shifts=(np.asarray(params.time_shifts, dtype=float) - offset) / scale,
-        acceleration_factors=np.asarray(params.acceleration_factors, dtype=float)
-        / scale,
+        x0_values=np.asarray(params.x0_values, dtype=float) - offset,
+        time_shifts=np.asarray(params.time_shifts, dtype=float) - offset,
     )
 
 
 def compute_time_axis_metrics(
-    scale: float, offset: float, midpoint_offset: float, setup: str
+    midpoint_offset: float, setup: str
 ) -> list[dict[str, str | float]]:
-    """Rows with the estimated-vs-true disease-time axis map: scale and offset from
-    ``get_time_axis_alignment`` and offset from ``get_midpoint_offset``."""
+    """Row with the offset of the estimated disease-time axis relative to the true
+    one."""
     return _metric_rows(
         setup,
         "time_axis",
         "all",
-        [
-            ("time_axis_scale", scale),
-            ("time_axis_offset", offset),
-            ("time_axis_midpoint_offset", midpoint_offset),
-        ],
+        [("time_axis_midpoint_offset", midpoint_offset)],
     )
 
 

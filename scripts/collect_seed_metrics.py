@@ -61,9 +61,6 @@ MODELS = {
 }
 METRICS = {"mean_absolute_error": "MAE", "r2_score": "R²"}
 # (set name, metric) -> label
-# main recovery metrics: only the arbitrary origin of the disease-time axis is
-# removed (k and correlations do not depend on it), so an error in the time scale
-# counts as error; the time scale itself is reported separately
 RECOVERY_METRICS = {
     ("recovery_per_biomarker", "k_values_mean_abs_relative_error"): "k rel. error",
     (
@@ -74,7 +71,6 @@ RECOVERY_METRICS = {
         "recovery_per_biomarker",
         "scaling_factors_mean_abs_relative_error",
     ): "Scaling rel. error",
-    ("time_axis", "time_axis_scale"): "Time scale (est./true)",
     ("recovery_per_subject", "time_shifts_pearson_r"): "Time shift r (train)",
     ("recovery_per_subject_test", "time_shifts_pearson_r"): "Time shift r (test)",
     (
@@ -84,25 +80,8 @@ RECOVERY_METRICS = {
     (
         "recovery_per_subject",
         "acceleration_factors_spearman_r",
-    ): "Accel. factor ρ (train)",
+    ): "Accel. factor \u03c1 (train)",  # rho
 }
-# supplementary: shape of the trajectories, after also removing a stretch of the
-# disease-time axis (affine map estimated from the training subjects' time shifts)
-RECOVERY_METRICS_ALIGNED = {
-    (
-        "recovery_per_biomarker_aligned",
-        "k_values_mean_abs_relative_error",
-    ): "k rel. error (aligned)",
-    (
-        "recovery_per_biomarker_aligned",
-        "x0_values_mean_abs_relative_error",
-    ): "x0 rel. error (aligned)",
-    (
-        "recovery_per_subject_test_aligned",
-        "time_shifts_mae",
-    ): "Time shift MAE (test, aligned)",
-}
-SUFFIX_OUT_ALIGNED = "-aligned"
 BIOMARKER_ALL = "all"
 SET_NAME_ORDER = ["train", "test"]
 PATTERN_TAG = re.compile(
@@ -334,11 +313,6 @@ def main(dpath_results: Path, dataset: str | None):
         dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}-summary.tsv",
     )
     _plot_recovery(df_recovery, dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}.svg")
-    _plot_recovery(
-        df_recovery,
-        dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}{SUFFIX_OUT_ALIGNED}.svg",
-        metrics=RECOVERY_METRICS_ALIGNED,
-    )
 
 
 if __name__ == "__main__":

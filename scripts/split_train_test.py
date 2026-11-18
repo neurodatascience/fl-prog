@@ -30,6 +30,8 @@ DEFAULT_MODE = SplitMode.TIMEPOINT
 DEFAULT_MIN_N_TIMEPOINTS = 4
 DEFAULT_TEST_FRACTION = 0.14
 SUFFIX_TEST = "-test"
+# settings of the input data that are copied to the output JSON (if present)
+SETTINGS_KEYS_KEPT = ("overlap",)
 
 
 def _is_adaptation_subject(
@@ -220,8 +222,11 @@ def split_train_test(
     col_subject = json_data_old["cols"]["col_subject"]
     col_timepoint = json_data_old["cols"]["col_timepoint"]
     col_subject_index = json_data_old["cols"]["col_subject_index"]
-    config_old = json_data_old["settings"].get("config", {})
-    settings["config"] = config_old
+    # settings of the input data needed downstream
+    settings["config"] = json_data_old["settings"].get("config", {})
+    for key in SETTINGS_KEYS_KEPT:
+        if key in json_data_old["settings"]:
+            settings[key] = json_data_old["settings"][key]
 
     fnames_site = []
     for fname_site in node_id_map_old:

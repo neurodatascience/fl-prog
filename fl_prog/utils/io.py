@@ -17,6 +17,8 @@ from fl_prog.utils.constants import (
     DPMOST_COL_TIMEPOINT,
     LEASPY_COL_SUBJECT,
     LEASPY_COL_TIMEPOINT,
+    NODE_ID_CENTRALIZED,
+    NODE_ID_TEST,
 )
 
 DPATH_PROJECT = Path(__file__).resolve().parent.parent.parent
@@ -181,3 +183,61 @@ def format_df_for_dpmost(
     )
     df = df.loc[:, [DPMOST_COL_SUBJECT, DPMOST_COL_TIMEPOINT] + cols_biomarker]
     return df
+
+
+def load_simulated_sites(dpath: Path, json_data: dict) -> pd.DataFrame:
+    """Load the site data of a ``simulate_data.py`` output, one row per visit, with
+    the site and the subject's true t0, acceleration factor and disease time
+    (t0 + acceleration factor * timepoint).
+
+    Merged (centralized) data and held-out test subjects are ignored.
+    """
+    cols = json_data["cols"]
+    col_subject, col_timepoint = cols["col_subject"], cols["col_timepoint"]
+    params = json_data["params"]
+    subjects_by_node = json_data["subjects_by_node"]
+
+    # true per-subject params: one list per entry of subjects_by_node (in order,
+    # excluding the centralized node), each in the same subject order
+    node_ids = [
+        node_id for node_id in subjects_by_node if node_id != NODE_ID_CENTRALIZED
+    ]
+    if len(node_ids) != len(params["time_shifts"]):
+        raise ValueError(
+            f"Expected one params['time_shifts'] entry per node in {node_ids}, got "
+            f"{len(params['time_shifts'])}"
+        )
+    df_params = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    col_subject: [
+                        str(subject) for subject in subjects_by_node[node_id]
+                    ],
+                    "t0": time_shifts,
+                    "acceleration_factor": acceleration_factors,
+                }
+            )
+            for node_id, time_shifts, acceleration_factors in zip(
+                node_ids,
+                params["time_shifts"],
+                params["acceleration_factors"],
+                strict=True,
+            )
+        ],
+        ignore_index=True,
+    )
+
+    dfs = []
+    for fname, node_id in json_data["node_id_map"].items():
+        if node_id in (NODE_ID_CENTRALIZED, NODE_ID_TEST):
+            continue
+        # subject IDs as strings (JSON and TSV types can differ)
+        df = pd.read_csv(dpath / fname, sep="\t", dtype={col_subject: str})
+        df = df.merge(df_params, on=col_subject, how="left", validate="many_to_one")
+        if df["t0"].isna().any():
+            raise ValueError(f"Subjects in {fname} without true parameters")
+        df["site"] = node_id
+        df["disease_time"] = df["t0"] + df["acceleration_factor"] * df[col_timepoint]
+        dfs.append(df)
+    return pd.concat(dfs, ignore_index=True)

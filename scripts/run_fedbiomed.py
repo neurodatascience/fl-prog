@@ -302,13 +302,14 @@ def run_fedbiomed(
     save_all_aggregated_params: bool = False,
     random_seed: int | None = None,
     overwrite: bool = False,
+    print_run_tag: bool = False,
 ):
     setups = set(setups)
 
-    dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
     run_tag = "-".join(
         [
             "fedbiomed",
+            "_".join(sorted(Setup(setup).value for setup in setups)),
             f"{n_rounds}",
             f"{n_updates}",
             f"{batch_size}",
@@ -325,6 +326,12 @@ def run_fedbiomed(
             f"{random_seed}" if random_seed is not None else "no_seed",
         ]
     )
+    if print_run_tag:
+        # e.g. to select the results file of this run in get_metrics.py --run-tag
+        click.echo(run_tag)
+        return
+
+    dpath_out = get_dpath_latest(dpath_results, use_today=True) / tag
     fpath_out = dpath_out / f"{run_tag}-estimated_params.json"
     if _results_exist(fpath_out) and not overwrite:
         click.secho(
@@ -545,6 +552,11 @@ def run_fedbiomed(
 )
 @click.option("--random-seed", type=int, envvar="RNG_SEED")
 @click.option("--overwrite/--no-overwrite", default=False)
+@click.option(
+    "--print-run-tag",
+    is_flag=True,
+    help="Only print the run tag (results file name prefix) and exit.",
+)
 def main(**params):
     run_fedbiomed(**params)
 

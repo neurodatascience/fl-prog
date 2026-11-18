@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import dataclasses
+import fnmatch
 from collections.abc import Callable
 from pathlib import Path
 
@@ -574,12 +575,15 @@ def get_metrics(
     personalize_seed=DEFAULT_PERSONALIZE_SEED,
     dpmost_personalize_n_outer_iter=DEFAULT_DPMOST_N_OUTER_ITER,
     personalize_n_timepoints: int | None = None,
+    run_tag_pattern: str = "*",
 ):
     dpath_results_latest = get_dpath_latest(dpath_results)
     for fpath_json_results, json_results in iter_result_files(
         dpath_results_latest / tag
     ):
         run_tag = get_run_tag(fpath_json_results)
+        if not fnmatch.fnmatchcase(run_tag, run_tag_pattern):
+            continue
         model_type = get_model_type(fpath_json_results)
         print(f"fpath_json_results: {fpath_json_results}")
 
@@ -702,6 +706,17 @@ def get_metrics(
     help="Estimate held-out subjects' parameters from their first N visits only, "
     "and score these (test_fit) and later visits (test_forecast) separately. "
     "Subjects with N visits or fewer are not scored. Default: all visits.",
+)
+@click.option(
+    "--run-tag",
+    "run_tag_pattern",
+    type=str,
+    default="*",
+    show_default=True,
+    help=(
+        "Only process results files whose run tag (file name without "
+        "-estimated_params.json) matches this glob pattern."
+    ),
 )
 def main(**params):
     get_metrics(**params)

@@ -2,7 +2,7 @@
 
 import pickle
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -146,6 +146,18 @@ def iter_result_files(dpath_results_tag: Path) -> Iterator[tuple[Path, dict]]:
         dpath_results_tag.glob(f"*{SUFFIX_ESTIMATED_PARAMS}")
     ):
         yield fpath_json_results, load_json(fpath_json_results)
+
+
+def get_result_setups(fpath_json_results: Path) -> set[str]:
+    """Get available setups (e.g. "centralized", "federated") from a results file."""
+    return set(load_json(fpath_json_results).get("results", {}))
+
+
+def filter_result_files_by_setup(
+    fpaths_json_results: Iterable[Path], setup: str
+) -> list[Path]:
+    """Find result files that contain results for a given setup."""
+    return [fpath for fpath in fpaths_json_results if setup in get_result_setups(fpath)]
 
 
 def load_df_data(

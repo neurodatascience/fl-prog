@@ -2,7 +2,7 @@
 """Collect metrics from a multi-seed run (see ``run_adni_seeds.sh`` and
 ``run_synthetic_seeds.sh``).
 
-Expected layout (after ``consolidate_seed_results.py``)::
+Expected layout::
 
     <results-dir>/<tag>/<model type>-*-fit_quality*.tsv
     <results-dir>/<tag>/<model type>-*-param_recovery*.tsv (synthetic data only)
@@ -87,7 +87,7 @@ SET_NAME_ORDER = ["train", "test"]
 PATTERN_TAG = re.compile(
     rf"^(?P<dataset>{'|'.join(DATASETS)})_(?P<condition>.+?)_s(?P<seed>\d+)_"
 )
-# Fed-BioMed run tag: ...-<scaling|no_scaling>-<aggregator[_optimizer][_locallrX]>-<seed>-
+# Fed-BioMed run tag: fedbiomed[-<setups>]-...-<scaling|no_scaling>-<aggregator[_optimizer][_locallrX]>-<seed>-
 PATTERN_FBM_AGGREGATOR = re.compile(
     r"-(?:no_)?scaling-(?P<aggregator>[^-]+)-(?:\d+|no_seed)-"
 )
@@ -137,7 +137,26 @@ def _collect(dpath_results: Path, dataset: str, pattern_fname: str) -> pd.DataFr
             dfs.append(df_setup)
     if not dfs:
         return pd.DataFrame()
-    return pd.concat(dfs, ignore_index=True)
+    df = pd.concat(dfs, ignore_index=True)
+    # a model/condition/seed must come from a single file (e.g. not from both a run
+    # with all setups and a run with only one of them, or from two personalization
+    # seeds), otherwise it would be counted more than once
+    n_files = df.groupby(["model", "condition", "seed"])["fpath"].nunique()
+    if (n_files > 1).any():
+        duplicates = n_files[n_files > 1].index.tolist()
+        raise click.ClickException(
+            f"Results for {duplicates} come from more than one file: "
+            + ", ".join(
+                sorted(
+                    set(
+                        df.set_index(["model", "condition", "seed"])
+                        .loc[duplicates, "fpath"]
+                        .tolist()
+                    )
+                )
+            )
+        )
+    return df
 
 
 def _infer_dataset(dpath_results: Path) -> str:

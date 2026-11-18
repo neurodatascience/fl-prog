@@ -6,7 +6,9 @@
 #
 # Usage: run_adni_seeds.sh {prep|start-nodes|stop-nodes|fit|summarize|all} [SEED ...]
 #
-# Environment overrides: SEEDS, FL_PROG_DATE, STAGING_DIR, MAX_USER_THREADS,
+# All runs write to results/<FL_PROG_DATE>/<tag>/.
+#
+# Environment overrides: SEEDS, FL_PROG_DATE, LOG_DIR, MAX_USER_THREADS,
 # FBM_EXTRA_ARGS / DPMOST_EXTRA_ARGS / LEASPY_EXTRA_ARGS (e.g. for smoke tests)
 
 set -uo pipefail
@@ -21,9 +23,9 @@ MODEL_SEED=3791
 TEST_FRACTION=0.1
 TEST_PCT=10
 export FL_PROG_DATE=${FL_PROG_DATE:-$(date +%Y_%m_%d)}
-STAGING_DIR=${STAGING_DIR:-"${ROOT_DIR}/results/_staging-seeds"}
-LOG_DIR="${STAGING_DIR}/logs"
-NODE_PIDS_FILE="${STAGING_DIR}/node_pids.txt"
+RESULTS_DIR="${ROOT_DIR}/results"
+LOG_DIR=${LOG_DIR:-"${RESULTS_DIR}/${FL_PROG_DATE}/logs-adni"}
+NODE_PIDS_FILE="${LOG_DIR}/node_pids.txt"
 MAX_USER_THREADS=${MAX_USER_THREADS:-3000}
 NICE="nice -n 10"
 
@@ -188,22 +190,26 @@ cmd_stop_nodes() {
 
 # ===== fit =====
 fit_fbm_lane() {
-    local lane=$1 dpath_fbm cond setup seed tag
+    local lane=$1 dpath_fbm cond setup seed tag run_tag
     IFS='|' read -r dpath_fbm cond setup <<<"${FBM_LANES[$lane]}"
-    local dpath_results="${STAGING_DIR}/${lane}"
-    mkdir -p "${LOG_DIR}/${lane}" "$dpath_results"
+    mkdir -p "${LOG_DIR}/${lane}"
     set_threads 1
     for seed in $SEEDS; do
         tag=$(final_tag "$cond" "$seed")
         wait_for_threads
         log "[${lane}] seed ${seed}: ${tag}"
         {
+            # this run's results file only (other lanes can write to the same tag)
             # shellcheck disable=SC2086
-            run $NICE "${SCRIPTS_DIR}/run_fedbiomed.py" --tag "$tag" \
+            run_tag=$(python "${SCRIPTS_DIR}/run_fedbiomed.py" --tag "$tag" \
                 --fedbiomed-dir "${ROOT_DIR}/${dpath_fbm}" --setup "$setup" \
-                --results-dir "$dpath_results" $FBM_ARGS &&
+                $FBM_ARGS --print-run-tag | tail -n 1) &&
+                # shellcheck disable=SC2086
+                run $NICE "${SCRIPTS_DIR}/run_fedbiomed.py" --tag "$tag" \
+                    --fedbiomed-dir "${ROOT_DIR}/${dpath_fbm}" --setup "$setup" \
+                    --results-dir "$RESULTS_DIR" $FBM_ARGS &&
                 run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
-                    --results-dir "$dpath_results"
+                    --results-dir "$RESULTS_DIR" --run-tag "$run_tag"
         } >"${LOG_DIR}/${lane}/seed${seed}.log" 2>&1 ||
             log "[ERROR] [${lane}] seed ${seed} failed, see ${LOG_DIR}/${lane}/seed${seed}.log"
     done
@@ -214,28 +220,25 @@ fit_baseline_one() {
     # $1: model (dpmost|leaspy), $2: seed
     local model=$1 seed=$2 tag args
     tag=$(final_tag iid "$seed")
-    local dpath_results="${STAGING_DIR}/${model}"
     [ "$model" = dpmost ] && args=$DPMOST_ARGS || args=$LEASPY_ARGS
     wait_for_threads
     log "[${model}] seed ${seed}: ${tag}"
     {
         # shellcheck disable=SC2086
         run $NICE "${SCRIPTS_DIR}/run_${model}.py" --tag "$tag" \
-            --results-dir "$dpath_results" $args &&
+            --results-dir "$RESULTS_DIR" $args &&
             run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
-                --results-dir "$dpath_results"
+                --results-dir "$RESULTS_DIR" --run-tag "${model}-*"
     } >"${LOG_DIR}/${model}/seed${seed}.log" 2>&1 ||
         { log "[ERROR] [${model}] seed ${seed} failed, see ${LOG_DIR}/${model}/seed${seed}.log"; return 1; }
 }
 
 fit_baseline_lane() {
     local model=$1
-    mkdir -p "${LOG_DIR}/${model}" "${STAGING_DIR}/${model}"
+    mkdir -p "${LOG_DIR}/${model}"
     set_threads 4
-    # create the dated results dir/symlink before running jobs in parallel
-    ( cd "$ROOT_DIR" && python -c "from fl_prog.utils.io import get_dpath_latest; get_dpath_latest('${STAGING_DIR}/${model}', use_today=True)" )
     export -f fit_baseline_one wait_for_threads log run final_tag base_tag
-    export SCRIPTS_DIR STAGING_DIR LOG_DIR DPMOST_ARGS LEASPY_ARGS NICE MAX_USER_THREADS \
+    export SCRIPTS_DIR RESULTS_DIR LOG_DIR DPMOST_ARGS LEASPY_ARGS NICE MAX_USER_THREADS \
         TEST_PCT SCALING_SUFFIX
     # shellcheck disable=SC2086
     parallel --line-buffer --jobs 2 fit_baseline_one "$model" ::: $SEEDS
@@ -244,6 +247,8 @@ fit_baseline_lane() {
 
 cmd_fit() {
     mkdir -p "$LOG_DIR"
+    # create the dated results dir/symlink before running jobs in parallel
+    ( cd "$ROOT_DIR" && python -c "from fl_prog.utils.io import get_dpath_latest; get_dpath_latest('${RESULTS_DIR}', use_today=True)" ) || return 1
     local pids=() lane
     for lane in "${!FBM_LANES[@]}"; do
         fit_fbm_lane "$lane" &
@@ -258,11 +263,8 @@ cmd_fit() {
 }
 
 cmd_summarize() {
-    # merge per-lane staging results into results/<date>/<tag>/ (copies, idempotent)
-    run python "${SCRIPTS_DIR}/consolidate_seed_results.py" \
-        --staging-dir "$STAGING_DIR" --results-dir "${ROOT_DIR}/results" || return 1
     run python "${SCRIPTS_DIR}/collect_seed_metrics.py" \
-        --results-dir "${ROOT_DIR}/results/${FL_PROG_DATE}"
+        --results-dir "${RESULTS_DIR}/${FL_PROG_DATE}"
 }
 
 # ===== main =====
@@ -275,7 +277,7 @@ shift
 [ "$#" -gt 0 ] && SEEDS="$*"
 
 cd "$ROOT_DIR" || exit 1
-log "FL_PROG_DATE=${FL_PROG_DATE} STAGING_DIR=${STAGING_DIR} SEEDS=${SEEDS}"
+log "FL_PROG_DATE=${FL_PROG_DATE} LOG_DIR=${LOG_DIR} SEEDS=${SEEDS}"
 case $COMMAND in
 prep) cmd_prep ;;
 start-nodes) cmd_start_nodes ;;

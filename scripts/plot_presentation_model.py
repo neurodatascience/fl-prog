@@ -22,7 +22,7 @@ from matplotlib.path import Path as MplPath
 from matplotlib.textpath import TextToPath
 from matplotlib.transforms import Affine2D
 
-from fl_prog.plotting import save_fig
+from fl_prog.plotting import PARAM_COLORS, PARAM_SYMBOLS, save_fig
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS
 
@@ -35,28 +35,19 @@ COLOR_MUTED = "#666666"
 COLOR_POPULATION = "#1c4f8f"  # header colour, group-level parameters (cold)
 COLOR_INDIVIDUAL = "#b8450f"  # header colour, subject-level parameters (warm)
 
-# one colour per parameter: cold for group-level, warm for subject-level
-PARAM_COLORS = {
-    "k": "#1971c2",  # blue
-    "m": "#0c8599",  # teal
-    "s": "#7048e8",  # violet
-    "σ": "#2f9e44",  # green
-    "τ": "#e8590c",  # orange
-    "α": "#d6336c",  # raspberry red
-}
 SUBSCRIPTS = {"i", "j"}  # bold subscripts take the colour of the parameter before them
 
 FS_EQ = 26
 FS_HEADER = 15
 FS_LEGEND = 14
 
-# parameters, in bold (subscripts too; \boldsymbol{k_j} would drop the bold)
-K = r"\boldsymbol{k}_{\boldsymbol{j}}"
-M = r"\boldsymbol{m}_{\boldsymbol{j}}"
-S = r"\boldsymbol{s}_{\boldsymbol{j}}"
-SIGMA = r"\boldsymbol{\sigma}_{\boldsymbol{j}}"
-TAU = r"\boldsymbol{\tau}_{\boldsymbol{i}}"
-ALPHA = r"\boldsymbol{\alpha}_{\boldsymbol{i}}"
+# parameters, in bold (colours in PARAM_COLORS)
+K = PARAM_SYMBOLS["k"]
+M = PARAM_SYMBOLS["m"]
+S = PARAM_SYMBOLS["s"]
+SIGMA = PARAM_SYMBOLS["sigma"]
+TAU = PARAM_SYMBOLS["tau"]
+ALPHA = PARAM_SYMBOLS["alpha"]
 
 B = r"b_{i,j}(t)"
 EPS = r"\varepsilon_{i,j}(t)"
@@ -104,6 +95,13 @@ ROW_BASELINE = 0.17  # inches from the top of a row to its text baseline
 _TEXT_TO_PATH = TextToPath()
 
 
+def _param_name(char: str) -> str:
+    """Key in PARAM_COLORS for a glyph: Greek letters by Unicode name (e.g. sigma)."""
+    name = unicodedata.name(char, "")
+    prefix = "GREEK SMALL LETTER "
+    return name.removeprefix(prefix).lower() if name.startswith(prefix) else char
+
+
 def _glyph_colors(glyphs, default_color):
     """Colour of each mathtext glyph: parameter colour for bold parameter glyphs."""
     colors = []
@@ -114,8 +112,8 @@ def _glyph_colors(glyphs, default_color):
             chr(ccode), ""
         )
         color = default_color
-        if is_bold and char in PARAM_COLORS:
-            color = last_param_color = PARAM_COLORS[char]
+        if is_bold and _param_name(char) in PARAM_COLORS:
+            color = last_param_color = PARAM_COLORS[_param_name(char)]
         elif is_bold and char in SUBSCRIPTS:
             color = last_param_color
         colors.append(color)

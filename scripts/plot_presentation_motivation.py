@@ -15,12 +15,15 @@ import warnings
 from pathlib import Path
 
 import click
-import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from scipy.optimize import OptimizeWarning, curve_fit
 
-from fl_prog.plotting import save_fig
+from fl_prog.plotting import (
+    get_axes_size_for_labels,
+    make_fixed_size_axes,
+    save_fig_formats,
+)
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS
 
@@ -46,9 +49,6 @@ LW_FIT = 4.5
 COLOR_TRUTH = "#222222"
 LW_TRUTH = 3.5
 ALPHA_SITE_FIT_REF = 0.3  # per-site fits shown for reference in the pooled panel
-LABEL_COVERAGE = 0.92  # fraction of the axis length covered by the axis label
-PANEL_GAP = 0.35  # horizontal space between panels in the combined figure (inches)
-MARGIN = 1.0  # space around axes for labels, trimmed when saving (inches)
 DPI = 600
 
 sns.set_theme(context="talk", style="ticks")
@@ -95,41 +95,6 @@ def fit_sigmoid(subjects):
         warnings.simplefilter("ignore", OptimizeWarning)
         params, _ = curve_fit(sigmoid, t, y, p0=P0, bounds=BOUNDS, maxfev=10000)
     return params
-
-
-def get_label_lengths(xlabels: list[str], ylabel: str) -> tuple[float, float]:
-    """Rendered length (inches) of the longest x-axis label and of the y-axis label."""
-    fig, ax = plt.subplots()
-    renderer = fig.canvas.get_renderer()
-    x_length = 0.0
-    for xlabel in xlabels:
-        ax.set_xlabel(xlabel)
-        x_length = max(
-            x_length, ax.xaxis.label.get_window_extent(renderer).width / fig.dpi
-        )
-    ax.set_ylabel(ylabel)
-    y_length = ax.yaxis.label.get_window_extent(renderer).height / fig.dpi
-    plt.close(fig)
-    return x_length, y_length
-
-
-def make_axes(n_panels: int, ax_width: float, ax_height: float):
-    """Figure with axes of an exact size (inches), in a single row."""
-    fig_width = 2 * MARGIN + n_panels * ax_width + (n_panels - 1) * PANEL_GAP
-    fig_height = 2 * MARGIN + ax_height
-    fig = plt.figure(figsize=(fig_width, fig_height))
-    axes = [
-        fig.add_axes(
-            [
-                (MARGIN + i * (ax_width + PANEL_GAP)) / fig_width,
-                MARGIN / fig_height,
-                ax_width / fig_width,
-                ax_height / fig_height,
-            ]
-        )
-        for i in range(n_panels)
-    ]
-    return fig, axes
 
 
 def plot_panel(ax, sites, pooled: bool, xlabel, ylabel=None):
@@ -211,25 +176,20 @@ def plot_presentation_motivation(dpath_out: Path, seed: int, transparent: bool):
     }
 
     # axes just big enough for the axis labels to (almost) span them
-    x_length, y_length = get_label_lengths([xlabel], ylabel)
-    ax_width, ax_height = x_length / LABEL_COVERAGE, y_length / LABEL_COVERAGE
+    ax_width, ax_height = get_axes_size_for_labels([xlabel], ylabel)
 
     def save(fig, fname):
-        for ext in ("png", "svg"):
-            save_fig(
-                fig, dpath_out / f"{fname}.{ext}", dpi=DPI, transparent=transparent
-            )
-        plt.close(fig)
+        save_fig_formats(fig, dpath_out / fname, dpi=DPI, transparent=transparent)
 
     # combined figure
-    fig, axes = make_axes(len(panels), ax_width, ax_height)
+    fig, axes = make_fixed_size_axes(len(panels), ax_width, ax_height)
     for i_panel, (ax, panel) in enumerate(zip(axes, panels.values())):
         plot_panel(ax, **panel, ylabel=ylabel if i_panel == 0 else None)
     save(fig, "motivation_all")
 
     # one figure per panel
     for i_panel, (name, panel) in enumerate(panels.items(), start=1):
-        fig, (ax,) = make_axes(1, ax_width, ax_height)
+        fig, (ax,) = make_fixed_size_axes(1, ax_width, ax_height)
         plot_panel(ax, **panel, ylabel=ylabel)
         save(fig, f"motivation_{i_panel}_{name}")
 

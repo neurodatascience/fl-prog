@@ -24,9 +24,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
-from fl_prog.plotting import CATEGORICAL_COLORS, save_fig
+from fl_prog.plotting import (
+    CATEGORICAL_COLORS,
+    PARAM_COLORS,
+    PARAM_SYMBOLS,
+    get_axes_size_for_labels,
+    make_fixed_size_axes,
+    save_fig_formats,
+)
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS
+from fl_prog.utils.math import multivariate_logistic
 
 DEFAULT_DPATH_OUT = DEFAULT_DPATH_RESULTS / "figures" / "individual_params"
 
@@ -54,9 +62,8 @@ YLABEL = "Biomarker"
 # style
 SUBJECT_COLORS = [CATEGORICAL_COLORS[i] for i in (0, 3, 2)]  # blue, purple, green
 COLOR_POPULATION = "#c4c4c4"  # light grey: stays in the background
-# same parameter colours as the legend in plot_presentation_model.py
-COLOR_ALPHA = "#d6336c"
-COLOR_TAU = "#e8590c"
+COLOR_ALPHA = PARAM_COLORS["alpha"]
+COLOR_TAU = PARAM_COLORS["tau"]
 ALPHA_ORIGINAL = 0.2  # data in time since baseline, in the reparametrization panel
 ALPHA_ACCELERATED = 0.45  # data after acceleration only
 ALPHA_ARROW = 0.85
@@ -64,16 +71,14 @@ FS_PARAM = 20
 MARKER_SIZE = 45
 LW_DATA = 1.8
 LW_POPULATION = 3.5
-LABEL_COVERAGE = 0.92  # fraction of the axis length covered by the axis label
-PANEL_GAP = 0.35  # horizontal space between panels in the combined figure (inches)
-MARGIN = 1.0  # space around axes for labels, trimmed when saving (inches)
 DPI = 600
 
 sns.set_theme(context="talk", style="ticks")
 
 
 def population(phi):
-    return S / (1 + np.exp(-K * (np.asarray(phi, dtype=float) - M)))
+    """Population trajectory of the single biomarker."""
+    return multivariate_logistic(phi, [K], [M], [S])[:, 0]
 
 
 def simulate_subjects(rng):
@@ -85,41 +90,6 @@ def simulate_subjects(rng):
         y = population(phi) + rng.normal(0, NOISE_SD, len(t))
         subjects.append((t, alpha * t, phi, y))
     return subjects
-
-
-def get_label_lengths(xlabels: list[str], ylabel: str) -> tuple[float, float]:
-    """Rendered length (inches) of the longest x-axis label and of the y-axis label."""
-    fig, ax = plt.subplots()
-    renderer = fig.canvas.get_renderer()
-    x_length = 0.0
-    for xlabel in xlabels:
-        ax.set_xlabel(xlabel)
-        x_length = max(
-            x_length, ax.xaxis.label.get_window_extent(renderer).width / fig.dpi
-        )
-    ax.set_ylabel(ylabel)
-    y_length = ax.yaxis.label.get_window_extent(renderer).height / fig.dpi
-    plt.close(fig)
-    return x_length, y_length
-
-
-def make_axes(n_panels: int, ax_width: float, ax_height: float):
-    """Figure with axes of an exact size (inches), in a single row."""
-    fig_width = 2 * MARGIN + n_panels * ax_width + (n_panels - 1) * PANEL_GAP
-    fig_height = 2 * MARGIN + ax_height
-    fig = plt.figure(figsize=(fig_width, fig_height))
-    axes = [
-        fig.add_axes(
-            [
-                (MARGIN + i * (ax_width + PANEL_GAP)) / fig_width,
-                MARGIN / fig_height,
-                ax_width / fig_width,
-                ax_height / fig_height,
-            ]
-        )
-        for i in range(n_panels)
-    ]
-    return fig, axes
 
 
 def plot_data(ax, t, y, color, alpha=1.0, line=True):
@@ -167,8 +137,8 @@ def plot_panel(ax, step: int, subjects, ylabel=True):
     if step == 1:
         for i, (label, color) in enumerate(
             (
-                (r"$\times\,\boldsymbol{\alpha}_{\boldsymbol{i}}$", COLOR_ALPHA),
-                (r"$+\,\boldsymbol{\tau}_{\boldsymbol{i}}$", COLOR_TAU),
+                (rf"$\times\,{PARAM_SYMBOLS['alpha']}$", COLOR_ALPHA),
+                (rf"$+\,{PARAM_SYMBOLS['tau']}$", COLOR_TAU),
             )
         ):
             ax.text(
@@ -212,18 +182,13 @@ def plot_presentation_individual(dpath_out: Path, seed: int, transparent: bool):
     subjects = simulate_subjects(np.random.default_rng(seed))
 
     # axes just big enough for the axis labels to (almost) span them
-    x_length, y_length = get_label_lengths(XLABELS, YLABEL)
-    ax_width, ax_height = x_length / LABEL_COVERAGE, y_length / LABEL_COVERAGE
+    ax_width, ax_height = get_axes_size_for_labels(XLABELS, YLABEL)
 
     def save(fig, fname):
-        for ext in ("png", "svg"):
-            save_fig(
-                fig, dpath_out / f"{fname}.{ext}", dpi=DPI, transparent=transparent
-            )
-        plt.close(fig)
+        save_fig_formats(fig, dpath_out / fname, dpi=DPI, transparent=transparent)
 
     # combined figure
-    fig, axes = make_axes(len(TITLES), ax_width, ax_height)
+    fig, axes = make_fixed_size_axes(len(TITLES), ax_width, ax_height)
     for step, ax in enumerate(axes):
         plot_panel(ax, step, subjects, ylabel=step == 0)
     # the first panel's x label sits below its 0 tick: put the last one at the same height
@@ -235,7 +200,7 @@ def plot_presentation_individual(dpath_out: Path, seed: int, transparent: bool):
 
     # one figure per panel (same label height, so panels line up when placed side by side)
     for step, fname in enumerate(FNAMES):
-        fig, (ax,) = make_axes(1, ax_width, ax_height)
+        fig, (ax,) = make_fixed_size_axes(1, ax_width, ax_height)
         plot_panel(ax, step, subjects)
         if step == len(FNAMES) - 1:
             ax.xaxis.set_label_coords(0.5, xlabel_y)

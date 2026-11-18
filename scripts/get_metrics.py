@@ -8,9 +8,15 @@ import numpy as np
 import pandas as pd
 
 from fl_prog.metrics import (
+    SUFFIX_ALIGNED,
+    SUFFIX_SHIFTED,
+    align_time_axis,
     compute_per_subject_recovery,
     compute_predictive_metrics,
     compute_recovery_metrics,
+    compute_time_axis_metrics,
+    get_midpoint_offset,
+    get_time_axis_alignment,
 )
 from fl_prog.model import ModelParams
 from fl_prog.personalization import (
@@ -324,6 +330,21 @@ def get_metrics_single_run(
     rows: list[dict[str, str | float]] = []
     rows_recovery: list[dict[str, str | float]] = []
     for setup, estimated_params in estimated_by_setup.items():
+        # the origin of the disease-time axis is arbitrary: also report recovery
+        # after removing it (midpoint offset, "_shifted"), and after mapping the
+        # estimates onto the true axis with an affine map that also removes a
+        # stretch ("_aligned", estimated from training subjects' time shifts).
+        # The same maps are used for held-out subjects.
+        if true_params is not None:
+            time_scale, time_offset = get_time_axis_alignment(
+                true_params_aligned, estimated_params
+            )
+            midpoint_offset = get_midpoint_offset(true_params_aligned, estimated_params)
+            rows_recovery.extend(
+                compute_time_axis_metrics(
+                    time_scale, time_offset, midpoint_offset, setup=setup
+                )
+            )
         y_pred_train = predict_fn(estimated_params, t_train, subject_ids_train)
         rows.extend(
             compute_predictive_metrics(
@@ -362,6 +383,18 @@ def get_metrics_single_run(
                             set_name="recovery_per_subject_test",
                         )
                     )
+                    for suffix, (scale, offset) in {
+                        SUFFIX_SHIFTED: (1.0, midpoint_offset),
+                        SUFFIX_ALIGNED: (time_scale, time_offset),
+                    }.items():
+                        rows_recovery.extend(
+                            compute_per_subject_recovery(
+                                true_params_test,
+                                align_time_axis(params_test, scale, offset),
+                                setup=setup,
+                                set_name=f"recovery_per_subject_test{suffix}",
+                            )
+                        )
             y_pred_test = predict_fn(params_test, t_test, subject_ids_test)
             for set_name, rows_set in test_row_sets:
                 rows.extend(
@@ -387,6 +420,30 @@ def get_metrics_single_run(
                     true_params_aligned, estimated_params, setup=setup
                 )
             )
+            for suffix, (scale, offset) in {
+                SUFFIX_SHIFTED: (1.0, midpoint_offset),
+                SUFFIX_ALIGNED: (time_scale, time_offset),
+            }.items():
+                estimated_params_mapped = align_time_axis(
+                    estimated_params, scale, offset
+                )
+                rows_recovery.extend(
+                    compute_recovery_metrics(
+                        true_params_aligned,
+                        estimated_params_mapped,
+                        cols_biomarker,
+                        setup=setup,
+                        set_name=f"recovery_per_biomarker{suffix}",
+                    )
+                )
+                rows_recovery.extend(
+                    compute_per_subject_recovery(
+                        true_params_aligned,
+                        estimated_params_mapped,
+                        setup=setup,
+                        set_name=f"recovery_per_subject{suffix}",
+                    )
+                )
 
     df_metrics = pd.DataFrame(
         rows, columns=["setup", "set_name", "col_biomarker", "metric", "value"]

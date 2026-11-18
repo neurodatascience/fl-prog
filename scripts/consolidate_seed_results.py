@@ -12,8 +12,9 @@ Output layout (same as a regular, non-staged run)::
 
 Fed-BioMed runs that only differ by setup (e.g. federated and centralized fits on
 the same IID tag, run concurrently in separate lanes) are merged into a single
-``*-estimated_params.json`` (and ``*-fit_quality*.tsv``), as if both setups had been
-run in a single ``run_fedbiomed.py`` call. Files are copied, never moved.
+``*-estimated_params.json`` (and ``*-fit_quality*.tsv``/``*-param_recovery*.tsv``),
+as if both setups had been run in a single ``run_fedbiomed.py`` call. Files are copied,
+never moved.
 """
 
 import filecmp
@@ -29,6 +30,8 @@ from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, load_json, save_json
 
 SUFFIX_ESTIMATED_PARAMS = "-estimated_params.json"
 KEYS_BY_SETUP = ("results", "individual_parameters_test")
+# per-setup TSVs, to be merged across lanes (e.g. federated + centralized on the same tag)
+SUBSTRINGS_TSV_BY_SETUP = ("-fit_quality", "-param_recovery")
 PATTERN_DATE = re.compile(r"^\d{4}_\d{2}_\d{2}$")
 
 
@@ -161,7 +164,9 @@ def main(dpath_staging: Path, dpath_results: Path):
                     fpath_out = dpath_out / fpath.name
                     if fpath.name.endswith(SUFFIX_ESTIMATED_PARAMS):
                         _merge_json(fpath, fpath_out, pattern, replacement)
-                    elif "-fit_quality" in fpath.name and fpath.suffix == ".tsv":
+                    elif fpath.suffix == ".tsv" and any(
+                        s in fpath.name for s in SUBSTRINGS_TSV_BY_SETUP
+                    ):
                         _merge_tsv(fpath, fpath_out)
                     else:
                         _copy(fpath, fpath_out)

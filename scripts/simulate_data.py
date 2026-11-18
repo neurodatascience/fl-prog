@@ -7,7 +7,7 @@ import click
 import numpy as np
 import pandas as pd
 
-from fl_prog.simulation import simulate_all_subjects
+from fl_prog.simulation import assign_sites_by_overlap, simulate_all_subjects
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, load_json, save_json
 
@@ -53,11 +53,19 @@ def _process_list_args(*list_args):
 
 
 def _build_df(
-    timepoints, biomarkers, n_biomarkers, n_subjects_so_far, na_ratio: float = 0.0
+    timepoints,
+    biomarkers,
+    n_biomarkers,
+    n_subjects_so_far,
+    na_ratio: float = 0.0,
+    subject_ids: Iterable[int] | None = None,
+    rng: np.random.Generator | None = None,
 ) -> pd.DataFrame:
-    subjects = np.repeat(
-        np.arange(len(biomarkers)) + n_subjects_so_far, [len(bm) for bm in biomarkers]
-    )
+    if subject_ids is None:
+        subject_ids = np.arange(len(biomarkers)) + n_subjects_so_far
+    n_timepoints = [len(bm) for bm in biomarkers]
+    subjects = np.repeat(np.asarray(subject_ids), n_timepoints)
+    subject_indices = np.repeat(np.arange(len(biomarkers)), n_timepoints)
 
     biomarkers_dict = {
         f"{COL_BIOMARKER_PREFIX}{i}": np.concatenate(biomarkers)[:, i]
@@ -66,9 +74,11 @@ def _build_df(
 
     # inject missing values
     if na_ratio > 0:
+        if rng is None:
+            rng = np.random.default_rng(None)
         for biomarker_name, biomarker_values in biomarkers_dict.items():
             n_missing = int(len(biomarker_values) * na_ratio)
-            missing_indices = np.random.choice(
+            missing_indices = rng.choice(
                 len(biomarker_values), size=n_missing, replace=False
             )
             biomarkers_dict[biomarker_name][missing_indices] = np.nan
@@ -76,7 +86,7 @@ def _build_df(
     df_data = pd.DataFrame(
         data={
             COL_SUBJECT: subjects,
-            COL_SUBJECT_INDEX: subjects - n_subjects_so_far,
+            COL_SUBJECT_INDEX: subject_indices,
             COL_TIMEPOINT: np.concatenate(timepoints),
             **biomarkers_dict,
         }
@@ -110,8 +120,29 @@ def simulate_data(
     scaling_factor_min: float = DEFAULT_SCALING_FACTOR_MIN,
     scaling_factor_max: float = DEFAULT_SCALING_FACTOR_MAX,
     na_ratio: float = DEFAULT_NA_RATIO,
+    n_sites: int | None = None,
+    overlap: float | None = None,
     rng_seed: int | None = None,
 ):
+    """Simulate data for multiple sites.
+
+    By default, each site is simulated independently (with its own number of
+    subjects and t0 range). If ``n_sites`` and ``overlap`` are given, a single
+    population is simulated and then split into ``n_sites`` equally sized sites
+    based on t0.
+    """
+    pooled = n_sites is not None or overlap is not None
+    if pooled and (n_sites is None or overlap is None):
+        raise ValueError("--n-sites and --overlap must be used together.")
+    if pooled and any(
+        len(arg) != 1
+        for arg in (n_subjects_all, n_max_timepoints_all, t0_min_all, t0_max_all)
+    ):
+        raise ValueError(
+            "--n-subjects, --n-max-timepoints, --t0-min, and --t0-max must have a "
+            "single value when using --n-sites/--overlap."
+        )
+
     dpath_out = get_dpath_latest(dpath_data, use_today=True) / tag
     dpath_out.mkdir(parents=True, exist_ok=True)
 
@@ -127,6 +158,31 @@ def simulate_data(
             f"must have the same number of values: {exception}."
         ) from exception
 
+    if fpath_config is not None:
+        print(f"Loading config from {fpath_config}")
+        config = load_json(fpath_config)
+    else:
+        config = {}
+
+    # fixed biomarker-specific parameters (override sampled values)
+    fixed_params = {
+        key: np.asarray(config[key], dtype=float)
+        for key in ("k_values", "x0_values", "scaling_factors", "sigmas")
+        if key in config
+    }
+    if fixed_params:
+        lengths = {key: len(values) for key, values in fixed_params.items()}
+        if len(set(lengths.values())) != 1:
+            raise ValueError(
+                f"Biomarker parameters in config have different lengths: {lengths}"
+            )
+        n_biomarkers = next(iter(lengths.values()))
+        print(
+            f"Using {n_biomarkers} biomarkers with fixed parameters from config: {sorted(fixed_params)}"
+        )
+        if "sigmas" in fixed_params:
+            sigma_all = tuple(fixed_params["sigmas"].tolist())
+
     if len(sigma_all) == 1:
         sigma_all = sigma_all * n_biomarkers
     if len(sigma_all) != n_biomarkers:
@@ -135,13 +191,10 @@ def simulate_data(
             f"as --n-biomarkers ({n_biomarkers}), got {len(sigma_all)}."
         )
 
-    json_data = {"settings": locals()}
-
-    if fpath_config is not None:
-        print(f"Loading config from {fpath_config}")
-        config = load_json(fpath_config)
-    else:
-        config = {}
+    settings = dict(locals())
+    for key in ("config", "fixed_params", "lengths"):
+        settings.pop(key, None)
+    json_data = {"settings": settings}
 
     n_timepoints_distribution = config.get("n_timepoints_distribution", None)
     time_at_timepoint = config.get("time_at_timepoint", None)
@@ -154,6 +207,9 @@ def simulate_data(
     scaling_factors = rng.uniform(
         scaling_factor_min, scaling_factor_max, size=n_biomarkers
     )
+    k_values = fixed_params.get("k_values", k_values)
+    x0_values = fixed_params.get("x0_values", x0_values)
+    scaling_factors = fixed_params.get("scaling_factors", scaling_factors)
 
     timepoints_all = []
     biomarkers_all = []
@@ -163,14 +219,88 @@ def simulate_data(
     n_subjects_so_far = 0
     node_id_map = {}
     subjects_by_node = {}
-    for i_dataset, (n_subjects, n_max_timepoints, t0_min, t0_max) in enumerate(
-        zip(
+    if pooled:
+        (
+            timepoints_pool,
+            biomarkers_pool,
+            time_shifts_pool,
+            acceleration_factors_pool,
+        ) = simulate_all_subjects(
+            n_subjects=n_subjects_all[0],
+            k_values=k_values,
+            x0_values=x0_values,
+            scaling_factors=scaling_factors,
+            sigmas=sigma_all,
+            max_n_timepoints=n_max_timepoints_all[0],
+            n_timepoints_distribution=n_timepoints_distribution,
+            time_at_timepoint=time_at_timepoint,
+            shift_time=shift_time,
+            t0_min=t0_min_all[0],
+            t0_max=t0_max_all[0],
+            acceleration_factor_std=acceleration_factor_std,
+            rng=rng,
+        )
+        # true t0 (= time shift if shift_time, else the first timepoint)
+        t0_pool = np.array(
+            [
+                shift if shift_time else tp[0]
+                for shift, tp in zip(time_shifts_pool, timepoints_pool, strict=True)
+            ]
+        )
+        # use a related but separate RNG instance for the split to keep the original
+        # RNG stream independent from the overlap value
+        sites = assign_sites_by_overlap(
+            t0_pool,
+            n_sites,
+            overlap,
+            rng=np.random.default_rng(None if rng_seed is None else [rng_seed, 1]),
+        )
+        n_subjects_all = []
+        for i_dataset in range(n_sites):
+            node_id = f"{i_dataset + 1}"
+            idx = np.flatnonzero(sites == i_dataset)
+            timepoints = [timepoints_pool[i] for i in idx]
+            biomarkers = [biomarkers_pool[i] for i in idx]
+            timepoints_all.append(timepoints)
+            biomarkers_all.append(biomarkers)
+            time_shifts_all.append(time_shifts_pool[idx])
+            acceleration_factors_all.append(acceleration_factors_pool[idx])
+            n_subjects_all.append(len(idx))
+
+            df_data = _build_df(
+                timepoints,
+                biomarkers,
+                n_biomarkers,
+                n_subjects_so_far,
+                na_ratio=na_ratio,
+                subject_ids=idx,
+                rng=rng,
+            )
+            subjects_by_node[node_id] = df_data[COL_SUBJECT].unique().tolist()
+
+            fname_tsv = _get_fname_out(tag, i_dataset)
+            fpath_tsv = dpath_out / fname_tsv
+            df_data.to_csv(fpath_tsv, sep="\t", index=False)
+            print(
+                f"Saved simulated data to {fpath_tsv} ({len(idx)} subjects, "
+                f"t0 range [{t0_pool[idx].min():.2f}, {t0_pool[idx].max():.2f}])"
+            )
+            node_id_map[fname_tsv] = node_id
+
+    # one independent simulation per site (not used in pooled mode)
+    site_args = (
+        []
+        if pooled
+        else zip(
             n_subjects_all,
             n_max_timepoints_all,
             t0_min_all,
             t0_max_all,
             strict=True,
         )
+    )
+    for i_dataset, (n_subjects, n_max_timepoints, t0_min, t0_max) in enumerate(
+        site_args
     ):
         node_id = f"{i_dataset + 1}"
         timepoints, biomarkers, time_shifts, acceleration_factors = (
@@ -196,7 +326,12 @@ def simulate_data(
         acceleration_factors_all.append(acceleration_factors)
 
         df_data = _build_df(
-            timepoints, biomarkers, n_biomarkers, n_subjects_so_far, na_ratio=na_ratio
+            timepoints,
+            biomarkers,
+            n_biomarkers,
+            n_subjects_so_far,
+            na_ratio=na_ratio,
+            rng=rng,
         )
 
         subjects_by_node[node_id] = df_data[COL_SUBJECT].unique().tolist()
@@ -218,6 +353,9 @@ def simulate_data(
         "sigmas": sigma_all,
     }
     json_data["node_id_map"] = node_id_map
+    if "biomarker_names" in config:
+        # descriptive names for biomarker_0, biomarker_1, ...
+        json_data["biomarker_names"] = config["biomarker_names"]
 
     json_data["cols"] = {
         "col_subject": COL_SUBJECT,
@@ -294,6 +432,23 @@ def simulate_data(
     "--na-ratio",
     type=click.FloatRange(min=0, max=1, max_open=True),
     default=DEFAULT_NA_RATIO,
+)
+@click.option(
+    "--n-sites",
+    type=click.IntRange(min=1),
+    default=None,
+    help=(
+        "Simulate a single population and split it into this many sites based on t0."
+        " Requires --overlap and single values for --n-subjects/--t0-min/--t0-max."
+    ),
+)
+@click.option(
+    "--overlap",
+    type=click.FloatRange(min=0, max=1),
+    default=None,
+    help=(
+        "Fraction of each site's t0 window shared with the next site. Used with --n-sites."
+    ),
 )
 def main(**params):
     simulate_data(**params)

@@ -332,6 +332,8 @@ def split_train_test(
     json_data_new["settings"] = settings
     json_data_new["node_id_map"] = node_id_map_new
     json_data_new["cols"] = json_data_old["cols"]
+    if "biomarker_names" in json_data_old:
+        json_data_new["biomarker_names"] = json_data_old["biomarker_names"]
     json_data_new["subjects_by_node"] = subjects_by_node
     if "params" in json_data_old:
         json_data_new["params"] = _realign_params(

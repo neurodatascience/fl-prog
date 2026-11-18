@@ -107,7 +107,7 @@ def _get_biomarker_params(
     type=click.Path(path_type=Path, dir_okay=False),
     required=True,
 )
-def make_adni_like_sim_config(
+def get_simulation_config_from_adni_results(
     dpath_adni: Path, fpaths_params: tuple[Path], setup: str, fpath_out: Path
 ):
     """Create config from ADNI data and estimated params JSON(s) FPATHS_PARAMS.
@@ -145,4 +145,4 @@ def make_adni_like_sim_config(
 
 
 if __name__ == "__main__":
-    make_adni_like_sim_config()
+    get_simulation_config_from_adni_results()

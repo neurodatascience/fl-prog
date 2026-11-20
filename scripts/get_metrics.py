@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import dataclasses
+import fnmatch
 from collections.abc import Callable
 from pathlib import Path
 
@@ -8,9 +9,13 @@ import numpy as np
 import pandas as pd
 
 from fl_prog.metrics import (
+    SUFFIX_SHIFTED,
     compute_per_subject_recovery,
     compute_predictive_metrics,
     compute_recovery_metrics,
+    compute_time_axis_metrics,
+    get_midpoint_offset,
+    shift_time_axis,
 )
 from fl_prog.model import ModelParams
 from fl_prog.personalization import (
@@ -324,6 +329,14 @@ def get_metrics_single_run(
     rows: list[dict[str, str | float]] = []
     rows_recovery: list[dict[str, str | float]] = []
     for setup, estimated_params in estimated_by_setup.items():
+        # the origin of the disease-time axis is arbitrary: also report recovery
+        # after removing it (midpoint offset, "_shifted"). The same offset is used
+        # for held-out subjects.
+        if true_params is not None:
+            midpoint_offset = get_midpoint_offset(true_params_aligned, estimated_params)
+            rows_recovery.extend(
+                compute_time_axis_metrics(midpoint_offset, setup=setup)
+            )
         y_pred_train = predict_fn(estimated_params, t_train, subject_ids_train)
         rows.extend(
             compute_predictive_metrics(
@@ -362,6 +375,14 @@ def get_metrics_single_run(
                             set_name="recovery_per_subject_test",
                         )
                     )
+                    rows_recovery.extend(
+                        compute_per_subject_recovery(
+                            true_params_test,
+                            shift_time_axis(params_test, midpoint_offset),
+                            setup=setup,
+                            set_name=f"recovery_per_subject_test{SUFFIX_SHIFTED}",
+                        )
+                    )
             y_pred_test = predict_fn(params_test, t_test, subject_ids_test)
             for set_name, rows_set in test_row_sets:
                 rows.extend(
@@ -385,6 +406,26 @@ def get_metrics_single_run(
             rows_recovery.extend(
                 compute_per_subject_recovery(
                     true_params_aligned, estimated_params, setup=setup
+                )
+            )
+            estimated_params_shifted = shift_time_axis(
+                estimated_params, midpoint_offset
+            )
+            rows_recovery.extend(
+                compute_recovery_metrics(
+                    true_params_aligned,
+                    estimated_params_shifted,
+                    cols_biomarker,
+                    setup=setup,
+                    set_name=f"recovery_per_biomarker{SUFFIX_SHIFTED}",
+                )
+            )
+            rows_recovery.extend(
+                compute_per_subject_recovery(
+                    true_params_aligned,
+                    estimated_params_shifted,
+                    setup=setup,
+                    set_name=f"recovery_per_subject{SUFFIX_SHIFTED}",
                 )
             )
 
@@ -534,12 +575,15 @@ def get_metrics(
     personalize_seed=DEFAULT_PERSONALIZE_SEED,
     dpmost_personalize_n_outer_iter=DEFAULT_DPMOST_N_OUTER_ITER,
     personalize_n_timepoints: int | None = None,
+    run_tag_pattern: str = "*",
 ):
     dpath_results_latest = get_dpath_latest(dpath_results)
     for fpath_json_results, json_results in iter_result_files(
         dpath_results_latest / tag
     ):
         run_tag = get_run_tag(fpath_json_results)
+        if not fnmatch.fnmatchcase(run_tag, run_tag_pattern):
+            continue
         model_type = get_model_type(fpath_json_results)
         print(f"fpath_json_results: {fpath_json_results}")
 
@@ -662,6 +706,17 @@ def get_metrics(
     help="Estimate held-out subjects' parameters from their first N visits only, "
     "and score these (test_fit) and later visits (test_forecast) separately. "
     "Subjects with N visits or fewer are not scored. Default: all visits.",
+)
+@click.option(
+    "--run-tag",
+    "run_tag_pattern",
+    type=str,
+    default="*",
+    show_default=True,
+    help=(
+        "Only process results files whose run tag (file name without "
+        "-estimated_params.json) matches this glob pattern."
+    ),
 )
 def main(**params):
     get_metrics(**params)

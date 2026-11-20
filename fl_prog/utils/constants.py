@@ -26,6 +26,9 @@ DPMOST_COL_TIMEPOINT = "time"
 # normative modelling
 COL_ADAPTATION = "adaptation"
 
+# plotting
+SITE_COLORS = ["#1f3b73", "#b2182b", "#e6ab02", "#4d4d4d", "#7b3294"]
+
 
 class Setup(str, Enum):
     CENTRALIZED = "centralized"

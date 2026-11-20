@@ -100,7 +100,18 @@ def _add_dataset_to_node(
     default=DEFAULT_DPATH_FEDBIOMED,
 )
 @click.option("--wipe/--no-wipe", default=False, help="Wipe existing data in nodes")
-def add_datasets_to_nodes(tag: str, dpath_data: Path, dpath_nodes: Path, wipe: bool):
+@click.option(
+    "--skip-missing-nodes/--no-skip-missing-nodes",
+    default=False,
+    help="Skip datasets whose node has not been initialized",
+)
+def add_datasets_to_nodes(
+    tag: str,
+    dpath_data: Path,
+    dpath_nodes: Path,
+    wipe: bool,
+    skip_missing_nodes: bool,
+):
     dpath_tag = get_dpath_latest(dpath_data) / tag
     fpaths_tsv = dpath_tag.glob(f"{tag}*.tsv")
     fpath_json = dpath_tag / f"{tag}.json"
@@ -127,6 +138,9 @@ def add_datasets_to_nodes(tag: str, dpath_data: Path, dpath_nodes: Path, wipe: b
             )
             continue
         dpath_node = dpath_nodes / f"node-{node_id}"
+        if skip_missing_nodes and not dpath_node.exists():
+            print(f"Skipping {fpath_tsv.name}: {dpath_node} does not exist")
+            continue
         print(f"----- {fpath_tsv} -----")
         _add_dataset_to_node(fpath_tsv, dpath_node, tag, wipe)
 

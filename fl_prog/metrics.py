@@ -1,7 +1,9 @@
+import dataclasses
 from collections.abc import Iterable
 from dataclasses import fields
 
 import numpy as np
+import pandas as pd
 from scipy.stats import linregress, spearmanr
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
@@ -9,6 +11,17 @@ from fl_prog.model import ModelParams
 
 PER_SUBJECT_FIELDS = ("time_shifts", "acceleration_factors")
 CORRELATED_FIELDS = ("k_values", "x0_values")
+# recovery after removing the arbitrary origin of the disease-time axis only
+SUFFIX_SHIFTED = "_shifted"
+# rows over all biomarkers: mean of the per-biomarker values of these metrics
+BIOMARKER_ALL = "all"
+METRICS_AVERAGED_OVER_BIOMARKERS = (
+    "r2_score",
+    "mean_squared_error",
+    "mean_absolute_error",
+    "residual_mean",
+    "residual_std",
+)
 
 
 def _pearson_r(x: np.ndarray, y: np.ndarray) -> float:
@@ -52,7 +65,9 @@ def compute_predictive_metrics(
     setup: str,
     set_name: str,
 ) -> list[dict[str, str | float]]:
-    """Predictive fit metrics on observed data, per biomarker.
+    """Predictive fit metrics on observed data, per biomarker, and their mean over
+    biomarkers (``BIOMARKER_ALL`` rows, see ``METRICS_AVERAGED_OVER_BIOMARKERS``;
+    not pooled over biomarkers, so that each biomarker has the same weight).
 
     Rows with a NaN in ``y_true`` are masked out per biomarker, mirroring the
     missing-data handling in the model loss.
@@ -61,16 +76,11 @@ def compute_predictive_metrics(
     y_pred = np.asarray(y_pred, dtype=float)
 
     rows: list[dict[str, str | float]] = []
-    y_true_all = []
-    y_pred_all = []
     for i_biomarker, col_biomarker in enumerate(cols_biomarker):
         mask = ~np.isnan(y_true[:, i_biomarker])
         y_true_biomarker = y_true[mask, i_biomarker]
         y_pred_biomarker = y_pred[mask, i_biomarker]
         residuals = y_true_biomarker - y_pred_biomarker
-
-        y_true_all.append(y_true_biomarker)
-        y_pred_all.append(y_pred_biomarker)
 
         rows.extend(
             _metric_rows(
@@ -93,21 +103,79 @@ def compute_predictive_metrics(
             )
         )
 
-    y_true_all = np.concatenate(y_true_all)
-    y_pred_all = np.concatenate(y_pred_all)
     rows.extend(
         _metric_rows(
             setup,
             set_name,
-            "all",
+            BIOMARKER_ALL,
             [
-                ("r2_score", r2_score(y_true_all, y_pred_all)),
-                ("mean_squared_error", mean_squared_error(y_true_all, y_pred_all)),
-                ("mean_absolute_error", mean_absolute_error(y_true_all, y_pred_all)),
+                (
+                    metric,
+                    float(
+                        np.mean(
+                            [row["value"] for row in rows if row["metric"] == metric]
+                        )
+                    ),
+                )
+                for metric in METRICS_AVERAGED_OVER_BIOMARKERS
             ],
         )
     )
     return rows
+
+
+def average_over_biomarkers(df_metrics: pd.DataFrame) -> pd.DataFrame:
+    """Recompute the ``BIOMARKER_ALL`` rows of a long table of predictive metrics
+    (columns include ``col_biomarker``, ``metric`` and ``value``) as the mean of
+    the per-biomarker values (as in ``compute_predictive_metrics``), e.g. for
+    results computed when these rows were pooled over biomarkers."""
+    df_biomarkers = df_metrics.loc[df_metrics["col_biomarker"] != BIOMARKER_ALL]
+    keys = [col for col in df_metrics.columns if col not in ("col_biomarker", "value")]
+    df_mean = (
+        df_biomarkers.loc[
+            df_biomarkers["metric"].isin(METRICS_AVERAGED_OVER_BIOMARKERS)
+        ]
+        .groupby(keys, dropna=False, sort=False)["value"]
+        .mean()
+        .reset_index()
+        .assign(col_biomarker=BIOMARKER_ALL)
+    )
+    return pd.concat([df_biomarkers, df_mean[df_metrics.columns]], ignore_index=True)
+
+
+def get_midpoint_offset(param_true: ModelParams, param_estimated: ModelParams) -> float:
+    """Offset of the estimated disease-time axis relative to the true one, as the
+    mean difference between estimated and true biomarker midpoints (x0)."""
+    return float(
+        np.mean(
+            np.asarray(param_estimated.x0_values, dtype=float)
+            - np.asarray(param_true.x0_values, dtype=float)
+        )
+    )
+
+
+def shift_time_axis(params: ModelParams, offset: float) -> ModelParams:
+    """Translate the disease-time axis by ``-offset``.
+
+    x0 and time shifts are shifted, other parameters are unchanged."""
+    return dataclasses.replace(
+        params,
+        x0_values=np.asarray(params.x0_values, dtype=float) - offset,
+        time_shifts=np.asarray(params.time_shifts, dtype=float) - offset,
+    )
+
+
+def compute_time_axis_metrics(
+    midpoint_offset: float, setup: str
+) -> list[dict[str, str | float]]:
+    """Row with the offset of the estimated disease-time axis relative to the true
+    one."""
+    return _metric_rows(
+        setup,
+        "time_axis",
+        "all",
+        [("time_axis_midpoint_offset", midpoint_offset)],
+    )
 
 
 def compute_recovery_metrics(
@@ -115,6 +183,7 @@ def compute_recovery_metrics(
     param_estimated: ModelParams,
     cols_biomarker: list[str],
     setup: str,
+    set_name: str = "recovery_per_biomarker",
 ) -> list[dict[str, str | float]]:
     """Per-feature recovery errors between true and estimated parameters.
 
@@ -160,13 +229,13 @@ def compute_recovery_metrics(
                     ),
                 ]
             )
-        rows.extend(_metric_rows(setup, "recovery_per_biomarker", "all", pooled_items))
+        rows.extend(_metric_rows(setup, set_name, "all", pooled_items))
 
         for i_biomarker, col_biomarker in enumerate(cols_biomarker):
             rows.extend(
                 _metric_rows(
                     setup,
-                    "recovery_per_biomarker",
+                    set_name,
                     col_biomarker,
                     [
                         (f"{field.name}_relative_error", relative_errors[i_biomarker]),

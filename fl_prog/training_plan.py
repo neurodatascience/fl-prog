@@ -3,10 +3,13 @@ from typing import ClassVar
 
 from fedbiomed.common.datamanager import DataManager
 from fedbiomed.common.dataset import TabularDataset
+from fedbiomed.common.optimizers.declearn import AdamModule
+from fedbiomed.common.optimizers.optimizer import Optimizer
 from fedbiomed.common.training_plans import TorchTrainingPlan
 from torch import optim
 
 from fl_prog.model import LogisticRegressionModelWithShift
+from fl_prog.scaffold import LocalAwareScaffoldClientModule
 
 
 class FLProgTrainingPlan(TorchTrainingPlan):
@@ -58,13 +61,27 @@ class FLProgTrainingPlan(TorchTrainingPlan):
             "import torch.optim as optim",
             "from fedbiomed.common.datamanager import DataManager",
             "from fedbiomed.common.dataset import TabularDataset",
+            "from fedbiomed.common.optimizers.declearn import AdamModule",
+            "from fedbiomed.common.optimizers.optimizer import Optimizer",
             "from fl_prog.model import LogisticRegressionModelWithShift",
+            "from fl_prog.scaffold import LocalAwareScaffoldClientModule",
         ]
         return deps
 
     def init_optimizer(self, optimizer_args: dict) -> optim.Optimizer:
         learning_rate = optimizer_args.get("lr", 0.01)
-        if optimizer_args.get("optimizer_name") == "sgd":
+        if optimizer_args.get("aggregator_name") == "scaffold_adam":
+            local_names = [
+                name
+                for name, _ in self.model().named_parameters()
+                if "local" in self.tag_parameters(name)
+            ]
+            optimizer = Optimizer(
+                lr=learning_rate,
+                # module order matters
+                modules=[LocalAwareScaffoldClientModule(local_names), AdamModule()],
+            )
+        elif optimizer_args.get("optimizer_name") == "sgd":
             # plain SGD is required by Fed-BioMed's native Scaffold aggregator
             model = self.model()
             local_lr_multiplier = optimizer_args.get("local_lr_multiplier")

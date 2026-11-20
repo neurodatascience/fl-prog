@@ -55,6 +55,12 @@ MODELS = {
         "federated",
         "fedavg_sgd",
     ): "Fed-BioMed 50% overlap (FedAvg, SGD)",
+    (
+        "fedbiomed",
+        "overlap050",
+        "federated",
+        "scaffold_adam",
+    ): "Fed-BioMed 50% overlap (SCAFFOLD, Adam)",
     ("fedbiomed", "overlap000", "federated"): "Fed-BioMed 0% overlap",
     ("dpmost", "overlap100", "centralized"): "DPMoSt",
     ("leaspy", "overlap100", "centralized"): "Leaspy",
@@ -92,7 +98,9 @@ PATTERN_FBM_AGGREGATOR = re.compile(
     r"-(?:no_)?scaling-(?P<aggregator>[^-]+)-(?:\d+|no_seed)-"
 )
 # suffixes to strip
-PATTERN_VARIANT_SUFFIXES_IGNORED = re.compile(r"(_adam)?(_locallr[\d.]+)?$")
+PATTERN_VARIANT_SUFFIXES_IGNORED = re.compile(
+    r"((?<!scaffold)_adam)?(_locallr[\d.]+)?$"
+)
 DEFAULT_FBM_AGGREGATOR = "fedavg"
 DNAME_FIGURES = "figures"
 PREFIX_OUT = "fit_metrics-seeds"

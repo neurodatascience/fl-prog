@@ -83,6 +83,8 @@ CONDITIONS="overlap100 overlap050 overlap000"
 declare -A FBM_VARIANTS=(
     [scaffold]=${FBM_VARIANT_ARGS_scaffold:-"--aggregator scaffold_native --optimizer sgd --learning-rate 1 --local-lr-multiplier 0.1"}
     [fedavg_sgd]=${FBM_VARIANT_ARGS_fedavg_sgd:-"--aggregator fedavg --optimizer sgd --learning-rate 1 --local-lr-multiplier 0.1"}
+    # declearn SCAFFOLD + Adam (baseline: the default FedAvg + Adam run)
+    [scaffold_adam]=${FBM_VARIANT_ARGS_scaffold_adam:-"--aggregator scaffold_adam"}
 )
 VARIANTS=${VARIANTS:-"scaffold fedavg_sgd"}
 VARIANT_CONDITIONS=${VARIANT_CONDITIONS:-overlap050}
@@ -456,7 +458,8 @@ cmd_fit() {
         fit_baseline_lane "$model" &
         pids+=($!)
     done
-    wait "${pids[@]}"
+    # no pids: a bare "wait" would also wait for the nodes started in the background
+    [ "${#pids[@]}" -gt 0 ] && wait "${pids[@]}"
     log "All lanes done"
 }
 
@@ -471,7 +474,8 @@ cmd_fit_variants() {
         fit_fbm_instance "$name" variant_jobs &
         pids+=($!)
     done
-    wait "${pids[@]}"
+    # no pids: a bare "wait" would also wait for the nodes started in the background
+    [ "${#pids[@]}" -gt 0 ] && wait "${pids[@]}"
     log "All variant lanes done"
 }
 

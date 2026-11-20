@@ -7,6 +7,8 @@ from pathlib import Path
 import click
 import numpy as np
 import pandas as pd
+from declearn.optimizer.modules import ScaffoldServerModule
+from fedbiomed.common.optimizers.optimizer import Optimizer
 from fedbiomed.common.serializer import Serializer
 from fedbiomed.researcher.aggregators.fedavg import FedAverage
 from fedbiomed.researcher.aggregators.scaffold import Scaffold
@@ -55,6 +57,7 @@ VALID_AGGREGATOR_NAMES = [
     "fedprox",  # penalizes all trainable params (including local ones)
     "fedprox_shared",  # only penalizes shared biomarker-level params
     "scaffold_native",  # native (not declearn) Scaffold aggregator, use with --optimizer sgd
+    "scaffold_adam",  # declearn Scaffold with Adam
 ]
 VALID_OPTIMIZER_NAMES = ["adam", "sgd"]
 PREFIX_DNAME_TENSORBOARD = "tensorboard-"
@@ -185,7 +188,14 @@ def _get_aggregator(aggregator_name: str):
         "fedprox": FedAverage(),  # FedProx is FedAvg with additional training arg
         "fedprox_shared": FedAverage(),
         "scaffold_native": Scaffold(server_lr=1),
+        "scaffold_adam": FedAverage(),  # Scaffold is handled by declearn optimizers
     }[aggregator_name]
+
+
+def _get_agg_optimizer(aggregator_name: str):
+    if aggregator_name == "scaffold_adam":
+        return Optimizer(lr=1.0, modules=[ScaffoldServerModule()])
+    return None
 
 
 def _run_experiment(
@@ -215,6 +225,7 @@ def _run_experiment(
             round_limit=n_rounds,
             training_args=training_args,
             aggregator=_get_aggregator(aggregator_name),
+            agg_optimizer=_get_agg_optimizer(aggregator_name),
             node_selection_strategy=None,
             tensorboard=with_tensorboard,
         )
@@ -332,6 +343,8 @@ def run_fedbiomed(
         raise click.UsageError(
             "Fed-BioMed's native Scaffold only supports SGD, use --optimizer sgd"
         )
+    if aggregator_name == "scaffold_adam" and optimizer_name != "adam":
+        raise click.UsageError("scaffold_adam only supports Adam, use --optimizer adam")
     if local_lr_multiplier is not None and optimizer_name != "sgd":
         raise click.UsageError(
             "--local-lr-multiplier is only used with --optimizer sgd"
@@ -358,7 +371,8 @@ def run_fedbiomed(
                 if aggregator_name in ("fedprox", "fedprox_shared")
                 else aggregator_name
             )
-            + f"_{optimizer_name}"
+            # scaffold_adam: optimizer already in the aggregator name
+            + (f"_{optimizer_name}" if aggregator_name != "scaffold_adam" else "")
             + (
                 f"_locallr{local_lr_multiplier}"
                 if local_lr_multiplier is not None

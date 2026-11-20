@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from declearn.model.api import Vector
+from declearn.utils import Aggregate
 
 from fl_prog.utils.constants import (
     DATE_FORMAT,
@@ -143,6 +145,11 @@ def serialize_data(obj: object):
         return str(obj)
     elif isinstance(obj, enum.Enum):
         return obj.name
+    # declearn objects in training replies
+    elif isinstance(obj, Vector):
+        return obj.coefs
+    elif isinstance(obj, Aggregate):
+        return obj.to_dict()
     raise TypeError(f"Type {type(obj)} not serializable")
 
 

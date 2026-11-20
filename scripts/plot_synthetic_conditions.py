@@ -14,7 +14,7 @@ import seaborn as sns
 from matplotlib.lines import Line2D
 
 from fl_prog.plotting import get_categorical_palette
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, SITE_COLORS
 from fl_prog.utils.io import (
     DEFAULT_DPATH_DATA,
     get_dpath_latest,
@@ -25,8 +25,6 @@ from fl_prog.utils.io import (
 FIGSIZE = (6.4, 3.0)  # half the width of a 16:9 slide (13.33 in)
 DPI = 300
 LINE_WIDTH = 0.3
-# same site (node) colors as Full-ADNI-experiment-FedProx/notebooks_py/data_split_schematic.py
-SITE_COLORS = ["#1f3b73", "#b2182b", "#e6ab02", "#4d4d4d", "#7b3294"]
 
 
 def _get_title(json_data: dict, tag: str) -> str:

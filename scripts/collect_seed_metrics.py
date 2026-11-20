@@ -91,7 +91,8 @@ PATTERN_TAG = re.compile(
 PATTERN_FBM_AGGREGATOR = re.compile(
     r"-(?:no_)?scaling-(?P<aggregator>[^-]+)-(?:\d+|no_seed)-"
 )
-PATTERN_LOCAL_LR = re.compile(r"_locallr[\d.]+$")
+# suffixes to strip
+PATTERN_VARIANT_SUFFIXES_IGNORED = re.compile(r"(_adam)?(_locallr[\d.]+)?$")
 DEFAULT_FBM_AGGREGATOR = "fedavg"
 DNAME_FIGURES = "figures"
 PREFIX_OUT = "fit_metrics-seeds"
@@ -103,7 +104,7 @@ def _get_variant(fname: str) -> str | None:
     match = PATTERN_FBM_AGGREGATOR.search(fname)
     if match is None:
         return None
-    variant = PATTERN_LOCAL_LR.sub("", match.group("aggregator"))
+    variant = PATTERN_VARIANT_SUFFIXES_IGNORED.sub("", match.group("aggregator"))
     return None if variant == DEFAULT_FBM_AGGREGATOR else variant
 
 

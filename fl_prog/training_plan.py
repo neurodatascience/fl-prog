@@ -3,12 +3,6 @@ from typing import ClassVar
 
 from fedbiomed.common.datamanager import DataManager
 from fedbiomed.common.dataset import TabularDataset
-from fedbiomed.common.optimizers.declearn import (
-    AdamModule,
-    RidgeRegularizer,
-    ScaffoldClientModule,
-)
-from fedbiomed.common.optimizers.optimizer import Optimizer
 from fedbiomed.common.training_plans import TorchTrainingPlan
 from torch import optim
 
@@ -64,26 +58,62 @@ class FLProgTrainingPlan(TorchTrainingPlan):
             "import torch.optim as optim",
             "from fedbiomed.common.datamanager import DataManager",
             "from fedbiomed.common.dataset import TabularDataset",
-            "from fedbiomed.common.optimizers.optimizer import Optimizer",
-            "from fedbiomed.common.optimizers.declearn import AdamModule, RidgeRegularizer, ScaffoldClientModule",
             "from fl_prog.model import LogisticRegressionModelWithShift",
         ]
         return deps
 
     def init_optimizer(self, optimizer_args: dict) -> optim.Optimizer:
         learning_rate = optimizer_args.get("lr", 0.01)
-        if optimizer_args.get("aggregator_name") == "scaffold":
-            optimizer = Optimizer(
-                lr=learning_rate,
-                modules=[AdamModule(), ScaffoldClientModule()],
-                regularizers=[RidgeRegularizer()],
-            )
+        if optimizer_args.get("optimizer_name") == "sgd":
+            # plain SGD is required by Fed-BioMed's native Scaffold aggregator
+            model = self.model()
+            local_lr_multiplier = optimizer_args.get("local_lr_multiplier")
+            if local_lr_multiplier is None:
+                param_groups = [{"params": list(model.parameters())}]
+            else:
+                # use a separate learning rate for local params since their
+                # gradients are ~1/n_participants smaller than the shared ones
+                is_local = {
+                    name: "local" in self.tag_parameters(name)
+                    for name, _ in model.named_parameters()
+                }
+                param_groups = [
+                    {
+                        "params": [
+                            p for n, p in model.named_parameters() if not is_local[n]
+                        ]
+                    },
+                    {
+                        "params": [
+                            p for n, p in model.named_parameters() if is_local[n]
+                        ],
+                        "lr": learning_rate
+                        * max(model.n_participants, 1)
+                        * float(local_lr_multiplier),
+                    },
+                ]
+            optimizer = optim.SGD(param_groups, lr=learning_rate)
         else:
             optimizer = optim.Adam(
                 list(self.model().parameters()),
                 lr=learning_rate,
             )
         return optimizer
+
+    def update_optimizer_args(self) -> dict:
+        # With native Scaffold, Fed-BioMed reports one learning rate per model
+        # parameter, but the researcher-side aggregator expects only the
+        # non-local (aggregated) ones -> drop local params (they have no
+        # control variates, so their learning rate is not needed)
+        optimizer_args = super().update_optimizer_args()
+        lr = optimizer_args.get("lr")
+        if isinstance(lr, dict):
+            optimizer_args["lr"] = {
+                name: value
+                for name, value in lr.items()
+                if "local" not in self.tag_parameters(name)
+            }
+        return optimizer_args
 
     @set_colnames
     def training_data(self):
@@ -97,4 +127,16 @@ class FLProgTrainingPlan(TorchTrainingPlan):
     def training_step(self, data, target):
         output = self.model()(data[:, 0], data[:, 1])
         loss = self.model().get_loss(output, target)
+
+        # FedProx proximal term restricted to shared (non-local) parameters
+        # (Fed-BioMed's built-in FedProx also penalizes local per-subject params)
+        mu = (self._optimizer_args or {}).get("fedprox_shared_mu")
+        if mu:
+            init_params = self._model.init_params  # snapshot at round start
+            prox = sum(
+                ((param - init_params[name]) ** 2).sum()
+                for name, param in self.model().named_parameters()
+                if param.requires_grad and "local" not in self.tag_parameters(name)
+            )
+            loss = loss + float(mu) / 2 * prox
         return loss

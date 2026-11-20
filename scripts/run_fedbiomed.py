@@ -7,8 +7,6 @@ from pathlib import Path
 import click
 import numpy as np
 import pandas as pd
-from declearn.optimizer.modules import ScaffoldServerModule
-from fedbiomed.common.optimizers.optimizer import Optimizer
 from fedbiomed.common.serializer import Serializer
 from fedbiomed.researcher.aggregators.fedavg import FedAverage
 from fedbiomed.researcher.aggregators.scaffold import Scaffold
@@ -49,8 +47,16 @@ DEFAULT_LAMBDA_K_VALUES = 0.01
 DEFAULT_PENALTY_K_VALUES = Penalty.L2
 DEFAULT_WITH_SCALING = False
 DEFAULT_AGGREGATOR_NAME = "fedavg"
+DEFAULT_FEDPROX_MU = 1.0
+DEFAULT_OPTIMIZER_NAME = "adam"
 
-VALID_AGGREGATOR_NAMES = ["fedavg", "fedprox", "scaffold"]
+VALID_AGGREGATOR_NAMES = [
+    "fedavg",
+    "fedprox",  # penalizes all trainable params (including local ones)
+    "fedprox_shared",  # only penalizes shared biomarker-level params
+    "scaffold_native",  # native (not declearn) Scaffold aggregator, use with --optimizer sgd
+]
+VALID_OPTIMIZER_NAMES = ["adam", "sgd"]
 PREFIX_DNAME_TENSORBOARD = "tensorboard-"
 
 
@@ -63,9 +69,16 @@ def _results_exist(fpath_out: Path) -> bool:
 
 
 def _check_node_datasets(
-    dpath_fbm: Path, dpath_data: Path, node_id_map: dict[str, str], /
+    dpath_fbm: Path,
+    dpath_data: Path,
+    node_id_map: dict[str, str],
+    /,
+    node_ids: Iterable[str] | None = None,
 ):
+    """Check that datasets are in the nodes."""
     for filename_tsv, node_id in node_id_map.items():
+        if node_ids is not None and node_id not in node_ids:
+            continue
         dpath_node = dpath_fbm / f"{NODE_PREFIX}{node_id}".replace("_", "-")
         fpath_tsv = (dpath_data / filename_tsv).resolve()
         df_datasets = load_node_db(dpath_node=dpath_node)
@@ -139,18 +152,30 @@ def _get_training_args(
     learning_rate: float = DEFAULT_LEARNING_RATE,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
     random_seed: int | None = None,
+    fedprox_mu: float = DEFAULT_FEDPROX_MU,
+    optimizer_name: str = DEFAULT_OPTIMIZER_NAME,
+    local_lr_multiplier: float | None = None,
 ):
     training_args = {
         "num_updates": n_updates,
         "loader_args": {"batch_size": batch_size, "shuffle": False},
-        "optimizer_args": {"lr": learning_rate, "aggregator_name": aggregator_name},
+        "optimizer_args": {
+            "lr": learning_rate,
+            "aggregator_name": aggregator_name,
+            "optimizer_name": optimizer_name,
+        },
     }
 
     if random_seed is not None:
         training_args["random_seed"] = random_seed
 
+    if local_lr_multiplier is not None:
+        training_args["optimizer_args"]["local_lr_multiplier"] = local_lr_multiplier
+
     if aggregator_name == "fedprox":
-        training_args["fedprox_mu"] = 1.0
+        training_args["fedprox_mu"] = fedprox_mu
+    elif aggregator_name == "fedprox_shared":
+        training_args["optimizer_args"]["fedprox_shared_mu"] = fedprox_mu
     return training_args
 
 
@@ -158,14 +183,9 @@ def _get_aggregator(aggregator_name: str):
     return {
         "fedavg": FedAverage(),
         "fedprox": FedAverage(),  # FedProx is FedAvg with additional training arg
-        "scaffold": Scaffold(server_lr=1),
+        "fedprox_shared": FedAverage(),
+        "scaffold_native": Scaffold(server_lr=1),
     }[aggregator_name]
-
-
-def _get_agg_optimizer(aggregator_name: str):
-    if aggregator_name == "scaffold":
-        return Optimizer(lr=0.8, modules=[ScaffoldServerModule()])
-    return None
 
 
 def _run_experiment(
@@ -195,7 +215,6 @@ def _run_experiment(
             round_limit=n_rounds,
             training_args=training_args,
             aggregator=_get_aggregator(aggregator_name),
-            agg_optimizer=_get_agg_optimizer(aggregator_name),
             node_selection_strategy=None,
             tensorboard=with_tensorboard,
         )
@@ -297,6 +316,9 @@ def run_fedbiomed(
     lambda_k_values: float = DEFAULT_LAMBDA_K_VALUES,
     penalty_k_values: Penalty = DEFAULT_PENALTY_K_VALUES,
     aggregator_name: str = DEFAULT_AGGREGATOR_NAME,
+    fedprox_mu: float = DEFAULT_FEDPROX_MU,
+    optimizer_name: str = DEFAULT_OPTIMIZER_NAME,
+    local_lr_multiplier: float | None = None,
     with_tensorboard: bool = False,
     save_training_replies: bool = False,
     save_all_aggregated_params: bool = False,
@@ -305,6 +327,15 @@ def run_fedbiomed(
     print_run_tag: bool = False,
 ):
     setups = set(setups)
+
+    if aggregator_name == "scaffold_native" and optimizer_name != "sgd":
+        raise click.UsageError(
+            "Fed-BioMed's native Scaffold only supports SGD, use --optimizer sgd"
+        )
+    if local_lr_multiplier is not None and optimizer_name != "sgd":
+        raise click.UsageError(
+            "--local-lr-multiplier is only used with --optimizer sgd"
+        )
 
     run_tag = "-".join(
         [
@@ -322,7 +353,17 @@ def run_fedbiomed(
             ),
             f"k_{penalty_k_values.value}_{lambda_k_values}",
             "scaling" if with_scaling else "no_scaling",
-            aggregator_name,
+            (
+                f"{aggregator_name}_mu{fedprox_mu}"
+                if aggregator_name in ("fedprox", "fedprox_shared")
+                else aggregator_name
+            )
+            + f"_{optimizer_name}"
+            + (
+                f"_locallr{local_lr_multiplier}"
+                if local_lr_multiplier is not None
+                else ""
+            ),
             f"{random_seed}" if random_seed is not None else "no_seed",
         ]
     )
@@ -373,10 +414,23 @@ def run_fedbiomed(
             '"col_subject" (str), "col_timepoint" (str), "cols_biomarker" (list[str])'
         )
 
-    _check_node_datasets(dpath_fbm, dpath_data, node_id_map)
+    # only check nodes used by the requested setup(s)
+    node_ids_used = set()
+    if Setup.FEDERATED in setups:
+        node_ids_used.update(set(node_id_map.values()) - {node_id_centralized})
+    if Setup.CENTRALIZED in setups:
+        node_ids_used.add(node_id_centralized)
+    _check_node_datasets(dpath_fbm, dpath_data, node_id_map, node_ids=node_ids_used)
 
     training_args = _get_training_args(
-        n_updates, batch_size, learning_rate, aggregator_name, random_seed
+        n_updates,
+        batch_size,
+        learning_rate,
+        aggregator_name,
+        random_seed,
+        fedprox_mu=fedprox_mu,
+        optimizer_name=optimizer_name,
+        local_lr_multiplier=local_lr_multiplier,
     )
 
     nodes_federated = sorted(
@@ -540,6 +594,25 @@ def run_fedbiomed(
     "aggregator_name",
     type=click.Choice(VALID_AGGREGATOR_NAMES),
     default=DEFAULT_AGGREGATOR_NAME,
+)
+@click.option(
+    "--fedprox-mu",
+    type=click.FloatRange(min=0, min_open=True),
+    default=DEFAULT_FEDPROX_MU,
+    help="Proximal term strength (only used with --aggregator fedprox/fedprox_shared)",
+)
+@click.option(
+    "--optimizer",
+    "optimizer_name",
+    type=click.Choice(VALID_OPTIMIZER_NAMES),
+    default=DEFAULT_OPTIMIZER_NAME,
+    help="Node-side optimizer",
+)
+@click.option(
+    "--local-lr-multiplier",
+    type=click.FloatRange(min=0, min_open=True),
+    default=None,
+    help="Learning rate for local params if using SGD optimizer",
 )
 @click.option("--tensorboard/--no-tensorboard", "with_tensorboard", default=True)
 @click.option(

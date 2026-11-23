@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """Plot the synthetic-data conditions (e.g. overlap between sites).
 
-One panel per tag (``simulate_data.py`` output), each showing the disease-time span of every
-subject (sorted by t0), coloured by site. Subjects of cross-sectional sites are shown as
-points (first visit only). Held-out test subjects, if any, are not shown.
+One panel per tag (``split_train_test.py`` output), each showing the disease-time span
+of every training subject (sorted by t0), coloured by site. Subjects of cross-sectional
+sites are shown as points (first visit only). Held-out test subjects are not shown.
 """
 
 from pathlib import Path
@@ -148,7 +148,7 @@ def plot_conditions(dpath_data: Path, tags: list[str], fpath_out: Path):
     type=str,
     multiple=True,
     required=True,
-    help="Tag of a simulate_data.py output.",
+    help="Tag of a split_train_test.py output.",
 )
 @click.option(
     "--data-dir",

@@ -283,11 +283,12 @@ prep_one() {
         # shellcheck disable=SC2086
         run "${SCRIPTS_DIR}/simulate_data.py" --tag "$tag" $SIM_ARGS \
             "${site_args[@]}" --rng-seed "$seed" || return 1
-        run "${SCRIPTS_DIR}/plot_synthetic_ground_truth.py" --tag "$tag" || return 1
         run "${SCRIPTS_DIR}/split_train_test.py" --tag "$tag" --mode subject \
             --test-fraction "$TEST_FRACTION" --random-seed "$seed" --pooled \
             --overwrite || return 1
         run "${SCRIPTS_DIR}/merge_data.py" --tag "$final" || return 1
+        # training data only (as fitted: cross-sectional sites already truncated)
+        run "${SCRIPTS_DIR}/plot_synthetic_ground_truth.py" --tag "$final" || return 1
     fi
 
 }

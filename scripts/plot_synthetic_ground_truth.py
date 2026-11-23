@@ -3,7 +3,8 @@
 
 Trajectories are shown on the disease-time axis, before the per-subject time shift
 is removed (disease time = t0 + acceleration_factor * observed time). Run on the
-output of ``simulate_data.py`` (held-out test subjects, if any, are not shown).
+output of ``split_train_test.py`` to show the training data as fitted (held-out test
+subjects are not shown, cross-sectional sites only have first visits).
 """
 
 import math

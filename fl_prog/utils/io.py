@@ -198,8 +198,7 @@ def load_simulated_sites(dpath: Path, json_data: dict) -> pd.DataFrame:
     the site and the subject's true t0, acceleration factor and disease time
     (t0 + acceleration factor * timepoint).
 
-    Merged (centralized) data and held-out test subjects are ignored. Subjects at
-    cross-sectional nodes only keep their first visit.
+    Merged (centralized) data and held-out test subjects are ignored.
     """
     cols = json_data["cols"]
     col_subject, col_timepoint = cols["col_subject"], cols["col_timepoint"]
@@ -246,11 +245,6 @@ def load_simulated_sites(dpath: Path, json_data: dict) -> pd.DataFrame:
         df = df.merge(df_params, on=col_subject, how="left", validate="many_to_one")
         if df["t0"].isna().any():
             raise ValueError(f"Subjects in {fname} without true parameters")
-        if node_id in json_data["cross_sectional_nodes"]:
-            # train subjects keep only their first visit (see split_train_test.py)
-            df = df.sort_values(col_timepoint, kind="stable").drop_duplicates(
-                col_subject
-            )
         df["site"] = node_id
         df["disease_time"] = df["t0"] + df["acceleration_factor"] * df[col_timepoint]
         dfs.append(df)

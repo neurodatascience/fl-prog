@@ -6,7 +6,7 @@ from pathlib import Path
 
 import click
 import pandas as pd
-from sklearn.model_selection import ShuffleSplit, StratifiedShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit
 
 from fl_prog.metrics import PER_SUBJECT_FIELDS
 from fl_prog.results import get_subjects, true_params_by_subject
@@ -100,7 +100,7 @@ def _choose_test_subjects(
 
     The number of held-out subjects is ``test_fraction`` times the total number of
     subjects (including adaptation subjects), but adaptation subjects are never
-    held out (they were used to fit the normative models).
+    held out.
 
     With ``sort_subjects``, subjects are sorted by ID first so that the result only
     depends on the set of subjects and the random seed (not on row order).
@@ -132,19 +132,8 @@ def _choose_test_subjects(
 
     strata = _merge_rare_strata(n_timepoints)
 
-    try:
-        cv = StratifiedShuffleSplit(
-            n_splits=1, test_size=n_test, random_state=random_seed
-        )
-        _, idx_test = next(cv.split(strata.index, strata))
-    except ValueError as exception:
-        click.secho(
-            f"WARNING: falling back to unstratified split ({exception})",
-            fg="yellow",
-            bold=True,
-        )
-        cv = ShuffleSplit(n_splits=1, test_size=n_test, random_state=random_seed)
-        _, idx_test = next(cv.split(strata.index))
+    cv = StratifiedShuffleSplit(n_splits=1, test_size=n_test, random_state=random_seed)
+    _, idx_test = next(cv.split(strata.index, strata))
     return set(n_timepoints.index[idx_test])
 
 
@@ -428,9 +417,7 @@ def split_train_test(
     default=DEFAULT_TEST_FRACTION,
     show_default=True,
     help=(
-        "Fraction of subjects to hold out (pooled or per site), counting adaptation"
-        " subjects in the total even though they are never held out."
-        f" Only used in {SplitMode.SUBJECT.value!r} mode."
+        "Fraction of subjects to hold out. Only used in {SplitMode.SUBJECT.value!r} mode."
     ),
 )
 @click.option("--random-seed", type=int, envvar="RNG_SEED", show_envvar=True)

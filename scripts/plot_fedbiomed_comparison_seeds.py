@@ -8,8 +8,9 @@ Datasets (``--dataset``):
   centralized, DPMoSt, Leaspy), ``noniid_site`` and ``noniid_diag`` (Fed-BioMed
   federated).
 - ``synthetic`` (``run_synthetic_seeds.sh``): splits ``overlap100`` (Fed-BioMed
-  federated and centralized, DPMoSt, Leaspy), ``overlap050`` and ``overlap000``
-  (Fed-BioMed federated). Ground-truth trajectories and time shifts are shown too.
+  federated and centralized, DPMoSt, Leaspy) and the other site splits in
+  ``SYNTHETIC_CONDITION_LABELS`` (Fed-BioMed federated). Ground-truth trajectories
+  and time shifts are shown too.
 
 Only default Fed-BioMed runs (FedAvg + Adam) are used, other aggregators/optimizers
 in the same directories (e.g. SCAFFOLD) are ignored.
@@ -65,7 +66,11 @@ from fl_prog.results import (
     load_json_data,
     true_params_by_subject,
 )
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, Setup
+from fl_prog.utils.constants import (
+    CLICK_CONTEXT_SETTINGS,
+    SYNTHETIC_CONDITION_LABELS,
+    Setup,
+)
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, load_json
 from fl_prog.utils.math import multivariate_logistic
 
@@ -126,15 +131,15 @@ DATASETS = {
         tag_prefix="synth_adnilike",
         condition_centralized="overlap100-centralized",
         conditions_federated={
-            "overlap100-federated": "100% overlap",
-            "overlap050-federated": "50% overlap",
-            "overlap000-federated": "0% overlap",
+            f"{condition}-federated": label
+            for condition, label in SYNTHETIC_CONDITION_LABELS.items()
         },
         condition_splits={
             "overlap100-centralized": "overlap100",
-            "overlap100-federated": "overlap100",
-            "overlap050-federated": "overlap050",
-            "overlap000-federated": "overlap000",
+            **{
+                f"{condition}-federated": condition
+                for condition in SYNTHETIC_CONDITION_LABELS
+            },
         },
         split_baselines="overlap100",
         default_dpath_results=Path(DEFAULT_DPATH_RESULTS) / "2026_11_11",

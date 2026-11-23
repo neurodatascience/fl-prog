@@ -28,7 +28,11 @@
 # FBM_TEMPLATE_DIR / FBM_TEMPLATE_CENTRAL_NODE (existing instance/node to copy),
 # N_CENTRAL, N_FED, PORT_BASE, BASELINE_JOBS, BASELINE_THREADS, SIM_CONFIG,
 # ADD_TO_NODES, FBM_EXTRA_ARGS / DPMOST_EXTRA_ARGS / LEASPY_EXTRA_ARGS (e.g. for
-# smoke tests), DATASET, T0_MAX, BASELINES, INSTANCES, VARIANTS, VARIANT_CONDITIONS, FBM_VARIANT_ARGS_<variant>
+# smoke tests), DATASET, T0_MAX, CONDITIONS, BASELINES, INSTANCES, VARIANTS,
+# VARIANT_CONDITIONS, FBM_VARIANT_ARGS_<variant>
+#
+# CONDITIONS (data splits, see COND_SITES) can be restricted, but must include
+# overlap100 (centralized setup and baselines).
 
 set -uo pipefail
 
@@ -59,8 +63,7 @@ SIM_CONFIG=${SIM_CONFIG:-"${ROOT_DIR}/data/_simulation_configs/adni_like.json"}
 LOG_DIR=${LOG_DIR:-"${RESULTS_DIR}/${FL_PROG_DATE}/logs-${DATASET}"}
 NODE_PIDS_FILE="${LOG_DIR}/node_pids.txt"
 N_SUBJECTS=1735 # ADNI subjects (train + test)
-N_SITES=5
-SIM_ARGS="--config ${SIM_CONFIG} --n-subjects ${N_SUBJECTS} --n-sites ${N_SITES} \
+SIM_ARGS="--config ${SIM_CONFIG} --n-subjects ${N_SUBJECTS} \
 --t0-min 0 --t0-max ${T0_MAX} --acceleration-factor-std 0.5"
 
 FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
@@ -70,13 +73,27 @@ FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
 DPMOST_ARGS="--random-seed ${MODEL_SEED} ${DPMOST_EXTRA_ARGS:-}"
 LEASPY_ARGS="--random-seed ${MODEL_SEED} ${LEASPY_EXTRA_ARGS:-}"
 
-# condition -> overlap between neighbouring sites' t0 windows
-declare -A COND_OVERLAP=(
-    [overlap100]=1
-    [overlap050]=0.5
-    [overlap000]=0
+# condition -> t0 rank windows of the 5 sites (simulate_data.py --site, one per site:
+# LO-HI[,LO-HI...][:cross], ":cross" = first visit only for training subjects)
+declare -A COND_SITES=(
+    # random split / contiguous t0 chunks
+    [overlap100]="0-1 0-1 0-1 0-1 0-1"
+    [overlap000]="0-1/5 1/5-2/5 2/5-3/5 3/5-4/5 4/5-1"
+    # 4 non-overlapping sites plus one site with full coverage
+    [chunks_full]="0-1/4 1/4-1/2 1/2-3/4 3/4-1 0-1"
+    # 4 non-overlapping sites spanning the whole range plus one site with only early
+    # and late subjects, with the same windows as the first and last sites. Widths
+    # are chosen so that every site has the same number of subjects and a uniform
+    # density over its windows (with 1/4-wide sites, the early/late site would take
+    # every subject just outside the first and last sites)
+    [chunks_earlylate]="0-3/10 3/10-1/2 1/2-7/10 7/10-1 0-3/10,7/10-1"
+    # same, but the early/late site does not overlap the 4 other sites (it takes the
+    # extreme 10% at each end and the 4 other sites split the middle)
+    [chunks_earlylate_sep]="1/10-3/10 3/10-1/2 1/2-7/10 7/10-9/10 0-1/10,9/10-1"
+    # random split, one site with only cross-sectional data (sites are exchangeable)
+    [cross]="0-1 0-1 0-1 0-1 0-1:cross"
 )
-CONDITIONS="overlap100 overlap050 overlap000"
+CONDITIONS=${CONDITIONS:-"overlap100 overlap000 chunks_full chunks_earlylate chunks_earlylate_sep cross"}
 
 # federated variants (name -> args added after FBM_ARGS, so they take precedence)
 # native SCAFFOLD needs plain SGD; fedavg_sgd is its baseline (same optimizer/lr)
@@ -87,7 +104,7 @@ declare -A FBM_VARIANTS=(
     [scaffold_adam]=${FBM_VARIANT_ARGS_scaffold_adam:-"--aggregator scaffold_adam"}
 )
 VARIANTS=${VARIANTS:-"scaffold fedavg_sgd"}
-VARIANT_CONDITIONS=${VARIANT_CONDITIONS:-overlap050}
+VARIANT_CONDITIONS=${VARIANT_CONDITIONS:-overlap000}
 
 # condition for the centralized setup and baselines (DPMoSt, Leaspy)
 CENTRAL_CONDITION=overlap100
@@ -137,7 +154,7 @@ instance_for() {
     elif [ "$setup" = centralized ]; then
         printf "central-%02d" $(((seed - 1) % N_CENTRAL + 1))
     else
-        local j=$(((seed - 1) * 3 + $(cond_index "$cond")))
+        local j=$(((seed - 1) * $(wc -w <<<"$CONDITIONS") + $(cond_index "$cond")))
         printf "fed-%02d" $((j % N_FED + 1))
     fi
 }
@@ -254,7 +271,9 @@ cmd_setup_instances() {
 # ===== prep =====
 prep_one() {
     local cond=$1 seed=$2
-    local tag final
+    local tag final site_args=() site
+    [ -n "${COND_SITES[$cond]+x}" ] || { log "[ERROR] unknown condition ${cond}"; return 1; }
+    for site in ${COND_SITES[$cond]}; do site_args+=(--site "$site"); done
     tag=$(base_tag "$cond" "$seed")
     final=$(final_tag "$cond" "$seed")
 
@@ -263,7 +282,7 @@ prep_one() {
     else
         # shellcheck disable=SC2086
         run "${SCRIPTS_DIR}/simulate_data.py" --tag "$tag" $SIM_ARGS \
-            --overlap "${COND_OVERLAP[$cond]}" --rng-seed "$seed" || return 1
+            "${site_args[@]}" --rng-seed "$seed" || return 1
         run "${SCRIPTS_DIR}/plot_synthetic_ground_truth.py" --tag "$tag" || return 1
         run "${SCRIPTS_DIR}/split_train_test.py" --tag "$tag" --mode subject \
             --test-fraction "$TEST_FRACTION" --random-seed "$seed" --pooled \

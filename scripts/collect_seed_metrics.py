@@ -20,7 +20,7 @@ import seaborn as sns
 
 from fl_prog.metrics import average_over_biomarkers
 from fl_prog.plotting import get_categorical_palette, save_fig
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, SYNTHETIC_CONDITION_LABELS
 
 DATASET_ADNI = "adni_harmonized"
 DATASET_SYNTHETIC = "synth_adnilike"
@@ -41,27 +41,29 @@ MODELS = {
     ("leaspy", "iid", "centralized"): "Leaspy",
     # synthetic
     ("fedbiomed", "overlap100", "centralized"): "Fed-BioMed centralized",
-    ("fedbiomed", "overlap100", "federated"): "Fed-BioMed 100% overlap",
-    ("fedbiomed", "overlap050", "federated"): "Fed-BioMed 50% overlap",
+    **{
+        ("fedbiomed", condition, "federated"): f"Fed-BioMed {label}"
+        for condition, label in SYNTHETIC_CONDITION_LABELS.items()
+    },
+    # other aggregators/optimizers (run_synthetic_seeds.sh VARIANT_CONDITIONS)
     (
         "fedbiomed",
-        "overlap050",
+        "overlap000",
         "federated",
         "scaffold_native_sgd",
-    ): "Fed-BioMed 50% overlap (SCAFFOLD)",
+    ): "Fed-BioMed 0% overlap (SCAFFOLD)",
     (
         "fedbiomed",
-        "overlap050",
+        "overlap000",
         "federated",
         "fedavg_sgd",
-    ): "Fed-BioMed 50% overlap (FedAvg, SGD)",
+    ): "Fed-BioMed 0% overlap (FedAvg, SGD)",
     (
         "fedbiomed",
-        "overlap050",
+        "overlap000",
         "federated",
         "scaffold_adam",
-    ): "Fed-BioMed 50% overlap (SCAFFOLD, Adam)",
-    ("fedbiomed", "overlap000", "federated"): "Fed-BioMed 0% overlap",
+    ): "Fed-BioMed 0% overlap (SCAFFOLD, Adam)",
     ("dpmost", "overlap100", "centralized"): "DPMoSt",
     ("leaspy", "overlap100", "centralized"): "Leaspy",
 }

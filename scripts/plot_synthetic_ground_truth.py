@@ -171,10 +171,10 @@ def plot_ground_truth(dpath: Path, tag: str) -> Path:
     for ax in axes[n_panels:]:
         ax.set_visible(False)
 
-    settings = json_data.get("settings", {})
+    sites = json_data["settings"]["sites"]
     fig.suptitle(
         f"{tag}\n{len(df_subjects)} subjects, {len(df)} visits, "
-        f"overlap={settings.get('overlap')}",
+        f"sites={' '.join(sites) if sites else 'independent'}",
         fontsize="medium",
     )
     fpath_out = dpath / f"{tag}-ground_truth.png"

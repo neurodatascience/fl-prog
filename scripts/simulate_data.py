@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Simulate longitudinal biomarker data for multiple sites."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from fractions import Fraction
 from pathlib import Path
 from typing import NamedTuple
 
@@ -9,7 +10,7 @@ import click
 import numpy as np
 import pandas as pd
 
-from fl_prog.simulation import assign_sites_by_overlap, simulate_all_subjects
+from fl_prog.simulation import Window, assign_sites_by_windows, simulate_all_subjects
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import DEFAULT_DPATH_DATA, get_dpath_latest, load_json, save_json
 
@@ -36,6 +37,46 @@ COL_BIOMARKER_PREFIX = "biomarker_"
 
 # biomarker-specific parameters that can be fixed in the config file
 KEYS_FIXED_PARAMS = ("k_values", "x0_values", "scaling_factors", "sigmas")
+
+# suffix of a --site spec for a site with only the first visit of each subject
+SITE_SPEC_CROSS = "cross"
+
+
+class SiteSpec(NamedTuple):
+    windows: list[Window]  # on the t0 rank scale [0, 1]
+    cross_sectional: bool
+
+
+def _parse_site_spec(spec: str) -> SiteSpec:
+    """Parse a --site spec: ``LO-HI[,LO-HI...][:cross]``.
+
+    Bounds can be decimals or fractions (e.g. ``1/6-1/2``).
+    """
+    windows_str, sep, suffix = spec.partition(":")
+    if sep and suffix != SITE_SPEC_CROSS:
+        raise ValueError(
+            f"Invalid site spec {spec!r}: expected suffix ':{SITE_SPEC_CROSS}', "
+            f"got ':{suffix}'"
+        )
+    windows = []
+    for window_str in windows_str.split(","):
+        try:
+            start, end = (float(Fraction(x.strip())) for x in window_str.split("-"))
+        except ValueError as exception:
+            raise ValueError(
+                f"Invalid window {window_str!r} in site spec {spec!r}: expected LO-HI"
+            ) from exception
+        if not 0 <= start < end <= 1:
+            raise ValueError(
+                f"Invalid window {window_str!r} in site spec {spec!r}: "
+                "need 0 <= LO < HI <= 1"
+            )
+        if windows and start < windows[-1][1]:
+            raise ValueError(
+                f"Windows in site spec {spec!r} must be sorted and not overlap"
+            )
+        windows.append((start, end))
+    return SiteSpec(windows=windows, cross_sectional=bool(sep))
 
 
 class SiteData(NamedTuple):
@@ -155,8 +196,7 @@ def _simulate_pooled_sites(
     n_max_timepoints: int,
     t0_min: float,
     t0_max: float,
-    n_sites: int,
-    overlap: float,
+    windows_per_site: Sequence[Sequence[Window]],
     sim_kwargs: dict,
     rng: np.random.Generator,
 ) -> list[SiteData]:
@@ -175,11 +215,11 @@ def _simulate_pooled_sites(
         else np.array([tp[0] for tp in timepoints])
     )
     # use a related but separate RNG instance for the split to keep the original
-    # RNG stream independent from the overlap value
-    site_indices = assign_sites_by_overlap(t0, n_sites, overlap, rng=rng.spawn(1)[0])
+    # RNG stream independent from the site windows
+    site_indices = assign_sites_by_windows(t0, windows_per_site, rng=rng.spawn(1)[0])
 
     sites = []
-    for i_site in range(n_sites):
+    for i_site in range(len(windows_per_site)):
         idx = np.flatnonzero(site_indices == i_site)
         print(
             f"Site {i_site + 1}: {len(idx)} subjects, "
@@ -253,30 +293,31 @@ def simulate_data(
     scaling_factor_min: float = DEFAULT_SCALING_FACTOR_MIN,
     scaling_factor_max: float = DEFAULT_SCALING_FACTOR_MAX,
     na_ratio: float = DEFAULT_NA_RATIO,
-    n_sites: int | None = None,
-    overlap: float | None = None,
+    sites: Iterable[str] = (),
     rng_seed: int | None = None,
 ):
     """Simulate data for multiple sites.
 
-      Two modes:
-      - Independent sites (default): each site is simulated separately, with its own
+    Two modes:
+    - Independent sites (default): each site is simulated separately, with its own
       number of subjects, maximum number of timepoints and t0 range.
-      - Pooled (``--n-sites`` and ``--overlap``): a single population is simulated and
-    split into equally sized sites based on t0.
+    - Pooled (``--site``, once per site): a single population is simulated and split
+      into equally sized sites based on t0 windows (see ``_parse_site_spec``). Sites
+      marked as cross-sectional are only truncated to the first visit of each subject
+      by ``split_train_test.py`` (so held-out subjects keep all their visits).
     """
+    sites = list(sites)
     settings = dict(locals())  # function arguments only
 
-    pooled = n_sites is not None
-    if pooled != (overlap is not None):
-        raise ValueError("--n-sites and --overlap must be used together.")
+    site_specs = [_parse_site_spec(spec) for spec in sites]
+    pooled = len(site_specs) > 0
     if pooled and any(
         len(arg) != 1
         for arg in (n_subjects_all, n_max_timepoints_all, t0_min_all, t0_max_all)
     ):
         raise ValueError(
             "--n-subjects, --n-max-timepoints, --t0-min, and --t0-max must have a "
-            "single value when using --n-sites/--overlap."
+            "single value when using --site."
         )
 
     if fpath_config is not None:
@@ -308,18 +349,17 @@ def simulate_data(
         "acceleration_factor_std": acceleration_factor_std,
     }
     if pooled:
-        sites = _simulate_pooled_sites(
+        sites_data = _simulate_pooled_sites(
             n_subjects_all[0],
             n_max_timepoints_all[0],
             t0_min_all[0],
             t0_max_all[0],
-            n_sites,
-            overlap,
+            [spec.windows for spec in site_specs],
             sim_kwargs,
             rng,
         )
     else:
-        sites = _simulate_independent_sites(
+        sites_data = _simulate_independent_sites(
             n_subjects_all,
             n_max_timepoints_all,
             t0_min_all,
@@ -333,8 +373,11 @@ def simulate_data(
 
     node_id_map = {}
     subjects_by_node = {}
-    for i_site, site in enumerate(sites):
+    cross_sectional_nodes = []
+    for i_site, site in enumerate(sites_data):
         node_id = f"{i_site + 1}"
+        if pooled and site_specs[i_site].cross_sectional:
+            cross_sectional_nodes.append(node_id)
         df_data = _build_df(site, cols_biomarker, na_ratio=na_ratio, rng=rng)
         fname_tsv = _get_fname_out(tag, i_site)
         fpath_tsv = dpath_out / fname_tsv
@@ -346,8 +389,8 @@ def simulate_data(
     json_data = {
         "settings": settings,
         "params": {
-            "time_shifts": [site.time_shifts for site in sites],
-            "acceleration_factors": [site.acceleration_factors for site in sites],
+            "time_shifts": [site.time_shifts for site in sites_data],
+            "acceleration_factors": [site.acceleration_factors for site in sites_data],
             **params,
         },
         "node_id_map": node_id_map,
@@ -358,6 +401,9 @@ def simulate_data(
             "cols_biomarker": cols_biomarker,
         },
         "subjects_by_node": subjects_by_node,
+        # train subjects at these nodes are truncated to their first visit by
+        # split_train_test.py
+        "cross_sectional_nodes": cross_sectional_nodes,
         "need_scaling": False,
     }
     if "biomarker_names" in config:
@@ -430,20 +476,16 @@ def simulate_data(
     default=DEFAULT_NA_RATIO,
 )
 @click.option(
-    "--n-sites",
-    type=click.IntRange(min=1),
-    default=None,
+    "--site",
+    "sites",
+    type=str,
+    multiple=True,
     help=(
-        "Simulate a single population and split it into this many sites based on t0."
-        " Requires --overlap and single values for --n-subjects/--t0-min/--t0-max."
-    ),
-)
-@click.option(
-    "--overlap",
-    type=click.FloatRange(min=0, max=1),
-    default=None,
-    help=(
-        "Fraction of each site's t0 window shared with the next site. Used with --n-sites."
+        "Simulate a single population and split it into sites based on t0 (use once"
+        " per site). Format: LO-HI[,LO-HI...][:cross], with windows on the t0 rank"
+        " scale [0, 1] (decimals or fractions), e.g. '0-1' (full coverage),"
+        " '0-1/4,3/4-1' (early and late subjects only), '0-1:cross' (first visit"
+        " only). Requires single values for --n-subjects/--t0-min/--t0-max."
     ),
 )
 def main(**params):

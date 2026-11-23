@@ -26,6 +26,7 @@ from plot_fedbiomed_comparison_seeds import (
     DATASETS,
     DNAME_FIGURES,
     LEGEND_HEADERS,
+    DatasetSpec,
     draw_group_trajectories,
     find_seed_files,
     find_tag_dirs,
@@ -55,15 +56,6 @@ CONTEXT = "talk"
 FONT_SCALE = 0.8  # talk context, scaled down to fit one slide
 N_YTICKS = 3
 
-# model label (collect_seed_metrics.py) -> short label, in plotting order
-MODELS = {
-    "Fed-BioMed centralized": "Centralized",
-    "Fed-BioMed 100% overlap": "100% overlap",
-    "Fed-BioMed 50% overlap": "50% overlap",
-    "Fed-BioMed 0% overlap": "0% overlap",
-}
-# DPMoSt/Leaspy are not shown
-MODELS_FEDBIOMED = list(MODELS)
 FIT_METRICS = {"r2_score": "R²", "mean_absolute_error": "MAE"}
 # fit panels of the synthetic and ADNI figures (plot_adni_results_figure.py):
 # same y-axis bounds (MAE), or same y-axis span centered on each figure's values
@@ -96,13 +88,31 @@ ACCELERATION_TITLE = r"$\alpha_i$ recovery"
 # number of timepoints per subject (at most 11; subjects with one timepoint have no
 # acceleration estimate). Only ~3-10 training subjects per seed have 11 timepoints
 VISIT_BINS = {str(n): (n, n) for n in range(2, 12)}
-# Fed-BioMed model label -> (condition, setup) in the dataset spec
-CONDITIONS = {
-    "Fed-BioMed centralized": "overlap100-centralized",
-    "Fed-BioMed 100% overlap": "overlap100-federated",
-    "Fed-BioMed 50% overlap": "overlap050-federated",
-    "Fed-BioMed 0% overlap": "overlap000-federated",
-}
+LABEL_FEDBIOMED_CENTRALIZED = "Fed-BioMed centralized"
+
+
+def get_conditions(spec: DatasetSpec) -> dict[str, str]:
+    """Fed-BioMed model label (collect_seed_metrics.py) -> condition in the dataset
+    spec, in plotting order (DPMoSt/Leaspy are not shown)."""
+    return {
+        LABEL_FEDBIOMED_CENTRALIZED: spec.condition_centralized,
+        **{
+            f"Fed-BioMed {label}": condition
+            for condition, label in spec.conditions_federated.items()
+        },
+    }
+
+
+def get_models(spec: DatasetSpec) -> dict[str, str]:
+    """Fed-BioMed model label (collect_seed_metrics.py) -> short label."""
+    return {
+        model: spec.condition_labels[condition]
+        for model, condition in get_conditions(spec).items()
+    }
+
+
+# default models (also used by plot_adni_results_figure.py)
+MODELS = get_models(DATASETS[DEFAULT_DATASET])
 
 
 # legend color boxes: outline width relative to the default (patch.linewidth)
@@ -183,13 +193,15 @@ def _plot_fit(axes, df_fit: pd.DataFrame, palette: dict, models=MODELS):
             )
 
 
-def _plot_recovery(ax_relative, axes_months, df_recovery: pd.DataFrame, palette):
+def _plot_recovery(
+    ax_relative, axes_months, df_recovery: pd.DataFrame, palette, models=MODELS
+):
     """Relative errors of the biomarker scale parameters (one group of boxes per
     parameter), then errors in months (midpoints, time shifts), one panel each."""
-    n_models = len(MODELS_FEDBIOMED)
+    n_models = len(models)
     groups = []
     for i_param, (set_name, metric) in enumerate(RELATIVE_ERROR_METRICS):
-        for i_model, model in enumerate(MODELS_FEDBIOMED):
+        for i_model, model in enumerate(models):
             groups.append(
                 (
                     i_param * (n_models + 1) + i_model,
@@ -222,7 +234,7 @@ def _plot_recovery(ax_relative, axes_months, df_recovery: pd.DataFrame, palette)
                     * MONTHS_PER_MODEL_TIME,
                     palette[model],
                 )
-                for i_model, model in enumerate(MODELS_FEDBIOMED)
+                for i_model, model in enumerate(models)
             ],
         )
         ax.set_title(title, fontweight="bold")
@@ -231,12 +243,17 @@ def _plot_recovery(ax_relative, axes_months, df_recovery: pd.DataFrame, palette)
             ax.set_ylabel(LABEL_MONTHS_ERROR)
 
 
-def get_df_accel_by_visits(fpaths_json: dict[int, dict[str, Path]]) -> pd.DataFrame:
+def get_df_accel_by_visits(
+    fpaths_json: dict[int, dict[str, Path]], conditions: dict[str, str]
+) -> pd.DataFrame:
     """Spearman correlation between true and estimated acceleration factors of the
-    training subjects, by number of visits (seed x model x visit bin)."""
+    training subjects, by number of visits (seed x model x visit bin).
+
+    ``conditions``: model label -> condition (see ``get_conditions``).
+    """
     rows = []
     for seed, fpaths in fpaths_json.items():
-        for model, condition in CONDITIONS.items():
+        for model, condition in conditions.items():
             json_results = load_json(fpaths[condition])
             json_data = load_json_data(json_results)
             subjects_by_node = json_data["subjects_by_node"]
@@ -274,10 +291,10 @@ def get_df_accel_by_visits(fpaths_json: dict[int, dict[str, Path]]) -> pd.DataFr
     return pd.DataFrame(rows)
 
 
-def _plot_accel_by_visits(ax, df_accel: pd.DataFrame, palette: dict):
+def _plot_accel_by_visits(ax, df_accel: pd.DataFrame, palette: dict, models=MODELS):
     x = np.arange(len(VISIT_BINS))
-    offsets = np.linspace(-0.15, 0.15, len(MODELS_FEDBIOMED))
-    for offset, model in zip(offsets, MODELS_FEDBIOMED):
+    offsets = np.linspace(-0.15, 0.15, len(models))
+    for offset, model in zip(offsets, models):
         df_summary = (
             df_accel.query("model == @model")
             .groupby("n_visits")["spearman_r"]
@@ -358,14 +375,15 @@ def plot_synthetic_results_figure(
     df_recovery = pd.read_csv(
         dpath_figures / f"param_recovery-seeds{suffix}-all.tsv", sep="\t"
     ).query("col_biomarker == 'all'")
-    df_accel = get_df_accel_by_visits(fpaths_json)
+    df_accel = get_df_accel_by_visits(fpaths_json, get_conditions(spec))
     fpath_accel = dpath_out / f"accel_recovery_by_visits{suffix}.tsv"
     fpath_accel.parent.mkdir(parents=True, exist_ok=True)
     df_accel.to_csv(fpath_accel, sep="\t", index=False)
     print(f"Saved acceleration recovery by visits to {fpath_accel}")
 
     # figure
-    palette = dict(zip(MODELS, get_categorical_palette(list(MODELS)).values()))
+    models = get_models(spec)
+    palette = dict(zip(models, get_categorical_palette(list(models)).values()))
     fig = plt.figure(figsize=FIGSIZE, layout="constrained")
     subfig_top, subfig_bottom = fig.subfigures(2, 1, height_ratios=[1.1, 1])
 
@@ -404,26 +422,27 @@ def plot_synthetic_results_figure(
             "width_ratios": [2.2] * n_fit + [2.6] + [1.1] * len(MONTHS_METRICS) + [2.2]
         },
     )
-    _plot_fit(axes_bottom[:n_fit], df_fit, palette)
+    _plot_fit(axes_bottom[:n_fit], df_fit, palette, models=models)
     _plot_recovery(
         axes_bottom[n_fit],
         axes_bottom[n_fit + 1 : n_fit + 1 + len(MONTHS_METRICS)],
         df_recovery,
         palette,
+        models=models,
     )
-    _plot_accel_by_visits(axes_bottom[-1], df_accel, palette)
+    _plot_accel_by_visits(axes_bottom[-1], df_accel, palette, models=models)
     for ax in axes_bottom:
         ax.yaxis.set_major_locator(MaxNLocator(nbins=N_YTICKS))
         ax.title.set_fontsize("medium")
 
     # shared legend: models, then train/test shading
     handles = [
-        Patch(facecolor=palette[model], edgecolor="0.25") for model in MODELS
+        Patch(facecolor=palette[model], edgecolor="0.25") for model in models
     ] + [
         Patch(facecolor=_lighten("0.5"), edgecolor="0.25"),
         Patch(facecolor="0.5", edgecolor="0.25"),
     ]
-    labels = list(MODELS.values()) + [LABEL_TRAIN, LABEL_TEST]
+    labels = list(models.values()) + [LABEL_TRAIN, LABEL_TEST]
     legend = subfig_bottom.legend(
         handles,
         labels,

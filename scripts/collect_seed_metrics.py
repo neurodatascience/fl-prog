@@ -18,7 +18,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
-from fl_prog.metrics import average_over_biomarkers
 from fl_prog.plotting import get_categorical_palette, save_fig
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, SYNTHETIC_CONDITION_LABELS
 
@@ -92,6 +91,14 @@ RECOVERY_METRICS = {
 }
 BIOMARKER_ALL = "all"
 SET_NAME_ORDER = ["train", "test"]
+# held-out subjects personalized on their first N visits
+SET_NAME_TEST_ALL = "test"
+SET_NAME_TEST_FIT = "test_fit"
+SET_NAMES_FORECAST = [SET_NAME_TEST_FIT, "test_forecast"]
+# prefix of the recovery set names of held-out subjects (also "_shifted")
+PREFIX_SET_NAME_RECOVERY_TEST = "recovery_per_subject_test"
+COL_N_TIMEPOINTS = "n_timepoints"
+COL_FORECAST_AFTER = "forecast_after"
 PATTERN_TAG = re.compile(
     rf"^(?P<dataset>{'|'.join(DATASETS)})_(?P<condition>.+?)_s(?P<seed>\d+)_"
 )
@@ -99,6 +106,8 @@ PATTERN_TAG = re.compile(
 PATTERN_FBM_AGGREGATOR = re.compile(
     r"-(?:no_)?scaling-(?P<aggregator>[^-]+)-(?:\d+|no_seed)-"
 )
+# for extracting N and K for personalization and forecast timepoints respectivaly
+PATTERN_N_TIMEPOINTS = re.compile(r"-first(?P<n>\d+)_after(?P<k>\d+)\.tsv$")
 # suffixes to strip
 PATTERN_VARIANT_SUFFIXES_IGNORED = re.compile(
     r"((?<!scaffold)_adam)?(_locallr[\d.]+)?$"
@@ -116,6 +125,15 @@ def _get_variant(fname: str) -> str | None:
         return None
     variant = PATTERN_VARIANT_SUFFIXES_IGNORED.sub("", match.group("aggregator"))
     return None if variant == DEFAULT_FBM_AGGREGATOR else variant
+
+
+def _get_n_timepoints(fname: str) -> tuple[float, float]:
+    """Get (N, K) of a metrics file personalized on the first N visits and scored
+    after the first K (NaN, NaN for personalization on all visits)."""
+    match = PATTERN_N_TIMEPOINTS.search(fname)
+    if match is None:
+        return float("nan"), float("nan")
+    return int(match.group("n")), int(match.group("k"))
 
 
 def _collect(dpath_results: Path, dataset: str, pattern_fname: str) -> pd.DataFrame:
@@ -144,6 +162,9 @@ def _collect(dpath_results: Path, dataset: str, pattern_fname: str) -> pd.DataFr
             df_setup.insert(1, "condition", condition)
             df_setup.insert(2, "seed", int(match.group("seed")))
             df_setup.insert(3, "tag", tag)
+            df_setup[COL_N_TIMEPOINTS], df_setup[COL_FORECAST_AFTER] = (
+                _get_n_timepoints(fpath.name)
+            )
             df_setup["fpath"] = str(fpath)
             dfs.append(df_setup)
     if not dfs:
@@ -152,22 +173,54 @@ def _collect(dpath_results: Path, dataset: str, pattern_fname: str) -> pd.DataFr
     # a model/condition/seed must come from a single file (e.g. not from both a run
     # with all setups and a run with only one of them, or from two personalization
     # seeds), otherwise it would be counted more than once
-    n_files = df.groupby(["model", "condition", "seed"])["fpath"].nunique()
+    keys = ["model", "condition", "seed", COL_N_TIMEPOINTS, COL_FORECAST_AFTER]
+    n_files = df.groupby(keys, dropna=False)["fpath"].nunique()
     if (n_files > 1).any():
         duplicates = n_files[n_files > 1].index.tolist()
+        fpaths = df.loc[
+            df.set_index(keys).index.isin(n_files[n_files > 1].index), "fpath"
+        ]
         raise click.ClickException(
             f"Results for {duplicates} come from more than one file: "
-            + ", ".join(
-                sorted(
-                    set(
-                        df.set_index(["model", "condition", "seed"])
-                        .loc[duplicates, "fpath"]
-                        .tolist()
-                    )
-                )
-            )
+            + ", ".join(sorted(set(fpaths)))
         )
     return df
+
+
+def _split_n_timepoints(
+    df: pd.DataFrame, set_names_forecast: list[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split ``df`` by how held-out subjects were personalized.
+
+    Returns the rows where held-out subjects were personalized on all visits
+    (``n_timepoints`` is NaN), and the rows where they were personalized on their
+    first N visits only, restricted to ``set_names_forecast``. Other rows with N
+    set (e.g. train) are the same for any N and are dropped.
+    """
+    is_all = df[COL_N_TIMEPOINTS].isna()
+    is_forecast = ~is_all & df["set_name"].isin(set_names_forecast)
+    return df.loc[is_all].copy(), df.loc[is_forecast].copy()
+
+
+def _select_forecast_after(
+    df: pd.DataFrame, forecast_after: int | None
+) -> pd.DataFrame:
+    """Get rows scored after the first ``forecast_after`` visits (default: largest)."""
+    values = sorted(df[COL_FORECAST_AFTER].unique())
+    if forecast_after is None:
+        forecast_after = values[-1]
+        if len(values) > 1:
+            click.secho(
+                f"WARNING: found forecast_after values {values}, using "
+                f"{forecast_after} (see --forecast-after)",
+                fg="yellow",
+            )
+    elif forecast_after not in values:
+        raise click.UsageError(
+            f"No results with forecast_after={forecast_after} (found {values})"
+        )
+    print(f"Forecast results: scored after the first {forecast_after} visit(s)")
+    return df.loc[df[COL_FORECAST_AFTER] == forecast_after]
 
 
 def _infer_dataset(dpath_results: Path) -> str:
@@ -285,6 +338,119 @@ def _plot_recovery(
     save_fig(fig, fpath_out)
 
 
+def _lineplot_vs_n_timepoints(
+    ax,
+    data: pd.DataFrame,
+    model_order: list[str],
+    palette,
+    data_reference: pd.DataFrame | None = None,
+):
+    """Mean +/- std over seeds against N, with each model's value when personalized
+    on all visits (mean over seeds) as a dashed reference line."""
+    n_values = sorted(data[COL_N_TIMEPOINTS].unique())
+    for model in model_order:
+        data_model = data.loc[data["model"] == model]
+        if data_model.empty:
+            continue
+        stats = data_model.groupby(COL_N_TIMEPOINTS)["value"].agg(["mean", "std"])
+        ax.errorbar(
+            stats.index,
+            stats["mean"],
+            yerr=stats["std"],
+            color=palette[model],
+            marker="o",
+            capsize=3,
+            label=model,
+        )
+        if data_reference is not None:
+            values_reference = data_reference.loc[
+                data_reference["model"] == model, "value"
+            ]
+            if not values_reference.empty:
+                ax.axhline(
+                    values_reference.mean(),
+                    color=palette[model],
+                    linestyle="--",
+                    linewidth=1,
+                )
+    ax.set_xticks(n_values)
+    ax.set_xticklabels([str(int(n)) for n in n_values])
+    ax.set_xlabel("Personalization visits (N)")
+
+
+def _plot_fit_metrics_vs_n_timepoints(
+    df_forecast: pd.DataFrame, df_all_visits: pd.DataFrame, fpath_out: Path
+):
+    model_order = _get_model_order(df_forecast)
+    palette = get_categorical_palette(model_order)
+    set_names = [s for s in SET_NAMES_FORECAST if s in set(df_forecast["set_name"])]
+    fig, axes = plt.subplots(
+        nrows=len(METRICS),
+        ncols=len(set_names),
+        figsize=(4.5 * len(set_names), 3.5 * len(METRICS)),
+        squeeze=False,
+        sharey="row",
+    )
+    for i_row, (metric, metric_label) in enumerate(METRICS.items()):
+        for i_col, set_name in enumerate(set_names):
+            ax = axes[i_row, i_col]
+            _lineplot_vs_n_timepoints(
+                ax,
+                df_forecast.query("metric == @metric and set_name == @set_name"),
+                model_order,
+                palette,
+                # all-visit scores are in-sample: not a reference for forecasts
+                data_reference=(
+                    df_all_visits.query(
+                        "metric == @metric and set_name == @SET_NAME_TEST_ALL"
+                    )
+                    if set_name == SET_NAME_TEST_FIT
+                    else None
+                ),
+            )
+            ax.set_title(f"{set_name} {metric_label}")
+            ax.set_ylabel(metric_label if i_col == 0 else "")
+    axes[0, -1].legend(fontsize="small")
+    fig.suptitle(
+        "Held-out subjects (dashed: personalized and scored on all visits, "
+        "all subjects)"
+    )
+    fig.tight_layout()
+    save_fig(fig, fpath_out)
+
+
+def _plot_recovery_vs_n_timepoints(
+    df_forecast: pd.DataFrame, df_all_visits: pd.DataFrame, fpath_out: Path
+):
+    model_order = _get_model_order(df_forecast)
+    palette = get_categorical_palette(model_order)
+    panels = [
+        (key, label)
+        for key, label in RECOVERY_METRICS.items()
+        if not df_forecast.query("set_name == @key[0] and metric == @key[1]").empty
+    ]
+    if not panels:
+        click.secho("WARNING: no held-out recovery metrics to plot", fg="yellow")
+        return
+    fig, axes = plt.subplots(
+        ncols=len(panels), figsize=(4.5 * len(panels), 3.5), squeeze=False
+    )
+    for ax, ((set_name, metric), label) in zip(axes[0], panels, strict=True):
+        query = "set_name == @set_name and metric == @metric"
+        _lineplot_vs_n_timepoints(
+            ax,
+            df_forecast.query(query),
+            model_order,
+            palette,
+            data_reference=df_all_visits.query(query),
+        )
+        ax.set_title(label)
+        ax.set_ylabel("")
+    axes[0, -1].legend(fontsize="small")
+    fig.tight_layout()
+    save_fig(fig, fpath_out)
+
+
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
 @click.option(
     "--results-dir",
@@ -299,7 +465,14 @@ def _plot_recovery(
     default=None,
     help="Dataset to collect (inferred if the results directory has only one)",
 )
-def main(dpath_results: Path, dataset: str | None):
+@click.option(
+    "--forecast-after",
+    type=click.IntRange(min=1),
+    default=None,
+    help="For held-out subjects personalized on their first N visits: plot results "
+    "scored after the first K visits (default: largest K found)",
+)
+def main(dpath_results: Path, dataset: str | None, forecast_after: int | None):
     if dataset is None:
         dataset = _infer_dataset(dpath_results)
     # keep original output names for ADNI
@@ -318,15 +491,26 @@ def main(dpath_results: Path, dataset: str | None):
     df.to_csv(fpath_all, sep="\t", index=False)
     print(f"Saved {len(df)} rows to {fpath_all}")
 
-    # mean over biomarkers (also for results where "all" was pooled)
-    df = average_over_biomarkers(df)
-    df_all = df.loc[
-        (df["col_biomarker"] == BIOMARKER_ALL) & df["metric"].isin(METRICS)
-    ].copy()
+    df_all, df_forecast = _split_n_timepoints(
+        df.loc[(df["col_biomarker"] == BIOMARKER_ALL) & df["metric"].isin(METRICS)],
+        SET_NAMES_FORECAST,
+    )
     _summarize(
         df_all, ["set_name", "metric"], dpath_out / f"{PREFIX_OUT}{suffix}-summary.tsv"
     )
     _plot_fit_metrics(df_all, dpath_out / f"{PREFIX_OUT}{suffix}.svg")
+
+    # held-out subjects personalized on their first N visits
+    if not df_forecast.empty:
+        df_forecast = _select_forecast_after(df_forecast, forecast_after)
+        _summarize(
+            df_forecast,
+            [COL_N_TIMEPOINTS, COL_FORECAST_AFTER, "set_name", "metric"],
+            dpath_out / f"{PREFIX_OUT}{suffix}-forecast-summary.tsv",
+        )
+        _plot_fit_metrics_vs_n_timepoints(
+            df_forecast, df_all, dpath_out / f"{PREFIX_OUT}{suffix}-forecast.svg"
+        )
 
     # parameter recovery (only if ground truth is known)
     df_recovery = _collect(dpath_results, dataset, "*-param_recovery*.tsv")
@@ -336,13 +520,35 @@ def main(dpath_results: Path, dataset: str | None):
     fpath_all = dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}-all.tsv"
     df_recovery.to_csv(fpath_all, sep="\t", index=False)
     print(f"Saved {len(df_recovery)} rows to {fpath_all}")
-    df_recovery = df_recovery.loc[df_recovery["col_biomarker"] == BIOMARKER_ALL]
+    df_recovery, df_recovery_forecast = _split_n_timepoints(
+        df_recovery.loc[df_recovery["col_biomarker"] == BIOMARKER_ALL],
+        [
+            set_name
+            for set_name, _ in RECOVERY_METRICS
+            if set_name.startswith(PREFIX_SET_NAME_RECOVERY_TEST)
+        ],
+    )
     _summarize(
         df_recovery,
         ["set_name", "metric"],
         dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}-summary.tsv",
     )
     _plot_recovery(df_recovery, dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}.svg")
+
+    if not df_recovery_forecast.empty:
+        df_recovery_forecast = _select_forecast_after(
+            df_recovery_forecast, forecast_after
+        )
+        _summarize(
+            df_recovery_forecast,
+            [COL_N_TIMEPOINTS, COL_FORECAST_AFTER, "set_name", "metric"],
+            dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}-forecast-summary.tsv",
+        )
+        _plot_recovery_vs_n_timepoints(
+            df_recovery_forecast,
+            df_recovery,
+            dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}-forecast.svg",
+        )
 
 
 if __name__ == "__main__":

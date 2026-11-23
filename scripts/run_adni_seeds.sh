@@ -4,12 +4,17 @@
 # The seed controls the data (pooled subject hold-out and, for federated setups,
 # the site split), not model fitting (fixed MODEL_SEED for every model).
 #
-# Usage: run_adni_seeds.sh {prep|start-nodes|stop-nodes|fit|summarize|all} [SEED ...]
+# Usage: run_adni_seeds.sh {prep|start-nodes|stop-nodes|fit|forecast|summarize|all} [SEED ...]
+#
+# "forecast" (after "fit", not part of "all") re-scores held-out subjects personalized
+# on their first N visits only, for N in N_TIMEPOINTS (see get_metrics.py
+# --personalize-n-timepoints/--forecast-after).
 #
 # All runs write to results/<FL_PROG_DATE>/<tag>/.
 #
 # Environment overrides: SEEDS, FL_PROG_DATE, LOG_DIR, MAX_USER_THREADS,
-# FBM_EXTRA_ARGS / DPMOST_EXTRA_ARGS / LEASPY_EXTRA_ARGS (e.g. for smoke tests)
+# FBM_EXTRA_ARGS / DPMOST_EXTRA_ARGS / LEASPY_EXTRA_ARGS (e.g. for smoke tests),
+# N_TIMEPOINTS, FORECAST_AFTER, FORECAST_JOBS, FORECAST_THREADS, FORECAST_EXTRA_ARGS
 
 set -uo pipefail
 
@@ -41,6 +46,15 @@ FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
 --random-seed ${MODEL_SEED} ${FBM_EXTRA_ARGS:-}"
 DPMOST_ARGS="--random-seed ${MODEL_SEED} ${DPMOST_EXTRA_ARGS:-}"
 LEASPY_ARGS="--random-seed ${MODEL_SEED} ${LEASPY_EXTRA_ARGS:-}"
+
+# held-out subjects personalized on their first N visits ("forecast" command)
+N_TIMEPOINTS=${N_TIMEPOINTS:-"1 2 3"}
+# shellcheck disable=SC2086 # split N_TIMEPOINTS
+FORECAST_AFTER=${FORECAST_AFTER:-$(printf "%s\n" $N_TIMEPOINTS | sort -n | tail -n 1)}
+FORECAST_JOBS=${FORECAST_JOBS:-10} # tags processed at the same time
+FORECAST_THREADS=${FORECAST_THREADS:-2}
+# other get_metrics.py args, e.g. "--personalize-seed 3791 --leaspy-seed 3791"
+FORECAST_EXTRA_ARGS=${FORECAST_EXTRA_ARGS:-}
 
 # condition -> get_adni_data.py args
 declare -A COND_ARGS=(
@@ -262,6 +276,43 @@ cmd_fit() {
     log "All lanes done"
 }
 
+# ===== forecast =====
+# held-out subjects personalized on their first N visits only (N in N_TIMEPOINTS),
+# reusing the fitted models (no nodes needed). Forecasts are scored on the same
+# subjects/visits for every N (visits after the first FORECAST_AFTER).
+forecast_one() {
+    # $1: tag
+    local tag=$1 n
+    wait_for_threads
+    log "[forecast] ${tag}"
+    (
+        # sequential: all N write to the same results files
+        for n in $N_TIMEPOINTS; do
+            # shellcheck disable=SC2086
+            run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
+                --results-dir "$RESULTS_DIR" --personalize-n-timepoints "$n" \
+                --forecast-after "$FORECAST_AFTER" $FORECAST_EXTRA_ARGS || exit 1
+        done
+    ) >"${LOG_DIR}/forecast/${tag}.log" 2>&1 ||
+        { log "[ERROR] [forecast] ${tag} failed, see ${LOG_DIR}/forecast/${tag}.log"; return 1; }
+}
+
+cmd_forecast() {
+    mkdir -p "${LOG_DIR}/forecast"
+    set_threads "$FORECAST_THREADS"
+    log "[forecast] N_TIMEPOINTS=${N_TIMEPOINTS} FORECAST_AFTER=${FORECAST_AFTER}"
+    export -f forecast_one wait_for_threads log run
+    export SCRIPTS_DIR RESULTS_DIR LOG_DIR NICE MAX_USER_THREADS N_TIMEPOINTS FORECAST_AFTER \
+        FORECAST_EXTRA_ARGS
+    local cond seed
+    for cond in $CONDITIONS; do
+        for seed in $SEEDS; do
+            final_tag "$cond" "$seed"
+        done
+    done | parallel --line-buffer --jobs "$FORECAST_JOBS" forecast_one
+    log "[forecast] done"
+}
+
 cmd_summarize() {
     run python "${SCRIPTS_DIR}/collect_seed_metrics.py" \
         --results-dir "${RESULTS_DIR}/${FL_PROG_DATE}"
@@ -269,7 +320,7 @@ cmd_summarize() {
 
 # ===== main =====
 if [ "$#" -lt 1 ]; then
-    echo "Usage: $0 {prep|start-nodes|stop-nodes|fit|summarize|all} [SEED ...]"
+    echo "Usage: $0 {prep|start-nodes|stop-nodes|fit|forecast|summarize|all} [SEED ...]"
     exit 1
 fi
 COMMAND=$1
@@ -283,6 +334,7 @@ prep) cmd_prep ;;
 start-nodes) cmd_start_nodes ;;
 stop-nodes) cmd_stop_nodes ;;
 fit) cmd_fit ;;
+forecast) cmd_forecast ;;
 summarize) cmd_summarize ;;
 all)
     cmd_prep || exit 1

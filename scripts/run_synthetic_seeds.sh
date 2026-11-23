@@ -52,7 +52,8 @@ NICE="nice -n 10"
 
 # ADNI-like simulation (see get_simulation_config_from_adni_results.py for the config)
 # tag prefix (dataset name): use another one for other simulation settings, e.g.
-# DATASET=synth_fullcov T0_MAX=4.5 (disease coverage up to the late biomarkers)
+# DATASET=synth_fullcov T0_MAX=4.5 FBM_EXTRA_ARGS="--lambda-k-values 0.001" (disease
+# coverage up to the late biomarkers)
 DATASET=${DATASET:-synth_adnilike}
 T0_MAX=${T0_MAX:-2} # true time shifts ~ U(0, T0_MAX) (model time, 1 = 96 months)
 SIM_CONFIG=${SIM_CONFIG:-"${ROOT_DIR}/data/_simulation_configs/adni_like.json"}

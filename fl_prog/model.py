@@ -1,4 +1,3 @@
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import ClassVar, Self
 
@@ -35,7 +34,6 @@ class LogisticRegressionModelWithShift(nn.Module):
     parametrization_dict: ClassVar = {
         "k_values": (Positive(),),
         "sigma": (Positive(),),
-        "time_shifts": (Positive(),),
         "scaling_factors": (Positive(),),
         "acceleration_factors": (Positive(),),
     }
@@ -48,17 +46,11 @@ class LogisticRegressionModelWithShift(nn.Module):
         "scaling_factors",
     )
 
-    sigmoid_levels = torch.tensor([0.05, 0.95])  # for computing initial k_values
-    x0_init_std_fraction = (
-        0.1  # std of x0 initialization as a fraction of expected_time_shift_diff
-    )
-
     def __init__(
         self,
         n_participants: int,
         n_features: int,
-        expected_time_shift_range: Iterable[float] = (0.0, 0.0),
-        lambda_time_shifts: float = 1.0,
+        lambda_time_shifts: float = 0.01,
         lambda_acceleration_factors: float = 0.1,
         lambda_k_values: float = 0.01,
         with_acceleration=False,
@@ -68,11 +60,6 @@ class LogisticRegressionModelWithShift(nn.Module):
         penalty_k_values: Penalty = "l2",
     ):
         super().__init__()
-
-        if len(expected_time_shift_range) != 2:
-            raise ValueError(
-                f"expected_time_shift_range must have length 2, got {len(expected_time_shift_range)}"
-            )
 
         if lambda_time_shifts < 0:
             raise ValueError(
@@ -87,27 +74,8 @@ class LogisticRegressionModelWithShift(nn.Module):
                 f"lambda_k_values must be non-negative, got {lambda_k_values}"
             )
 
-        expected_time_shift_range = torch.tensor(
-            expected_time_shift_range, dtype=torch.float
-        )
-
-        # for initializing some parameters
-        expected_time_shift_middle = torch.mean(expected_time_shift_range)
-        expected_time_shift_diff = (
-            expected_time_shift_range[1] - expected_time_shift_range[0]
-        )
-        if expected_time_shift_diff != 0:
-            starting_k_value = (
-                2
-                * torch.log(self.sigmoid_levels[1] / self.sigmoid_levels[0])
-                / expected_time_shift_diff
-            )
-        else:
-            starting_k_value = torch.tensor(0.0)
-
         self.n_participants = n_participants
         self.n_features = n_features
-        self.expected_time_shift_range = expected_time_shift_range
         self.lambda_time_shifts = lambda_time_shifts
         self.lambda_acceleration_factors = lambda_acceleration_factors
         self.lambda_k_values = lambda_k_values
@@ -118,18 +86,12 @@ class LogisticRegressionModelWithShift(nn.Module):
         self.penalty_k_values = penalty_k_values
 
         # slopes
-        self.k_values = nn.Parameter(torch.rand(self.n_features) + starting_k_value)
+        self.k_values = nn.Parameter(torch.rand(self.n_features))
 
         # midpoints
-        self.x0_values = nn.Parameter(
-            torch.randn(self.n_features)
-            * (expected_time_shift_diff * self.x0_init_std_fraction)
-            + expected_time_shift_middle
-        )
+        self.x0_values = nn.Parameter(torch.zeros(self.n_features))
 
-        self.time_shifts = nn.Parameter(
-            torch.abs(torch.randn(self.n_participants)) + expected_time_shift_middle
-        )
+        self.time_shifts = nn.Parameter(torch.abs(torch.randn(self.n_participants)))
 
         self.sigma = nn.Parameter(torch.ones(self.n_features) * 0.5)
 
@@ -174,10 +136,6 @@ class LogisticRegressionModelWithShift(nn.Module):
     @classmethod
     def get_k_values(cls, unparametrized_k_values: torch.Tensor) -> torch.Tensor:
         return cls._apply_parametrization("k_values", unparametrized_k_values)
-
-    @classmethod
-    def get_time_shifts(cls, unparametrized_time_shifts: torch.Tensor) -> torch.Tensor:
-        return cls._apply_parametrization("time_shifts", unparametrized_time_shifts)
 
     @classmethod
     def get_scaling_factors(
@@ -258,17 +216,8 @@ class LogisticRegressionModelWithShift(nn.Module):
         if acceleration_factors is None:
             acceleration_factors = self.acceleration_factors
 
-        # penalize time shifts that are outside the expected range
-        # equivalent to normal L1/L2 regularization if expected_time_shift_range is (0, 0)
-        penalties = self.lambda_time_shifts * (
-            self._apply_penalty(
-                torch.relu(self.expected_time_shift_range[0] - time_shifts),
-                self.penalty_time_shifts,
-            )
-            + self._apply_penalty(
-                torch.relu(time_shifts - self.expected_time_shift_range[1]),
-                self.penalty_time_shifts,
-            )
+        penalties = self.lambda_time_shifts * self._apply_penalty(
+            time_shifts, self.penalty_time_shifts
         )
 
         # also penalize acceleration factors
@@ -319,9 +268,7 @@ class LogisticRegressionModelWithShift(nn.Module):
                 else:
                     # not a parameter (e.g. scaling factors if with_scaling=False)
                     setattr(model, name, value)
-            model.time_shifts = torch.full(
-                (n_participants,), float(np.mean(params.time_shifts))
-            )
+            model.time_shifts.fill_(float(np.mean(params.time_shifts)))
             if model.with_acceleration:
                 model.acceleration_factors = torch.ones(n_participants)
         return model

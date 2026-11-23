@@ -39,8 +39,7 @@ DEFAULT_N_ROUNDS = 5
 DEFAULT_N_UPDATES = 100
 DEFAULT_BATCH_SIZE = 100000  # all data (no batching)
 DEFAULT_LEARNING_RATE = 0.1
-DEFAULT_EXPECTED_TIME_SHIFT_RANGE = (0.0, 0.0)
-DEFAULT_LAMBDA_TIME_SHIFTS = 0.1
+DEFAULT_LAMBDA_TIME_SHIFTS = 0.01
 DEFAULT_PENALTY_TIME_SHIFTS = Penalty.L2
 DEFAULT_WITH_ACCELERATION = True
 DEFAULT_LAMBDA_ACCELERATION_FACTORS = 0.1
@@ -116,7 +115,6 @@ def _get_model_args(
     lambda_time_shifts: float = DEFAULT_LAMBDA_TIME_SHIFTS,
     lambda_acceleration_factors: float = DEFAULT_LAMBDA_ACCELERATION_FACTORS,
     lambda_k_values: float = DEFAULT_LAMBDA_K_VALUES,
-    estimated_time_shift_range: Iterable[float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
     with_acceleration: bool = DEFAULT_WITH_ACCELERATION,
     penalty_time_shifts: str = DEFAULT_PENALTY_TIME_SHIFTS,
     penalty_acceleration_factors: str = DEFAULT_PENALTY_ACCELERATION_FACTORS,
@@ -131,7 +129,6 @@ def _get_model_args(
         },
         "lr_with_shift": {
             "n_features": len(cols_biomarker),
-            "expected_time_shift_range": estimated_time_shift_range,
             "lambda_time_shifts": lambda_time_shifts,
             "penalty_time_shifts": penalty_time_shifts.value,
             "with_acceleration": with_acceleration,
@@ -257,9 +254,7 @@ def _run_experiment(
         print(f"Loading local params for node {node} from {fpath_persistent_params}")
 
         final_local_persistent = Serializer.load(fpath_persistent_params)
-        time_shifts[node] = fbm_model.get_time_shifts(
-            final_local_persistent["parametrizations.time_shifts.original"]
-        ).data.numpy()
+        time_shifts[node] = final_local_persistent["time_shifts"].data.numpy()
 
         if "parametrizations.acceleration_factors.original" in final_local_persistent:
             acceleration_factors[node] = fbm_model.get_acceleration_factors(
@@ -322,7 +317,6 @@ def run_fedbiomed(
     with_acceleration: bool = DEFAULT_WITH_ACCELERATION,
     lambda_acceleration_factors: float = DEFAULT_LAMBDA_ACCELERATION_FACTORS,
     penalty_acceleration_factors: Penalty = DEFAULT_PENALTY_ACCELERATION_FACTORS,
-    estimated_time_shift_range: tuple[float, float] = DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
     with_scaling: bool = DEFAULT_WITH_SCALING,
     lambda_k_values: float = DEFAULT_LAMBDA_K_VALUES,
     penalty_k_values: Penalty = DEFAULT_PENALTY_K_VALUES,
@@ -358,7 +352,7 @@ def run_fedbiomed(
             f"{n_updates}",
             f"{batch_size}",
             f"lr{learning_rate}",
-            f"timeshifts_{estimated_time_shift_range[0]}_{estimated_time_shift_range[1]}_{penalty_time_shifts.value}_{lambda_time_shifts}",
+            f"timeshifts_{penalty_time_shifts.value}_{lambda_time_shifts}",
             (
                 f"accel_{penalty_acceleration_factors.value}_{lambda_acceleration_factors}"
                 if with_acceleration
@@ -414,7 +408,6 @@ def run_fedbiomed(
             node_id_map,
             lambda_time_shifts=lambda_time_shifts,
             lambda_acceleration_factors=lambda_acceleration_factors,
-            estimated_time_shift_range=estimated_time_shift_range,
             with_acceleration=with_acceleration,
             penalty_time_shifts=penalty_time_shifts,
             penalty_acceleration_factors=penalty_acceleration_factors,
@@ -559,14 +552,6 @@ def run_fedbiomed(
     type=click.FloatRange(min=0),
     default=DEFAULT_LAMBDA_ACCELERATION_FACTORS,
     help="Regularization strength for acceleration factors",
-)
-@click.option(
-    "--time-shift-range",
-    "estimated_time_shift_range",
-    type=click.Tuple((float, float)),
-    nargs=2,
-    default=DEFAULT_EXPECTED_TIME_SHIFT_RANGE,
-    help="Expected range of time shifts (for initialization and regularization)",
 )
 @click.option(
     "--with-acceleration/--no-acceleration",

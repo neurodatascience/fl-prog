@@ -1,13 +1,12 @@
 #!/usr/bin/env python
 
 import shutil
-import warnings
 from enum import Enum
 from pathlib import Path
 
 import click
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedShuffleSplit
 
 from fl_prog.metrics import PER_SUBJECT_FIELDS
 from fl_prog.results import get_subjects, true_params_by_subject
@@ -75,20 +74,41 @@ def _split_site_last_timepoint(
     return dfs_train, dfs_test, subjects
 
 
+def _merge_rare_strata(strata: pd.Series, min_count: int = 2) -> pd.Series:
+    """Merge strata with fewer than ``min_count`` members into the nearest stratum."""
+    strata = strata.copy()
+    while strata.nunique() > 1:
+        counts = strata.value_counts().sort_index()
+        rare = counts.index[counts < min_count]
+        if len(rare) == 0:
+            break
+        value = rare[0]
+        others = counts.index[counts.index != value]
+        nearest = others[abs(others - value).argmin()]
+        strata[strata == value] = nearest
+    return strata
+
+
 def _choose_test_subjects(
     df: pd.DataFrame,
     col_subject: str,
-    n_splits: int,
+    test_fraction: float,
     random_seed: int | None,
     sort_subjects: bool = False,
 ) -> set[str]:
-    """Choose held-out subjects (one fold), stratified by number of timepoints.
+    """Choose held-out subjects, stratified by number of timepoints.
+
+    The number of held-out subjects is ``test_fraction`` times the total number of
+    subjects (including adaptation subjects), but adaptation subjects are never
+    held out.
 
     With ``sort_subjects``, subjects are sorted by ID first so that the result only
     depends on the set of subjects and the random seed (not on row order).
     """
     has_adaptation = COL_ADAPTATION in df.columns
 
+    n_timepoints_all = df.groupby(col_subject, sort=False).size()
+    n_test = round(test_fraction * len(n_timepoints_all))
     n_timepoints = pd.Series(
         {
             subject: len(df_subject)
@@ -99,11 +119,21 @@ def _choose_test_subjects(
     )
     if sort_subjects:
         n_timepoints = n_timepoints.sort_index()
-    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
-    with warnings.catch_warnings():
-        # allow fewer subjects than n_splits
-        warnings.filterwarnings("ignore", message="The least populated class")
-        _, idx_test = next(cv.split(n_timepoints.index, n_timepoints))
+
+    if n_test > len(n_timepoints):
+        raise ValueError(
+            f"Cannot hold out {n_test} subjects: only {len(n_timepoints)} "
+            "non-adaptation subjects available."
+        )
+    if n_test == 0:
+        return set()
+    if n_test == len(n_timepoints):
+        return set(n_timepoints.index)
+
+    strata = _merge_rare_strata(n_timepoints)
+
+    cv = StratifiedShuffleSplit(n_splits=1, test_size=n_test, random_state=random_seed)
+    _, idx_test = next(cv.split(strata.index, strata))
     return set(n_timepoints.index[idx_test])
 
 
@@ -130,13 +160,13 @@ def _get_new_tag(
     tag: str,
     mode: SplitMode,
     min_n_timepoints: int,
-    n_splits: int,
+    test_fraction: float,
     random_seed: int | None,
     pooled: bool = False,
 ) -> str:
     if mode == SplitMode.TIMEPOINT:
         return f"{tag}_split{min_n_timepoints}"
-    new_tag = f"{tag}_heldout{round(100 / n_splits)}"
+    new_tag = f"{tag}_heldout{round(100 * test_fraction)}"
     if pooled:
         new_tag += "pooled"
     if random_seed is not None:
@@ -186,18 +216,8 @@ def split_train_test(
 ):
     mode = SplitMode(mode)
 
-    # held-out subjects are one fold of a stratified K-fold
-    n_splits = round(1 / test_fraction)
-    test_fraction_effective = 1 / n_splits
-    if mode == SplitMode.SUBJECT and test_fraction_effective != test_fraction:
-        click.secho(
-            f"WARNING: test fraction {test_fraction} rounded to 1/{n_splits}",
-            fg="yellow",
-            bold=True,
-        )
-
     old_tag = tag
-    tag = _get_new_tag(tag, mode, min_n_timepoints, n_splits, random_seed, pooled)
+    tag = _get_new_tag(tag, mode, min_n_timepoints, test_fraction, random_seed, pooled)
     dpath_out_old = get_dpath_latest(dpath_data) / old_tag
     fpath_json_old = dpath_out_old / f"{old_tag}.json"
     dpath_out_new = get_dpath_latest(dpath_data, use_today=True) / tag
@@ -251,7 +271,7 @@ def split_train_test(
         subjects_test_pooled = _choose_test_subjects(
             pd.concat(dfs_site.values()),
             col_subject,
-            n_splits,
+            test_fraction,
             random_seed,
             sort_subjects=True,
         )
@@ -261,11 +281,13 @@ def split_train_test(
     subjects_by_node = {}
     scaling_references = {}
     n_samples = 0
+    n_subjects = 0
     for fname_site, df_site in dfs_site.items():
         node_id = node_id_map_old[fname_site]
         subjects_by_node[node_id] = []
 
         n_samples += len(df_site)
+        n_subjects += df_site[col_subject].nunique()
 
         if mode == SplitMode.TIMEPOINT:
             dfs_train, dfs_test_site, subjects = _split_site_last_timepoint(
@@ -276,15 +298,22 @@ def split_train_test(
                 subjects_test = subjects_test_pooled
             else:
                 subjects_test = _choose_test_subjects(
-                    df_site, col_subject, n_splits, random_seed
+                    df_site, col_subject, test_fraction, random_seed
                 )
             dfs_train, dfs_test_site, subjects = _split_site_subjects(
                 df_site, col_subject, subjects_test
             )
             n_subjects_test = sum(df[col_subject].nunique() for df in dfs_test_site)
+            n_subjects_site = df_site[col_subject].nunique()
+            n_subjects_adaptation = (
+                df_site.loc[df_site[COL_ADAPTATION], col_subject].nunique()
+                if COL_ADAPTATION in df_site.columns
+                else 0
+            )
             print(
                 f"Node {node_id}: holding out {n_subjects_test} of "
-                f"{df_site[col_subject].nunique()} subjects"
+                f"{n_subjects_site} subjects "
+                f"({n_subjects_adaptation} adaptation subjects not eligible)"
             )
         dfs_test.extend(dfs_test_site)
 
@@ -326,8 +355,11 @@ def split_train_test(
 
     fpath_test = dpath_out_new / f"{tag}{suffix_test}.tsv"
     df_test.to_csv(fpath_test, sep="\t", index=False)
+    n_subjects_test = df_test[col_subject].nunique()
     print(
-        f"Saved test set ({df_test.shape}, {len(df_test) / n_samples:.2%}) to {fpath_test}"
+        f"Saved test set ({df_test.shape}, {len(df_test) / n_samples:.2%} of rows, "
+        f"{n_subjects_test}/{n_subjects}={n_subjects_test / n_subjects:.2%} of "
+        f"subjects) to {fpath_test}"
     )
     scaling_references[fpath_test.name] = (
         None  # no scaling reference until site data are merged
@@ -385,8 +417,7 @@ def split_train_test(
     default=DEFAULT_TEST_FRACTION,
     show_default=True,
     help=(
-        "Fraction of subjects to hold out per site. Must satisfy 1/K for an integer K."
-        f" Only used in {SplitMode.SUBJECT.value!r} mode."
+        "Fraction of subjects to hold out. Only used in {SplitMode.SUBJECT.value!r} mode."
     ),
 )
 @click.option("--random-seed", type=int, envvar="RNG_SEED", show_envvar=True)

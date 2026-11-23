@@ -59,12 +59,12 @@ class LogisticRegressionModelWithShift(nn.Module):
         n_features: int,
         expected_time_shift_range: Iterable[float] = (0.0, 0.0),
         lambda_time_shifts: float = 1.0,
-        lambda_acceleration_factors: float = 1.0,
+        lambda_acceleration_factors: float = 0.1,
         lambda_k_values: float = 0.01,
         with_acceleration=False,
         with_scaling=False,
         penalty_time_shifts: Penalty = "l2",
-        penalty_acceleration_factors: Penalty = "l1",
+        penalty_acceleration_factors: Penalty = "l2",
         penalty_k_values: Penalty = "l2",
     ):
         super().__init__()

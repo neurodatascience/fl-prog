@@ -64,7 +64,7 @@ SIM_ARGS="--config ${SIM_CONFIG} --n-subjects ${N_SUBJECTS} --n-sites ${N_SITES}
 --t0-min 0 --t0-max ${T0_MAX} --acceleration-factor-std 0.5"
 
 FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
---lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01 \
+--lambda-time-shifts 0.01 --penalty-acceleration-factors l2 --lambda-acceleration-factors 0.1 \
 --with-acceleration --with-scaling --training-replies --aggregated-params \
 --random-seed ${MODEL_SEED} ${FBM_EXTRA_ARGS:-}"
 DPMOST_ARGS="--random-seed ${MODEL_SEED} ${DPMOST_EXTRA_ARGS:-}"

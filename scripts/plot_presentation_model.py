@@ -24,9 +24,9 @@ from matplotlib.transforms import Affine2D
 
 from fl_prog.plotting import PARAM_COLORS, PARAM_SYMBOLS, save_fig
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import DEFAULT_DPATH_RESULTS
+from fl_prog.utils.io import DEFAULT_DPATH_FIGS
 
-DEFAULT_DPATH_OUT = DEFAULT_DPATH_RESULTS / "figures" / "model"
+DEFAULT_DPATH_OUT = DEFAULT_DPATH_FIGS / "model"
 
 DPI = 300
 FONTSET = "cm"  # Computer Modern, LaTeX look

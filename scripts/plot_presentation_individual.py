@@ -33,10 +33,10 @@ from fl_prog.plotting import (
     save_fig_formats,
 )
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import DEFAULT_DPATH_RESULTS
+from fl_prog.utils.io import DEFAULT_DPATH_FIGS
 from fl_prog.utils.math import multivariate_logistic
 
-DEFAULT_DPATH_OUT = DEFAULT_DPATH_RESULTS / "figures" / "individual_params"
+DEFAULT_DPATH_OUT = DEFAULT_DPATH_FIGS / "individual_params"
 
 # population parameters (one biomarker)
 K = 1.5  # steepness

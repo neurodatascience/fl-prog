@@ -25,9 +25,9 @@ from fl_prog.plotting import (
     save_fig_formats,
 )
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
-from fl_prog.utils.io import DEFAULT_DPATH_RESULTS
+from fl_prog.utils.io import DEFAULT_DPATH_FIGS
 
-DEFAULT_DPATH_OUT = DEFAULT_DPATH_RESULTS / "figures" / "motivation"
+DEFAULT_DPATH_OUT = DEFAULT_DPATH_FIGS / "motivation"
 
 # ground truth trajectory
 T_MIN, T_MAX = 0.0, 10.0

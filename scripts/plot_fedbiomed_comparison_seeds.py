@@ -7,10 +7,11 @@ Datasets (``--dataset``):
 - ``adni`` (``run_adni_seeds.sh``): splits ``iid`` (Fed-BioMed federated and
   centralized, DPMoSt, Leaspy), ``noniid_site`` and ``noniid_diag`` (Fed-BioMed
   federated).
-- ``synthetic`` (``run_synthetic_seeds.sh``): splits ``overlap100`` (Fed-BioMed
-  federated and centralized, DPMoSt, Leaspy) and the other site splits in
-  ``SYNTHETIC_CONDITION_LABELS`` (Fed-BioMed federated). Ground-truth trajectories
-  and time shifts are shown too.
+- ``synthetic`` (``run_synthetic_seeds.sh``): splits
+  ``overlap100`` (Fed-BioMed federated and centralized, DPMoSt, Leaspy) and the other
+  site splits in ``SYNTHETIC_CONDITION_LABELS`` (Fed-BioMed federated). Ground-truth
+  trajectories and time shifts are shown too. ``synthetic_adnilike``: same, with
+  ADNI-like disease coverage.
 
 Only default Fed-BioMed runs (FedAvg + Adam) are used, other aggregators/optimizers
 in the same directories (e.g. SCAFFOLD) are ignored.
@@ -127,8 +128,9 @@ DATASETS = {
         split_baselines="iid",
         default_dpath_results=Path(DEFAULT_DPATH_RESULTS) / "2026_11_08",
     ),
+    # full disease coverage (run_synthetic_seeds.sh default)
     "synthetic": DatasetSpec(
-        tag_prefix="synth_adnilike",
+        tag_prefix="synth_fullcov",
         condition_centralized="overlap100-centralized",
         conditions_federated={
             f"{condition}-federated": label
@@ -148,10 +150,10 @@ DATASETS = {
         has_ground_truth=True,
     ),
 }
-# same simulation with wider true time shifts (run_synthetic_seeds.sh with
-# DATASET=synth_fullcov T0_MAX=4.5)
-DATASETS["synthetic_fullcov"] = dataclasses.replace(
-    DATASETS["synthetic"], tag_prefix="synth_fullcov"
+# same simulation with ADNI-like disease coverage (run_synthetic_seeds.sh with
+# DATASET=synth_adnilike T0_MAX=2)
+DATASETS["synthetic_adnilike"] = dataclasses.replace(
+    DATASETS["synthetic"], tag_prefix="synth_adnilike"
 )
 DEFAULT_DATASET = "adni"
 CONDITION_GROUND_TRUTH = "ground-truth"
@@ -1110,7 +1112,7 @@ def plot_fedbiomed_comparison_seeds(
     default=None,
     help="Dated results directory of a multi-seed run (one subdirectory per "
     "data split and seed). Default: results/2026_11_08 (adni), "
-    "results/2026_11_11 (synthetic, synthetic_fullcov).",
+    "results/2026_11_11 (synthetic, synthetic_adnilike).",
 )
 @click.option(
     "--seed",

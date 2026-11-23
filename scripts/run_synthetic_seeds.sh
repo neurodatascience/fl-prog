@@ -55,10 +55,11 @@ ADD_TO_NODES=${ADD_TO_NODES:-1} # set to 0 to only generate data in prep
 NICE="nice -n 10"
 
 # ADNI-like simulation (see get_simulation_config_from_adni_results.py for the config)
-# tag prefix (dataset name): use another one for other simulation settings, e.g.
-# DATASET=synth_fullcov T0_MAX=4.5 (disease coverage up to the late biomarkers)
-DATASET=${DATASET:-synth_adnilike}
-T0_MAX=${T0_MAX:-2} # true time shifts ~ U(0, T0_MAX) (model time, 1 = 96 months)
+# with full disease coverage (up to the late biomarkers). Tag prefix (dataset name):
+# use another one for other simulation settings, e.g. DATASET=synth_adnilike T0_MAX=2
+# (ADNI-like disease coverage)
+DATASET=${DATASET:-synth_fullcov}
+T0_MAX=${T0_MAX:-4.5} # true time shifts ~ U(0, T0_MAX) (model time, 1 = 96 months)
 SIM_CONFIG=${SIM_CONFIG:-"${ROOT_DIR}/data/_simulation_configs/adni_like.json"}
 LOG_DIR=${LOG_DIR:-"${RESULTS_DIR}/${FL_PROG_DATE}/logs-${DATASET}"}
 NODE_PIDS_FILE="${LOG_DIR}/node_pids.txt"
@@ -66,7 +67,10 @@ N_SUBJECTS=1735 # ADNI subjects (train + test)
 SIM_ARGS="--config ${SIM_CONFIG} --n-subjects ${N_SUBJECTS} \
 --t0-min 0 --t0-max ${T0_MAX} --acceleration-factor-std 0.5"
 
+# expected time shifts over the true range, weaker k regularization (needed with full
+# coverage, see results/2026_11_11-exploration_synth)
 FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
+--time-shift-range 0 ${T0_MAX} --lambda-k-values 0.001 \
 --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01 \
 --with-acceleration --with-scaling --training-replies --aggregated-params \
 --random-seed ${MODEL_SEED} ${FBM_EXTRA_ARGS:-}"

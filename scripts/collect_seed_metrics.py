@@ -23,10 +23,10 @@ from fl_prog.plotting import get_categorical_palette, save_fig
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, SYNTHETIC_CONDITION_LABELS
 
 DATASET_ADNI = "adni_harmonized"
-DATASET_SYNTHETIC = "synth_adnilike"
-# same simulation with wider true time shifts (disease coverage up to late biomarkers)
-DATASET_SYNTHETIC_FULLCOV = "synth_fullcov"
-DATASETS = [DATASET_ADNI, DATASET_SYNTHETIC, DATASET_SYNTHETIC_FULLCOV]
+DATASET_SYNTHETIC = "synth_fullcov"
+# same simulation with ADNI-like (reduced) disease coverage
+DATASET_SYNTHETIC_ADNILIKE = "synth_adnilike"
+DATASETS = [DATASET_ADNI, DATASET_SYNTHETIC, DATASET_SYNTHETIC_ADNILIKE]
 
 # (model type, data condition, setup[, variant]) -> model label
 # variant: Fed-BioMed aggregator/optimizer from the file name (see _get_variant),

@@ -49,7 +49,7 @@ from fl_prog.results import (
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import load_json
 
-DEFAULT_DATASET = "synthetic_fullcov"
+DEFAULT_DATASET = "synthetic"
 DEFAULT_DPATH_RESULTS = Path("results") / "2026_11_11-with-shifted"
 FIGSIZE = (14.83, 7.5)  # 16:9 slide (13.33 x 7.5 in) plus 1.5 in of width
 CONTEXT = "talk"

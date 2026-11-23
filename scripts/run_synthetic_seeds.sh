@@ -29,7 +29,7 @@
 #
 # All runs write to results/<FL_PROG_DATE>/<tag>/.
 #
-# Environment overrides: SEEDS, FL_PROG_DATE, LOG_DIR, MAX_USER_THREADS,
+# Environment overrides: SEEDS, FL_PROG_DATE, RESULTS_DIR, LOG_DIR, MAX_USER_THREADS,
 # VENV_DIR (Python environment), FBM_POOL_DIR (where instances are created),
 # FBM_TEMPLATE_DIR / FBM_TEMPLATE_CENTRAL_NODE (existing instance/node to copy),
 # N_CENTRAL, N_FED, PORT_BASE, BASELINE_JOBS, BASELINE_THREADS, SIM_CONFIG,
@@ -56,7 +56,7 @@ MODEL_SEED=3791
 TEST_FRACTION=0.1
 TEST_PCT=10
 export FL_PROG_DATE=${FL_PROG_DATE:-$(date +%Y_%m_%d)}
-RESULTS_DIR="${ROOT_DIR}/results"
+RESULTS_DIR=${RESULTS_DIR:-"${ROOT_DIR}/results"}
 MAX_USER_THREADS=${MAX_USER_THREADS:-3000}
 ADD_TO_NODES=${ADD_TO_NODES:-1} # set to 0 to only generate data in prep
 NICE="nice -n 10"

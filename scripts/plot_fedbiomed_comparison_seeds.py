@@ -37,13 +37,13 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import MaxNLocator
 
-from fl_prog.metrics import get_midpoint_offset
+from fl_prog.metrics import LABEL_TRAIN, get_fit_sets, get_midpoint_offset
 from fl_prog.plotting import (
     get_biomarker_palette,
     get_categorical_palette,
     get_group_order,
     get_group_palette,
-    save_fig,
+    save_fig_formats,
 )
 from fl_prog.results import (
     COL_BIOMARKER,
@@ -190,6 +190,8 @@ BIOMARKER_ORDER = [
     "lh_parahippocampal_thickness",
     "rh_parahippocampal_thickness",
 ]
+# subject sets of the time shift plots (held-out subjects' time shifts are estimated
+# from all their visits). The fit metrics use other sets, see get_fit_sets
 SET_NAME_ORDER = ["train", "test"]
 COL_SEED = "seed"
 
@@ -720,15 +722,18 @@ def _plot_metric_seeds(
     model_order: list[str],
     set_name_order: list[str],
     palette: dict,
-    offset: float = 0.17,
-    jitter: float = 0.06,
+    offset_step: float = 0.2,
+    jitter: float = 0.04,
     rng_seed: int = 0,
 ) -> None:
-    """One row per model, train and test offset vertically: one small dot per
+    """One row per model, train and test sets offset vertically: one small dot per
     seed, and a large marker at the mean with a ±SD error bar."""
     rng = np.random.default_rng(rng_seed)
-    markers = dict(zip(SET_NAME_ORDER, ["o", "D"]))
+    markers = {
+        set_name: "o" if set_name == LABEL_TRAIN else "D" for set_name in set_name_order
+    }
     y_positions = {model: i for i, model in enumerate(model_order)}
+    offset = offset_step * (len(set_name_order) - 1) / 2
     offsets = dict(
         zip(set_name_order, np.linspace(-offset, offset, len(set_name_order)))
     )
@@ -772,7 +777,7 @@ def _plot_metric_seeds(
             marker=markers[set_name],
             edgecolor="white",
             linewidth=1,
-            label=set_name.capitalize(),
+            label=set_name,
             zorder=4,
         )
     # separate our model from the baselines (DPMoSt, Leaspy)
@@ -789,16 +794,27 @@ def _plot_metric_seeds(
     sns.despine(ax=ax, left=True)
 
 
+def get_fit_set_palette(set_name_order: list[str]) -> dict:
+    """Map train to grey and the other sets to increasingly dark shades of one
+    colour."""
+    test_sets = [s for s in set_name_order if s != LABEL_TRAIN]
+    color_test = next(iter(get_categorical_palette(["test"]).values()))
+    shades = sns.light_palette(color_test, n_colors=len(test_sets) + 1)[1:]
+    return {LABEL_TRAIN: "0.6", **dict(zip(test_sets, shades, strict=True))}
+
+
 def plot_metrics(
     df_metrics: pd.DataFrame,
     model_order: list[str],
-    figsize: tuple[float, float] = (10, 4),
+    set_name_order: list[str],
+    width: float = 10,
+    height_per_model: float = 0.6,
     context: str = "talk",
     font_scale: float = 0.8,
 ) -> plt.Figure:
-    """MAE and R² (train vs test) for all models, over seeds."""
-    set_name_order = [s for s in SET_NAME_ORDER if s in set(df_metrics["set_name"])]
-    palette = get_categorical_palette(set_name_order)
+    """Plot MAE and R² for each model and set in ``set_name_order``, over seeds."""
+    palette = get_fit_set_palette(set_name_order)
+    figsize = (width, max(4, height_per_model * len(model_order)))
     with sns.plotting_context(context, font_scale=font_scale):
         legend_fontsize = plt.rcParams["legend.fontsize"]
         fig, axes = plt.subplots(
@@ -943,12 +959,12 @@ def plot_fedbiomed_comparison_seeds(
     dpath_results: Path | None,
     seeds: tuple[int, ...],
     dpath_out: Path | None,
-    extension: str,
     xlim_percentile: float = 100,
     skip_trajectories: bool = False,
     skip_metrics: bool = False,
     skip_time_shifts: bool = False,
     align_translation: bool = True,
+    forecast_after: int | None = None,
 ):
     spec = DATASETS[dataset]
     dpath_results = dpath_results or spec.default_dpath_results
@@ -975,18 +991,24 @@ def plot_fedbiomed_comparison_seeds(
     sns.set_theme(context="notebook", style="ticks")
 
     if not skip_metrics:
-        df_metrics = pd.concat(
-            [
-                get_df_metrics_seed(
-                    fpaths_json[seed],
-                    dpaths_tag[seed][spec.split_baselines],
-                    seed,
-                    spec,
-                )
-                for seed in fpaths_json
-            ],
-            ignore_index=True,
-        )
+        try:
+            df_metrics, set_name_order = get_fit_sets(
+                pd.concat(
+                    [
+                        get_df_metrics_seed(
+                            fpaths_json[seed],
+                            dpaths_tag[seed][spec.split_baselines],
+                            seed,
+                            spec,
+                        )
+                        for seed in fpaths_json
+                    ],
+                    ignore_index=True,
+                ),
+                forecast_after=forecast_after,
+            )
+        except ValueError as exception:
+            raise click.ClickException(str(exception)) from exception
         model_order = [*spec.condition_labels.values(), *BASELINE_LABELS]
         fpath_tsv = dpath_out / f"fit_metrics-comparison-seeds{suffix}.tsv"
         fpath_tsv.parent.mkdir(parents=True, exist_ok=True)
@@ -1003,10 +1025,10 @@ def plot_fedbiomed_comparison_seeds(
             .round(4)
             .to_string()
         )
-        fig = plot_metrics(df_metrics, model_order)
-        save_fig(
+        fig = plot_metrics(df_metrics, model_order, set_name_order)
+        save_fig_formats(
             fig,
-            dpath_out / f"fit_metrics-comparison-seeds{suffix}.{extension}",
+            dpath_out / f"fit_metrics-comparison-seeds{suffix}",
             bbox_inches=None,
         )
         plt.close(fig)
@@ -1055,9 +1077,9 @@ def plot_fedbiomed_comparison_seeds(
             xlim_percentile=xlim_percentile,
         )
         # constrained layout keeps everything inside the figure: keep exact size
-        save_fig(
+        save_fig_formats(
             fig,
-            dpath_out / f"group_trajectories-by_condition-seeds{suffix}.{extension}",
+            dpath_out / f"group_trajectories-by_condition-seeds{suffix}",
             bbox_inches=None,
         )
         plt.close(fig)
@@ -1089,9 +1111,9 @@ def plot_fedbiomed_comparison_seeds(
                 }
             df_subject = pd.concat(dfs_subject, ignore_index=True)
             fig = plot_time_shifts(df_subject, condition_labels)
-            save_fig(
+            save_fig_formats(
                 fig,
-                dpath_out / f"time_shifts-by_condition-seed{seed}{suffix}.{extension}",
+                dpath_out / f"time_shifts-by_condition-seed{seed}{suffix}",
                 bbox_inches=None,
             )
             plt.close(fig)
@@ -1129,13 +1151,6 @@ def plot_fedbiomed_comparison_seeds(
     help="Output directory for figures. Default: <results-dir>/figures.",
 )
 @click.option(
-    "--format",
-    "extension",
-    type=click.Choice(["svg", "png", "pdf"]),
-    default="svg",
-    help="Figure file format.",
-)
-@click.option(
     "--xlim-percentile",
     type=click.FloatRange(0, 100, min_open=True),
     default=100,
@@ -1150,6 +1165,14 @@ def plot_fedbiomed_comparison_seeds(
     help="With a ground truth (synthetic data): shift each fitted model's "
     "disease-time axis so that its biomarker midpoints are centered on the true "
     "ones (mean difference 0; time scale unchanged).",
+)
+@click.option(
+    "--forecast-after",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Fit metrics: test sets scored after the first K visits (held-out subjects "
+    "personalized on their first N <= K visits, one set per N). Default: the only K "
+    "in the results (the largest one if there are several).",
 )
 @click.option("--skip-trajectories", is_flag=True, help="Skip group trajectories.")
 @click.option("--skip-metrics", is_flag=True, help="Skip fit metrics.")

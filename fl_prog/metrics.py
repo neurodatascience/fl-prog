@@ -23,6 +23,70 @@ METRICS_AVERAGED_OVER_BIOMARKERS = (
     "residual_std",
 )
 
+SET_NAME_TRAIN = "train"
+SET_NAME_TEST = "test"  # personalized on all available timepoints
+SET_NAME_TEST_FIT = "test_fit"
+SET_NAME_TEST_FORECAST = "test_forecast"
+COL_N_TIMEPOINTS = "n_timepoints"  # number of timepoints used in personalization
+COL_FORECAST_AFTER = "forecast_after"  # filter for visits used in forecasting
+LABEL_TRAIN = "Train"
+
+
+def get_forecast_label(n_timepoints: int) -> str:
+    """Return the set label for ``n_timepoints``, e.g. "Test (2 timepoints)"."""
+    return f"Test ({n_timepoints} timepoint{'s' if n_timepoints > 1 else ''})"
+
+
+def select_forecast_after(
+    df: pd.DataFrame, forecast_after: int | None = None
+) -> pd.DataFrame:
+    """Rows scored after the first ``forecast_after`` visits."""
+    values = sorted(int(value) for value in df[COL_FORECAST_AFTER].dropna().unique())
+    if not values:
+        raise ValueError("No forecast results (forecast_after is empty)")
+    if forecast_after is None:
+        forecast_after = values[-1]
+        if len(values) > 1:
+            print(
+                f"WARNING: found forecast_after values {values}, using {forecast_after}"
+            )
+    elif forecast_after not in values:
+        raise ValueError(
+            f"No results with forecast_after={forecast_after} (found {values})"
+        )
+    print(f"Forecast results: scored after the first {forecast_after} visit(s)")
+    return df.loc[df[COL_FORECAST_AFTER] == forecast_after]
+
+
+def get_fit_sets(
+    df_metrics: pd.DataFrame, forecast_after: int | None = None
+) -> tuple[pd.DataFrame, list[str]]:
+    """Select the train and test_forecast rows of ``df_metrics`` and relabel them.
+
+    Returns the selected rows, with ``set_name`` replaced by labels like "Train" and
+    "Test (2 timepoints)", and the list of labels in plotting order.
+    """
+    is_all_visits = df_metrics[COL_N_TIMEPOINTS].isna()
+    df_train = df_metrics.loc[
+        is_all_visits & (df_metrics["set_name"] == SET_NAME_TRAIN)
+    ].assign(set_name=LABEL_TRAIN)
+    df_test = df_metrics.loc[
+        ~is_all_visits & (df_metrics["set_name"] == SET_NAME_TEST_FORECAST)
+    ]
+    if df_test.empty:
+        raise ValueError(
+            "No out-of-sample test results (set_name "
+            f"{SET_NAME_TEST_FORECAST!r}): run get_metrics.py with "
+            "--personalize-n-timepoints"
+        )
+    df_test = select_forecast_after(df_test, forecast_after)
+    n_values = sorted(int(n) for n in df_test[COL_N_TIMEPOINTS].unique())
+    df_test = df_test.assign(
+        set_name=df_test[COL_N_TIMEPOINTS].astype(int).map(get_forecast_label)
+    )
+    labels = [LABEL_TRAIN, *map(get_forecast_label, n_values)]
+    return pd.concat([df_train, df_test], ignore_index=True), labels
+
 
 def _pearson_r(x: np.ndarray, y: np.ndarray) -> float:
     return np.corrcoef(x, y)[0, 1]

@@ -37,8 +37,8 @@ from plot_fedbiomed_comparison_seeds import (
 )
 from scipy.stats import spearmanr
 
-from fl_prog.metrics import average_over_biomarkers
-from fl_prog.plotting import get_categorical_palette, save_fig
+from fl_prog.metrics import LABEL_TRAIN, average_over_biomarkers, get_fit_sets
+from fl_prog.plotting import get_categorical_palette, save_fig_formats
 from fl_prog.results import (
     estimated_params_by_setup,
     get_subjects,
@@ -57,14 +57,13 @@ FONT_SCALE = 0.8  # talk context, scaled down to fit one slide
 N_YTICKS = 3
 
 FIT_METRICS = {"r2_score": "R²", "mean_absolute_error": "MAE"}
-# fit panels of the synthetic and ADNI figures (plot_adni_results_figure.py):
-# same y-axis bounds (MAE), or same y-axis span centered on each figure's values
-# (R²), covering both datasets' Fed-BioMed results
-FIT_YLIMS = {"mean_absolute_error": (0.1, 0.145)}
-FIT_YSPANS = {"r2_score": 0.13}
-SET_NAMES = ["train", "test"]
-LABEL_TRAIN = "Train subjects"
-LABEL_TEST = "Test subjects"
+# fit panels (also plot_adni_results_figure.py): per model, train then out-of-sample
+# test sets (held-out subjects personalized on their first N visits, one set per N,
+# see get_fit_sets), from light to dark
+FIT_SHADE_TRAIN = 0.7  # amount of white blended into the model color
+FIT_SHADES_TEST = (0.45, 0.0)  # lightest (smallest N) to darkest (largest N)
+FIT_BOX_STEP = 0.9  # distance between the boxes of a model
+FIT_MODEL_GAP = 0.6  # extra distance between models
 # relative errors of the biomarker parameters, in one panel: (set name, metric) ->
 # label (x0 after removing the arbitrary time origin; k_j, s_j, sigma_j do not
 # depend on it)
@@ -166,31 +165,64 @@ def _values(df: pd.DataFrame, **conditions) -> np.ndarray:
     return df.loc[mask, "value"].to_numpy()
 
 
-def _plot_fit(axes, df_fit: pd.DataFrame, palette: dict, models=MODELS):
-    """Train (light) and test boxes per model, for each fit metric."""
+def get_fit_shades(set_names: list[str]) -> dict[str, float]:
+    """Map each set label to the amount of white blended into the model color:
+    train lightest, then the other sets from light to dark."""
+    test_sets = [s for s in set_names if s != LABEL_TRAIN]
+    shades_test = np.linspace(*FIT_SHADES_TEST, len(test_sets))
+    return {LABEL_TRAIN: FIT_SHADE_TRAIN, **dict(zip(test_sets, shades_test))}
+
+
+def legend_row_major(
+    handles: list, labels: list[str], n_rows: int
+) -> tuple[list, list[str], int]:
+    """Reorder legend entries so that they read row by row (matplotlib fills legend
+    columns first). Returns the handles, labels and number of columns."""
+    n_cols = -(-len(labels) // n_rows)
+    order = [
+        i_row * n_cols + i_col
+        for i_col in range(n_cols)
+        for i_row in range(n_rows)
+        if i_row * n_cols + i_col < len(labels)
+    ]
+    return [handles[i] for i in order], [labels[i] for i in order], n_cols
+
+
+def get_fit_legend(set_names: list[str], color="0.45") -> tuple[list, list[str]]:
+    """Legend handles/labels for the train/test shading of the fit panels."""
+    shades = get_fit_shades(set_names)
+    handles = [
+        Patch(facecolor=_lighten(color, shades[s]), edgecolor="0.25") for s in set_names
+    ]
+    return handles, set_names
+
+
+def _plot_fit(
+    axes,
+    df_fit: pd.DataFrame,
+    palette: dict,
+    models=MODELS,
+    forecast_after: int | None = None,
+) -> list[str]:
+    """Draw one box per model and set on each axis (one axis per fit metric).
+    Returns the set labels."""
+    df_fit, set_names = get_fit_sets(df_fit, forecast_after=forecast_after)
+    shades = get_fit_shades(set_names)
+    model_step = len(set_names) * FIT_BOX_STEP + FIT_MODEL_GAP
     for ax, (metric, title) in zip(axes, FIT_METRICS.items()):
         groups = []
         for i_model, model in enumerate(models):
-            for i_set, set_name in enumerate(SET_NAMES):
-                values = _values(df_fit, model=model, metric=metric, set_name=set_name)
-                color = palette[model]
+            for i_set, set_name in enumerate(set_names):
                 groups.append(
                     (
-                        2.2 * i_model + 0.9 * i_set,
-                        values,
-                        _lighten(color) if set_name == "train" else color,
+                        model_step * i_model + FIT_BOX_STEP * i_set,
+                        _values(df_fit, model=model, metric=metric, set_name=set_name),
+                        _lighten(palette[model], shades[set_name]),
                     )
                 )
         _boxes(ax, groups, width=0.8)
         ax.set_title(title, fontweight="bold")
-        if metric in FIT_YLIMS:
-            ax.set_ylim(FIT_YLIMS[metric])
-        elif metric in FIT_YSPANS:
-            values = np.concatenate([v for _, v, _ in groups])
-            middle = (values.min() + values.max()) / 2
-            ax.set_ylim(
-                middle - FIT_YSPANS[metric] / 2, middle + FIT_YSPANS[metric] / 2
-            )
+    return set_names
 
 
 def _plot_recovery(
@@ -326,8 +358,8 @@ def plot_synthetic_results_figure(
     dataset: str,
     dpath_results: Path,
     dpath_out: Path | None,
-    extension: str,
     xlim_percentile: float,
+    forecast_after: int | None = None,
 ):
     spec = DATASETS[dataset]
     suffix = f"-{spec.tag_prefix}"
@@ -422,7 +454,13 @@ def plot_synthetic_results_figure(
             "width_ratios": [2.2] * n_fit + [2.6] + [1.1] * len(MONTHS_METRICS) + [2.2]
         },
     )
-    _plot_fit(axes_bottom[:n_fit], df_fit, palette, models=models)
+    set_names = _plot_fit(
+        axes_bottom[:n_fit],
+        df_fit,
+        palette,
+        models=models,
+        forecast_after=forecast_after,
+    )
     _plot_recovery(
         axes_bottom[n_fit],
         axes_bottom[n_fit + 1 : n_fit + 1 + len(MONTHS_METRICS)],
@@ -435,19 +473,18 @@ def plot_synthetic_results_figure(
         ax.yaxis.set_major_locator(MaxNLocator(nbins=N_YTICKS))
         ax.title.set_fontsize("medium")
 
-    # shared legend: models, then train/test shading
+    # shared legend: models, then train/test shading (two rows)
+    handles_sets, labels_sets = get_fit_legend(set_names)
     handles = [
         Patch(facecolor=palette[model], edgecolor="0.25") for model in models
-    ] + [
-        Patch(facecolor=_lighten("0.5"), edgecolor="0.25"),
-        Patch(facecolor="0.5", edgecolor="0.25"),
-    ]
-    labels = list(models.values()) + [LABEL_TRAIN, LABEL_TEST]
+    ] + handles_sets
+    labels = list(models.values()) + labels_sets
+    handles, labels, n_cols = legend_row_major(handles, labels, n_rows=2)
     legend = subfig_bottom.legend(
         handles,
         labels,
         loc="outside lower center",
-        ncols=len(labels),
+        ncols=n_cols,
         fontsize="small",
         handlelength=1,
         columnspacing=1,
@@ -456,8 +493,7 @@ def plot_synthetic_results_figure(
     _thin_legend_patches(legend)
     sns.despine(fig)
 
-    fpath_out = dpath_out / f"results_figure{suffix}.{extension}"
-    save_fig(fig, fpath_out, bbox_inches=None)
+    save_fig_formats(fig, dpath_out / f"results_figure{suffix}", bbox_inches=None)
     plt.close(fig)
 
 
@@ -484,19 +520,20 @@ def plot_synthetic_results_figure(
     help="Output directory. Default: <results-dir>/figures.",
 )
 @click.option(
-    "--format",
-    "extension",
-    type=click.Choice(["svg", "png", "pdf"]),
-    default="svg",
-    show_default=True,
-)
-@click.option(
     "--xlim-percentile",
     type=click.FloatRange(0, 100, min_open=True),
     default=99,
     show_default=True,
     help="Trajectory x-axis ends at this percentile of the centralized models' "
     "shifted visit times.",
+)
+@click.option(
+    "--forecast-after",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Fit panels: test sets scored after the first K visits (held-out subjects "
+    "personalized on their first N <= K visits, one set per N). Default: the only K "
+    "in the results (the largest one if there are several).",
 )
 def main(**params):
     plot_synthetic_results_figure(**params)

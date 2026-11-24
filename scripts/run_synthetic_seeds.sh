@@ -17,10 +17,10 @@
 #        run_synthetic_seeds.sh {add-datasets-variants|fit-variants|variants} [SEED ...]
 #        run_synthetic_seeds.sh forecast [SEED ...]
 #
-# "forecast" (after "fit"/"variants", not part of "all") re-scores held-out subjects
-# personalized on their first N visits only, for N in N_TIMEPOINTS (see
-# get_metrics.py --personalize-n-timepoints/--forecast-after), for all models of
-# each condition and seed.
+# "fit" also scores held-out subjects personalized on their first N visits only, for
+# N in N_TIMEPOINTS (see get_metrics.py --personalize-n-timepoints/--forecast-after).
+# "forecast" (after "fit"/"variants", not part of "all") recomputes the metrics of all
+# models of each condition and seed without refitting, e.g. with other N_TIMEPOINTS.
 #
 # "variants" fits the federated setup with other optimizers/aggregators (FBM_VARIANTS,
 # e.g. native SCAFFOLD + SGD and its FedAvg + SGD baseline) on VARIANT_CONDITIONS, using
@@ -84,7 +84,9 @@ FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
 DPMOST_ARGS="--random-seed ${MODEL_SEED} ${DPMOST_EXTRA_ARGS:-}"
 LEASPY_ARGS="--random-seed ${MODEL_SEED} ${LEASPY_EXTRA_ARGS:-}"
 
-# held-out subjects personalized on their first N visits ("forecast" command)
+# held-out subjects are also personalized on their first N visits only (N in
+# N_TIMEPOINTS) and scored after the first FORECAST_AFTER visits, by get_metrics.py
+# ("fit" and "forecast"), all in the same metrics file
 N_TIMEPOINTS=${N_TIMEPOINTS:-"1 2 3"}
 # shellcheck disable=SC2086 # split N_TIMEPOINTS
 FORECAST_AFTER=${FORECAST_AFTER:-$(printf "%s\n" $N_TIMEPOINTS | sort -n | tail -n 1)}
@@ -92,6 +94,8 @@ FORECAST_JOBS=${FORECAST_JOBS:-10} # tags processed at the same time
 FORECAST_THREADS=${FORECAST_THREADS:-2}
 # other get_metrics.py args, e.g. "--personalize-seed 3791 --leaspy-seed 3791"
 FORECAST_EXTRA_ARGS=${FORECAST_EXTRA_ARGS:-}
+METRICS_ARGS="--forecast-after ${FORECAST_AFTER}"
+for _n in $N_TIMEPOINTS; do METRICS_ARGS+=" --personalize-n-timepoints ${_n}"; done
 
 # condition -> t0 rank windows of the 5 sites (simulate_data.py --site, one per site:
 # LO-HI[,LO-HI...][:cross], ":cross" = first visit only for training subjects)
@@ -446,8 +450,9 @@ fit_fbm_instance() {
                 run $NICE "${SCRIPTS_DIR}/run_fedbiomed.py" --tag "$tag" \
                     --fedbiomed-dir "${FBM_POOL_DIR}/${name}" --setup "$setup" \
                     --results-dir "$RESULTS_DIR" $FBM_ARGS $variant_args &&
+                # shellcheck disable=SC2086
                 run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
-                    --results-dir "$RESULTS_DIR" --run-tag "$run_tag"
+                    --results-dir "$RESULTS_DIR" --run-tag "$run_tag" $METRICS_ARGS
         } >"${LOG_DIR}/${lane}/seed${seed}.log" 2>&1 ||
             log "[ERROR] [${lane}] seed ${seed} failed, see ${LOG_DIR}/${lane}/seed${seed}.log"
     done < <("$jobs_fn")
@@ -466,7 +471,7 @@ fit_baseline_one() {
         run $NICE "${SCRIPTS_DIR}/run_${model}.py" --tag "$tag" \
             --results-dir "$RESULTS_DIR" $args &&
             run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
-                --results-dir "$RESULTS_DIR" --run-tag "${model}-*"
+                --results-dir "$RESULTS_DIR" --run-tag "${model}-*" $METRICS_ARGS
     } >"${LOG_DIR}/${model}/seed${seed}.log" 2>&1 ||
         { log "[ERROR] [${model}] seed ${seed} failed, see ${LOG_DIR}/${model}/seed${seed}.log"; return 1; }
 }
@@ -476,7 +481,7 @@ fit_baseline_lane() {
     set_threads "$BASELINE_THREADS"
     export -f fit_baseline_one wait_for_threads log run final_tag base_tag
     export SCRIPTS_DIR RESULTS_DIR LOG_DIR DPMOST_ARGS LEASPY_ARGS NICE MAX_USER_THREADS DATASET \
-        TEST_PCT CENTRAL_CONDITION
+        TEST_PCT CENTRAL_CONDITION METRICS_ARGS
     # shellcheck disable=SC2086
     parallel --line-buffer --jobs "$BASELINE_JOBS" fit_baseline_one "$model" ::: $SEEDS
     log "[${model}] done"
@@ -520,23 +525,18 @@ cmd_fit_variants() {
 }
 
 # ===== forecast =====
-# held-out subjects personalized on their first N visits only (N in N_TIMEPOINTS),
-# reusing the fitted models (no nodes needed). Forecasts are scored on the same
-# subjects/visits for every N (visits after the first FORECAST_AFTER).
+# recompute the metrics of all models of a tag, reusing the fitted models (no nodes
+# needed), e.g. with other N_TIMEPOINTS/FORECAST_AFTER. Forecasts are scored on the
+# same subjects/visits for every N (visits after the first FORECAST_AFTER).
 forecast_one() {
     # $1: tag
-    local tag=$1 n
+    local tag=$1
     wait_for_threads
     log "[forecast] ${tag}"
-    (
-        # sequential: all N write to the same results files
-        for n in $N_TIMEPOINTS; do
-            # shellcheck disable=SC2086
-            run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
-                --results-dir "$RESULTS_DIR" --personalize-n-timepoints "$n" \
-                --forecast-after "$FORECAST_AFTER" $FORECAST_EXTRA_ARGS || exit 1
-        done
-    ) >"${LOG_DIR}/forecast/${tag}.log" 2>&1 ||
+    # shellcheck disable=SC2086
+    run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
+        --results-dir "$RESULTS_DIR" $METRICS_ARGS $FORECAST_EXTRA_ARGS \
+        >"${LOG_DIR}/forecast/${tag}.log" 2>&1 ||
         { log "[ERROR] [forecast] ${tag} failed, see ${LOG_DIR}/forecast/${tag}.log"; return 1; }
 }
 
@@ -545,7 +545,7 @@ cmd_forecast() {
     set_threads "$FORECAST_THREADS"
     log "[forecast] N_TIMEPOINTS=${N_TIMEPOINTS} FORECAST_AFTER=${FORECAST_AFTER}"
     export -f forecast_one wait_for_threads log run
-    export SCRIPTS_DIR RESULTS_DIR LOG_DIR NICE MAX_USER_THREADS N_TIMEPOINTS FORECAST_AFTER \
+    export SCRIPTS_DIR RESULTS_DIR LOG_DIR NICE MAX_USER_THREADS METRICS_ARGS \
         FORECAST_EXTRA_ARGS
     local cond seed
     for cond in $CONDITIONS; do

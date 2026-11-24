@@ -131,7 +131,7 @@ def _split_site_subjects(
 def _keep_first_timepoint(
     dfs_subject: list[pd.DataFrame], col_timepoint: str
 ) -> list[pd.DataFrame]:
-    """Keep only the first visit of each subject (cross-sectional site)."""
+    """Keep only the first row (by ``col_timepoint``) of each subject's data."""
     return [
         df_subject.sort_values(col_timepoint, ascending=True).iloc[[0]]
         for df_subject in dfs_subject

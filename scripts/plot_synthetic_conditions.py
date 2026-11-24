@@ -14,7 +14,7 @@ import numpy as np
 import seaborn as sns
 from matplotlib.lines import Line2D
 
-from fl_prog.plotting import get_categorical_palette
+from fl_prog.plotting import get_categorical_palette, save_fig_formats
 from fl_prog.utils.constants import (
     CLICK_CONTEXT_SETTINGS,
     SITE_COLORS,
@@ -133,12 +133,7 @@ def plot_conditions(dpath_data: Path, tags: list[str], fpath_out: Path):
         borderaxespad=0.1,
     )
 
-    fpath_out.parent.mkdir(parents=True, exist_ok=True)
-    for ext in ("png", "pdf"):
-        fpath = fpath_out.with_suffix(f".{ext}")
-        fig.savefig(fpath, dpi=DPI)
-        print(f"Saved {fpath}")
-    plt.close(fig)
+    save_fig_formats(fig, fpath_out, bbox_inches=None, dpi=DPI)
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -160,7 +155,7 @@ def plot_conditions(dpath_data: Path, tags: list[str], fpath_out: Path):
     "--output",
     "fpath_out",
     type=click.Path(path_type=Path),
-    help="Output path without extension (.png and .pdf are written). "
+    help="Output path without extension (.png and .svg are written). "
     "Default: <data-dir>/figures/conditions-<first tag>.",
 )
 def main(tags: tuple[str, ...], dpath_data: Path | None, fpath_out: Path | None):

@@ -301,10 +301,10 @@ def simulate_data(
     Two modes:
     - Independent sites (default): each site is simulated separately, with its own
       number of subjects, maximum number of timepoints and t0 range.
-    - Pooled (``--site``, once per site): a single population is simulated and split
-      into equally sized sites based on t0 windows (see ``_parse_site_spec``). Sites
-      marked as cross-sectional are only truncated to the first visit of each subject
-      by ``split_train_test.py`` (so held-out subjects keep all their visits).
+    - Pooled (``sites``, one spec per site): a single population is simulated and
+      split into equally sized sites based on t0 windows (see ``_parse_site_spec``).
+      Cross-sectional sites are listed in the output JSON; their data keep all
+      visits.
     """
     sites = list(sites)
     settings = dict(locals())  # function arguments only

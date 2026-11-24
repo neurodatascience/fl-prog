@@ -16,6 +16,7 @@ import numpy as np
 import seaborn as sns
 from matplotlib.collections import LineCollection
 
+from fl_prog.plotting import save_fig_formats
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import (
     DEFAULT_DPATH_DATA,
@@ -178,9 +179,8 @@ def plot_ground_truth(dpath: Path, tag: str) -> Path:
         f"sites={' '.join(sites) if sites else 'independent'}",
         fontsize="medium",
     )
-    fpath_out = dpath / f"{tag}-ground_truth.png"
-    fig.savefig(fpath_out, dpi=DPI)
-    plt.close(fig)
+    fpath_out = dpath / f"{tag}-ground_truth"  # without extension
+    save_fig_formats(fig, fpath_out, bbox_inches=None, dpi=DPI)
 
     print(
         df_subjects.groupby("site")
@@ -193,7 +193,6 @@ def plot_ground_truth(dpath: Path, tag: str) -> Path:
         .round(2)
         .to_string()
     )
-    print(f"Saved ground-truth plot to {fpath_out}")
     return fpath_out
 
 

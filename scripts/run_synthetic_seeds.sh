@@ -71,11 +71,11 @@ N_SUBJECTS=1735 # ADNI subjects (train + test)
 SIM_ARGS="--config ${SIM_CONFIG} --n-subjects ${N_SUBJECTS} \
 --t0-min 0 --t0-max ${T0_MAX} --acceleration-factor-std 0.5"
 
-# full coverage needs the time shift range to match T0_MAX and weaker k
-# regularization (see results/2026_11_11-exploration_synth)
+# full coverage recovers k, midpoints and time shifts better with weaker k
+# regularization (see results/2026_11_23-alpha_penalty-fullcov*)
 FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
---time-shift-range 0 ${T0_MAX} --lambda-k-values 0.001 \
---lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01 \
+--lambda-k-values 0.001 \
+--lambda-time-shifts 0.01 --penalty-acceleration-factors l2 --lambda-acceleration-factors 0.1 \
 --with-acceleration --with-scaling --training-replies --aggregated-params \
 --random-seed ${MODEL_SEED} ${FBM_EXTRA_ARGS:-}"
 DPMOST_ARGS="--random-seed ${MODEL_SEED} ${DPMOST_EXTRA_ARGS:-}"

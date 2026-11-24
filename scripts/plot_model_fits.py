@@ -43,6 +43,8 @@ from fl_prog.results import (
     DEFAULT_LEASPY_ALGORITHM_NAME,
     DEFAULT_LEASPY_N_JOBS,
     DEFAULT_LEASPY_SEED,
+    MODEL_FEDBIOMED,
+    MODEL_LEASPY,
     MODEL_TYPES,
     FittedModel,
     LeaspyIndividualParametersNotFoundError,
@@ -64,6 +66,8 @@ SETUP_HATCHES = {Setup.FEDERATED.value: "", Setup.CENTRALIZED.value: "///"}
 LABEL_TIME_SHIFTED = "Disease time (months)"
 LABEL_TIME_SHIFT = "Time shift (months)"
 LABEL_ACCELERATION_FACTOR = "Acceleration factor"
+LABEL_LOG_ACCELERATION_FACTOR = "Log acceleration factor"
+COL_LOG_ACCELERATION_FACTOR = "log_acceleration_factor"
 LABEL_BIOMARKER = "Biomarker value (scaled)"
 
 # subjects used for fitting vs held-out test subjects
@@ -385,22 +389,23 @@ def plot_spaghetti(
     return grid
 
 
-def get_df_time_shifts_wide(
-    df_subject: pd.DataFrame, model_order: list[str]
+def get_df_wide(
+    df_subject: pd.DataFrame, model_order: list[str], col_param: str = COL_TIME_SHIFT
 ) -> pd.DataFrame:
-    """Subjects x models table of time shifts, with each subject's group."""
-    df_wide = df_subject.pivot(
-        index=COL_SUBJECT, columns=COL_MODEL, values=COL_TIME_SHIFT
-    )[model_order]
+    """Subjects x models table of a per-subject parameter, with each subject's
+    group."""
+    df_wide = df_subject.pivot(index=COL_SUBJECT, columns=COL_MODEL, values=col_param)[
+        model_order
+    ]
     groups = df_subject.groupby(COL_SUBJECT)[COL_GROUP].first()
     return df_wide.assign(**{COL_GROUP: groups.reindex(df_wide.index)})
 
 
-def get_time_shift_correlations(
-    df_wide: pd.DataFrame, model_order: list[str]
+def get_correlations(
+    df_wide: pd.DataFrame, model_pairs: list[tuple[str, str]]
 ) -> pd.DataFrame:
     rows = []
-    for model1, model2 in combinations(model_order, 2):
+    for model1, model2 in model_pairs:
         df_pair = df_wide[[model1, model2]].dropna()
         rows.append(
             {
@@ -483,6 +488,71 @@ def plot_time_shift_by_group(
     grid.set_titles("{col_name}")
     grid.set_axis_labels("Diagnosis", LABEL_TIME_SHIFT)
     return grid
+
+
+def plot_acceleration_factor_comparison(
+    df_wide: pd.DataFrame,
+    df_correlations: pd.DataFrame,
+    model_pairs: list[tuple[str, str]],
+    group_order: list[str],
+    palette: dict[str, str],
+) -> plt.Figure:
+    """Log acceleration factors of each model (y) vs a reference model, e.g.
+    Leaspy (x), with the Spearman correlation over all subjects."""
+    correlations = {
+        (row["model1"], row["model2"]): row for _, row in df_correlations.iterrows()
+    }
+    fig, axes = plt.subplots(
+        ncols=len(model_pairs),
+        figsize=(3.5 * len(model_pairs), 3.5),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+    lims = [
+        np.nanmin(df_wide[list({m for pair in model_pairs for m in pair})].to_numpy()),
+        np.nanmax(df_wide[list({m for pair in model_pairs for m in pair})].to_numpy()),
+    ]
+    for ax, (reference, model) in zip(axes.flat, model_pairs):
+        for group in group_order:
+            df_group = df_wide.query(f"{COL_GROUP} == @group")
+            ax.scatter(
+                df_group[reference],
+                df_group[model],
+                s=8,
+                color=palette[group],
+                alpha=0.5,
+                linewidth=0,
+                rasterized=True,
+            )
+        ax.plot(lims, lims, color="black", linewidth=1, linestyle="--")
+        row = correlations[(reference, model)]
+        ax.text(
+            0.04,
+            0.96,
+            f"Spearman ρ = {row['spearman_r']:.2f}\nn = {row['n_subjects']}",
+            ha="left",
+            va="top",
+            transform=ax.transAxes,
+        )
+        ax.set_title(model)
+        ax.set_xlabel(f"{LABEL_LOG_ACCELERATION_FACTOR}\n({reference})")
+    axes.flat[0].set_ylabel(LABEL_LOG_ACCELERATION_FACTOR)
+    fig.legend(
+        [
+            Line2D([], [], marker="o", linestyle="none", color=palette[group])
+            for group in group_order
+        ]
+        + [Line2D([], [], color="black", linestyle="--")],
+        group_order + ["Identity"],
+        title="Diagnosis",
+        loc="center left",
+        bbox_to_anchor=(1.0, 0.5),
+        frameon=False,
+    )
+    sns.despine(fig)
+    fig.tight_layout()
+    return fig
 
 
 def _get_df_long_by_subject_set(fitted_models: list[FittedModel]) -> pd.DataFrame:
@@ -818,8 +888,8 @@ def plot_model_fits(
             )
 
     # 3) time shift comparison between models
-    df_wide = get_df_time_shifts_wide(df_subject, model_order)
-    df_correlations = get_time_shift_correlations(df_wide, model_order)
+    df_wide = get_df_wide(df_subject, model_order)
+    df_correlations = get_correlations(df_wide, list(combinations(model_order, 2)))
     fpath_correlations = dpath_figures / "time_shift_correlations.tsv"
     df_correlations.to_csv(fpath_correlations, sep="\t", index=False)
     print(f"Saved time shift correlations to {fpath_correlations}")
@@ -837,7 +907,47 @@ def plot_model_fits(
         "time_shift_by_group",
     )
 
-    # 4) held-out subjects
+    # 4) acceleration factors of Fed-BioMed models vs Leaspy (train subjects)
+    labels_by_type = {
+        model_type: [m.label for m in fitted_models if m.model_type == model_type]
+        for model_type in (MODEL_LEASPY, MODEL_FEDBIOMED)
+    }
+    acceleration_pairs = [
+        (reference, model)
+        for reference in labels_by_type[MODEL_LEASPY]
+        for model in labels_by_type[MODEL_FEDBIOMED]
+    ]
+    if acceleration_pairs:
+        df_wide_acceleration = get_df_wide(
+            df_subject.assign(
+                **{
+                    COL_LOG_ACCELERATION_FACTOR: np.log(
+                        df_subject[COL_ACCELERATION_FACTOR]
+                    )
+                }
+            ),
+            model_order,
+            col_param=COL_LOG_ACCELERATION_FACTOR,
+        )
+        df_correlations_acceleration = get_correlations(
+            df_wide_acceleration, acceleration_pairs
+        )
+        fpath_correlations = dpath_figures / "acceleration_factor_correlations.tsv"
+        df_correlations_acceleration.to_csv(fpath_correlations, sep="\t", index=False)
+        print(f"Saved acceleration factor correlations to {fpath_correlations}")
+        print(df_correlations_acceleration.to_string(index=False))
+        _save(
+            plot_acceleration_factor_comparison(
+                df_wide_acceleration,
+                df_correlations_acceleration,
+                acceleration_pairs,
+                group_order,
+                group_palette,
+            ),
+            "acceleration_factor_comparison",
+        )
+
+    # 5) held-out subjects
     if not has_heldout:
         return
     _save(

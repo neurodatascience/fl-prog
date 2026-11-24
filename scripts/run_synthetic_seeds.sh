@@ -59,7 +59,8 @@ NICE="nice -n 10"
 
 # ADNI-like simulation (see get_simulation_config_from_adni_results.py for the config)
 # tag prefix (dataset name): use another one for other simulation settings, e.g.
-# DATASET=synth_fullcov T0_MAX=4.5 (disease coverage up to the late biomarkers)
+# DATASET=synth_fullcov T0_MAX=4.5 FBM_EXTRA_ARGS="--lambda-k-values 0.001" (disease
+# coverage up to the late biomarkers)
 DATASET=${DATASET:-synth_adnilike}
 T0_MAX=${T0_MAX:-2} # true time shifts ~ U(0, T0_MAX) (model time, 1 = 96 months)
 SIM_CONFIG=${SIM_CONFIG:-"${ROOT_DIR}/data/_simulation_configs/adni_like.json"}
@@ -71,7 +72,7 @@ SIM_ARGS="--config ${SIM_CONFIG} --n-subjects ${N_SUBJECTS} --n-sites ${N_SITES}
 --t0-min 0 --t0-max ${T0_MAX} --acceleration-factor-std 0.5"
 
 FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
---lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01 \
+--lambda-time-shifts 0.01 --penalty-acceleration-factors l2 --lambda-acceleration-factors 0.1 \
 --with-acceleration --with-scaling --training-replies --aggregated-params \
 --random-seed ${MODEL_SEED} ${FBM_EXTRA_ARGS:-}"
 DPMOST_ARGS="--random-seed ${MODEL_SEED} ${DPMOST_EXTRA_ARGS:-}"

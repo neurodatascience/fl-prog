@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Single-slide (16:9) results figure for a multi-seed synthetic run.
+"""Results figure for a multi-seed synthetic run.
 
-Top row: group trajectories (centralized and federated conditions vs ground
-truth, see ``plot_fedbiomed_comparison_seeds.py``). Bottom row: model fit (R² and
+Top rows: group trajectories of each condition vs ground truth, at most 4 panels
+per row. Bottom row: model fit (R² and
 MAE, train and test), recovery of all model parameters except acceleration
 factors, and recovery of acceleration factors by number of visits.
 
@@ -51,7 +51,11 @@ from fl_prog.utils.io import load_json
 
 DEFAULT_DATASET = "synthetic"
 DEFAULT_DPATH_RESULTS = Path("results") / "2026_11_11-with-shifted"
-FIGSIZE = (14.83, 7.5)  # 16:9 slide (13.33 x 7.5 in) plus 1.5 in of width
+FIG_WIDTH = 14.83
+# figure height = rows of trajectory panels * TRAJECTORY_ROW_HEIGHT + BOTTOM_HEIGHT
+TRAJECTORY_ROW_HEIGHT = 3.75
+BOTTOM_HEIGHT = 3.6
+MAX_TRAJECTORY_PANELS_PER_ROW = 4
 CONTEXT = "talk"
 FONT_SCALE = 0.8  # talk context, scaled down to fit one slide
 N_YTICKS = 3
@@ -420,32 +424,57 @@ def plot_synthetic_results_figure(
     # figure
     models = get_models(spec)
     palette = dict(zip(models, get_categorical_palette(list(models)).values()))
-    fig = plt.figure(figsize=FIGSIZE, layout="constrained")
-    subfig_top, subfig_bottom = fig.subfigures(2, 1, height_ratios=[1.1, 1])
-
-    axes_top = subfig_top.subplots(1, len(trajectories.panels), sharex=True)
-    for ax in axes_top[1:]:
-        ax.sharey(axes_top[0])
-        ax.tick_params(labelleft=False)
+    n_panels = len(trajectories.panels)
+    n_rows_top = -(-n_panels // MAX_TRAJECTORY_PANELS_PER_ROW)
+    n_cols_top = -(-n_panels // n_rows_top)
+    height_top = n_rows_top * TRAJECTORY_ROW_HEIGHT
+    fig = plt.figure(
+        figsize=(FIG_WIDTH, height_top + BOTTOM_HEIGHT), layout="constrained"
+    )
+    subfig_top, subfig_bottom = fig.subfigures(
+        2, 1, height_ratios=[height_top, BOTTOM_HEIGHT]
+    )
+    axes_grid = subfig_top.subplots(
+        n_rows_top, n_cols_top, sharex=True, sharey=True, squeeze=False
+    )
+    axes_top = list(axes_grid.flat[:n_panels])
     draw_group_trajectories(
-        list(axes_top),
+        axes_top,
         trajectories,
         linewidth=1,
         linewidth_mean=2.5,
         title_fontsize=plt.rcParams["axes.titlesize"],
     )
-    for ax in axes_top:
-        ax.set_xlabel("Months")
+    ylabel = axes_top[0].get_ylabel()
+    for i_panel, ax in enumerate(axes_top):
+        # long condition labels don't fit on one line
+        ax.title.set_text(ax.get_title().replace(" + ", "\n+ "))
+        ax.set_ylabel(ylabel if i_panel % n_cols_top == 0 else "")
+        # x labels on the lowest panel of each column
+        if i_panel + n_cols_top < n_panels:
+            ax.set_xlabel("")
+        else:
+            ax.set_xlabel("Months")
+            ax.tick_params(labelbottom=True)
     handles, labels = get_group_trajectories_legend(trajectories, linewidth=2)
-    legend = subfig_top.legend(
-        handles,
-        labels,
-        loc="outside right center",
-        handlelength=1.5,
-        labelspacing=0.25,
-        fontsize="small",
-        frameon=False,
-    )
+    legend_kwargs = {
+        "handlelength": 1.5,
+        "labelspacing": 0.25,
+        "fontsize": "small",
+        "frameon": False,
+    }
+    axes_empty = axes_grid.flat[n_panels:]
+    for ax in axes_empty:
+        ax.axis("off")
+    if len(axes_empty):
+        # in the first empty slot of the grid
+        legend = axes_empty[0].legend(
+            handles, labels, loc="center left", **legend_kwargs
+        )
+    else:
+        legend = subfig_top.legend(
+            handles, labels, loc="outside right center", **legend_kwargs
+        )
     for text in legend.get_texts():
         if text.get_text() in LEGEND_HEADERS:
             text.set_fontweight("bold")
@@ -477,13 +506,23 @@ def plot_synthetic_results_figure(
         ax.yaxis.set_major_locator(MaxNLocator(nbins=N_YTICKS))
         ax.title.set_fontsize("medium")
 
-    # shared legend: models, then set shades
+    # shared legend: models in the first rows, set shades in the last row
     handles_sets, labels_sets = get_fit_legend(set_names)
-    handles = [
+    handles_models = [
         Patch(facecolor=palette[model], edgecolor="0.25") for model in models
-    ] + handles_sets
-    labels = list(models.values()) + labels_sets
-    handles, labels, n_cols = legend_row_major(handles, labels, n_rows=2)
+    ]
+    labels_models = list(models.values())
+    n_cols = len(labels_sets)
+    rows = [
+        (handles_models[i : i + n_cols], labels_models[i : i + n_cols])
+        for i in range(0, len(labels_models), n_cols)
+    ] + [(handles_sets, labels_sets)]
+    handles, labels = [], []
+    for handles_row, labels_row in rows:
+        n_blank = n_cols - len(labels_row)
+        handles += handles_row + [Patch(visible=False)] * n_blank
+        labels += labels_row + [""] * n_blank
+    handles, labels, n_cols = legend_row_major(handles, labels, n_rows=len(rows))
     legend = subfig_bottom.legend(
         handles,
         labels,

@@ -24,11 +24,11 @@ METRICS_AVERAGED_OVER_BIOMARKERS = (
 )
 
 SET_NAME_TRAIN = "train"
-SET_NAME_TEST = "test"  # personalized on all available timepoints
-SET_NAME_TEST_FIT = "test_fit"
-SET_NAME_TEST_FORECAST = "test_forecast"
-COL_N_TIMEPOINTS = "n_timepoints"  # number of timepoints used in personalization
-COL_FORECAST_AFTER = "forecast_after"  # filter for visits used in forecasting
+SET_NAME_TEST = "test"  # personalized on all visits
+SET_NAME_TEST_FIT = "test_fit"  # visits used for personalization
+SET_NAME_TEST_FORECAST = "test_forecast"  # visits after the first forecast_after
+COL_N_TIMEPOINTS = "n_timepoints"  # visits used for personalization (empty: all)
+COL_FORECAST_AFTER = "forecast_after"
 LABEL_TRAIN = "Train"
 
 
@@ -40,7 +40,10 @@ def get_forecast_label(n_timepoints: int) -> str:
 def select_forecast_after(
     df: pd.DataFrame, forecast_after: int | None = None
 ) -> pd.DataFrame:
-    """Rows scored after the first ``forecast_after`` visits."""
+    """Select the rows of ``df`` scored after the first ``forecast_after`` visits.
+
+    If ``forecast_after`` is None, use the largest value in ``df``.
+    """
     values = sorted(int(value) for value in df[COL_FORECAST_AFTER].dropna().unique())
     if not values:
         raise ValueError("No forecast results (forecast_after is empty)")
@@ -75,8 +78,7 @@ def get_fit_sets(
     ]
     if df_test.empty:
         raise ValueError(
-            "No out-of-sample test results (set_name "
-            f"{SET_NAME_TEST_FORECAST!r}): run get_metrics.py with "
+            f"No {SET_NAME_TEST_FORECAST!r} rows: run get_metrics.py with "
             "--personalize-n-timepoints"
         )
     df_test = select_forecast_after(df_test, forecast_after)

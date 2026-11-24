@@ -73,9 +73,7 @@ from fl_prog.utils.constants import (
 )
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, get_dpath_latest
 
-# held-out subjects are also personalized on their first N visits only, for each N
 DEFAULT_PERSONALIZE_N_TIMEPOINTS = (1, 2, 3)
-# recovery set names of held-out subjects (the only ones that depend on N)
 PREFIX_SET_NAME_RECOVERY_TEST = "recovery_per_subject_test"
 
 
@@ -598,16 +596,17 @@ def get_metrics_single_run_leaspy(
 def _get_metrics_single_run_leaspy_with_recovery(
     *args, **kwargs
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Call ``get_metrics_single_run_leaspy`` and return its metrics with an empty
-    recovery table."""
+    """Return the Leaspy metrics and an empty recovery table."""
     return get_metrics_single_run_leaspy(*args, **kwargs), pd.DataFrame()
 
 
 def _with_n_timepoints(
     df: pd.DataFrame, n_timepoints: int | None, forecast_after: int | None
 ) -> pd.DataFrame:
-    """Add ``n_timepoints`` and ``forecast_after`` columns to ``df`` (empty if
-    None)."""
+    """Add ``n_timepoints`` and ``forecast_after`` columns to ``df``.
+
+    None values become missing values.
+    """
     return df.assign(
         **{
             COL_N_TIMEPOINTS: pd.array([n_timepoints] * len(df), dtype="Int64"),
@@ -652,7 +651,6 @@ def get_metrics(
         model_type = get_model_type(fpath_json_results)
         print(f"fpath_json_results: {fpath_json_results}")
         heldout = has_heldout_subjects(load_json_data(json_results)["subjects_by_node"])
-        # personalization on the first N visits only applies to held-out subjects
         n_values_run = n_values if heldout else []
         if n_values and not heldout:
             click.secho(
@@ -660,8 +658,6 @@ def get_metrics(
                 fg="yellow",
             )
 
-        # metrics (and recovery) of this run for one personalization setting
-        # (personalize_n_timepoints, forecast_after)
         if model_type == MODEL_LEASPY:
             get_metrics_run = functools.partial(
                 _get_metrics_single_run_leaspy_with_recovery,
@@ -705,14 +701,12 @@ def get_metrics(
                 )
                 suffix = f"-{personalization_key}"
 
-        # personalization on all visits
         df_metrics, df_recovery = get_metrics_run(
             personalize_n_timepoints=None, forecast_after=None
         )
         dfs_metrics = [_with_n_timepoints(df_metrics, None, None)]
         dfs_recovery = [_with_n_timepoints(df_recovery, None, None)]
-        # personalization on the first N visits: only the held-out subjects' rows
-        # depend on N (train rows are the same as above)
+        # only the held-out subjects' rows depend on N
         for n_timepoints in n_values_run:
             df_metrics_n, df_recovery_n = get_metrics_run(
                 personalize_n_timepoints=n_timepoints, forecast_after=forecast_after
@@ -817,20 +811,16 @@ def get_metrics(
     type=click.IntRange(min=1),
     multiple=True,
     default=DEFAULT_PERSONALIZE_N_TIMEPOINTS,
-    help="Also estimate held-out subjects' parameters from their first N visits "
-    "only (can be repeated), and score these (test_fit) and later visits "
-    "(test_forecast, see --forecast-after) separately. Subjects without enough "
-    "visits are not scored. Results for all N are in the same file, in the "
-    f"{COL_N_TIMEPOINTS}/{COL_FORECAST_AFTER} columns (empty for personalization "
-    "on all visits).",
+    show_default=True,
+    help="Also personalize held-out subjects on their first N visits only. "
+    "Can be repeated.",
 )
 @click.option(
     "--forecast-after",
     type=click.IntRange(min=1),
     default=None,
-    help="Score forecasts on visits after the first K (>= every N) only, the same "
-    "visits for every N. Subjects with K visits or fewer are not scored. Default: "
-    "largest N.",
+    help="Score forecasts on visits after the first K, for every N. Must be at "
+    "least the largest N. Default: the largest N.",
 )
 @click.option(
     "--run-tag",

@@ -57,9 +57,7 @@ FONT_SCALE = 0.8  # talk context, scaled down to fit one slide
 N_YTICKS = 3
 
 FIT_METRICS = {"r2_score": "R²", "mean_absolute_error": "MAE"}
-# fit panels (also plot_adni_results_figure.py): per model, train then out-of-sample
-# test sets (held-out subjects personalized on their first N visits, one set per N,
-# see get_fit_sets), from light to dark
+# fit panels: per model, the train box, then the test boxes from light to dark
 FIT_SHADE_TRAIN = 0.7  # amount of white blended into the model color
 FIT_SHADES_TEST = (0.45, 0.0)  # lightest (smallest N) to darkest (largest N)
 FIT_BOX_STEP = 0.9  # distance between the boxes of a model
@@ -91,8 +89,8 @@ LABEL_FEDBIOMED_CENTRALIZED = "Fed-BioMed centralized"
 
 
 def get_conditions(spec: DatasetSpec) -> dict[str, str]:
-    """Fed-BioMed model label (collect_seed_metrics.py) -> condition in the dataset
-    spec, in plotting order (DPMoSt/Leaspy are not shown)."""
+    """Map each Fed-BioMed model label to its condition in ``spec``, in plotting
+    order."""
     return {
         LABEL_FEDBIOMED_CENTRALIZED: spec.condition_centralized,
         **{
@@ -103,14 +101,14 @@ def get_conditions(spec: DatasetSpec) -> dict[str, str]:
 
 
 def get_models(spec: DatasetSpec) -> dict[str, str]:
-    """Fed-BioMed model label (collect_seed_metrics.py) -> short label."""
+    """Map each Fed-BioMed model label in ``spec`` to its short label."""
     return {
         model: spec.condition_labels[condition]
         for model, condition in get_conditions(spec).items()
     }
 
 
-# default models (also used by plot_adni_results_figure.py)
+# default models
 MODELS = get_models(DATASETS[DEFAULT_DATASET])
 
 
@@ -166,8 +164,10 @@ def _values(df: pd.DataFrame, **conditions) -> np.ndarray:
 
 
 def get_fit_shades(set_names: list[str]) -> dict[str, float]:
-    """Map each set label to the amount of white blended into the model color:
-    train lightest, then the other sets from light to dark."""
+    """Map each set label to the amount of white blended into the model color.
+
+    Train is lightest, then the other sets go from light to dark.
+    """
     test_sets = [s for s in set_names if s != LABEL_TRAIN]
     shades_test = np.linspace(*FIT_SHADES_TEST, len(test_sets))
     return {LABEL_TRAIN: FIT_SHADE_TRAIN, **dict(zip(test_sets, shades_test))}
@@ -176,8 +176,10 @@ def get_fit_shades(set_names: list[str]) -> dict[str, float]:
 def legend_row_major(
     handles: list, labels: list[str], n_rows: int
 ) -> tuple[list, list[str], int]:
-    """Reorder legend entries so that they read row by row (matplotlib fills legend
-    columns first). Returns the handles, labels and number of columns."""
+    """Reorder legend entries so that they read row by row.
+
+    Returns the handles, labels and number of columns.
+    """
     n_cols = -(-len(labels) // n_rows)
     order = [
         i_row * n_cols + i_col
@@ -189,7 +191,7 @@ def legend_row_major(
 
 
 def get_fit_legend(set_names: list[str], color="0.45") -> tuple[list, list[str]]:
-    """Legend handles/labels for the train/test shading of the fit panels."""
+    """Return legend handles and labels showing the shade of each set."""
     shades = get_fit_shades(set_names)
     handles = [
         Patch(facecolor=_lighten(color, shades[s]), edgecolor="0.25") for s in set_names
@@ -204,8 +206,10 @@ def _plot_fit(
     models=MODELS,
     forecast_after: int | None = None,
 ) -> list[str]:
-    """Draw one box per model and set on each axis (one axis per fit metric).
-    Returns the set labels."""
+    """Draw one box per model and set on each axis, one axis per fit metric.
+
+    Returns the set labels.
+    """
     df_fit, set_names = get_fit_sets(df_fit, forecast_after=forecast_after)
     shades = get_fit_shades(set_names)
     model_step = len(set_names) * FIT_BOX_STEP + FIT_MODEL_GAP
@@ -473,7 +477,7 @@ def plot_synthetic_results_figure(
         ax.yaxis.set_major_locator(MaxNLocator(nbins=N_YTICKS))
         ax.title.set_fontsize("medium")
 
-    # shared legend: models, then train/test shading (two rows)
+    # shared legend: models, then set shades
     handles_sets, labels_sets = get_fit_legend(set_names)
     handles = [
         Patch(facecolor=palette[model], edgecolor="0.25") for model in models
@@ -531,9 +535,8 @@ def plot_synthetic_results_figure(
     "--forecast-after",
     type=click.IntRange(min=1),
     default=None,
-    help="Fit panels: test sets scored after the first K visits (held-out subjects "
-    "personalized on their first N <= K visits, one set per N). Default: the only K "
-    "in the results (the largest one if there are several).",
+    help="Plot test scores of forecasts after the first K visits. "
+    "Default: the largest K in the results.",
 )
 def main(**params):
     plot_synthetic_results_figure(**params)

@@ -56,7 +56,7 @@ MODELS = {
         ("fedbiomed", condition, "federated"): f"Fed-BioMed {label}"
         for condition, label in SYNTHETIC_CONDITION_LABELS.items()
     },
-    # other aggregators/optimizers (run_synthetic_seeds.sh VARIANT_CONDITIONS)
+    # other aggregators/optimizers
     (
         "fedbiomed",
         "overlap000",
@@ -164,8 +164,7 @@ def _collect(dpath_results: Path, dataset: str, pattern_fname: str) -> pd.DataFr
     df = pd.concat(dfs, ignore_index=True)
     # a model/condition/seed must come from a single file (e.g. not from both a run
     # with all setups and a run with only one of them, or from two personalization
-    # seeds), otherwise it would be counted more than once. All N (personalization
-    # on the first N visits) are in the same file.
+    # seeds), otherwise it would be counted more than once.
     keys = ["model", "condition", "seed"]
     n_files = df.groupby(keys)["fpath"].nunique()
     if (n_files > 1).any():
@@ -258,8 +257,7 @@ def _boxplot(ax, data: pd.DataFrame, model_order: list[str], palette):
 def _plot_fit_metrics(df_all: pd.DataFrame, fpath_out: Path):
     model_order = _get_model_order(df_all)
     palette = get_categorical_palette(model_order)
-    # train only: the held-out subjects' all-visits scores are in-sample (see the
-    # forecast plot for out-of-sample scores)
+    # train only: test scores personalized on all visits are in-sample
     set_names = [s for s in [SET_NAME_TRAIN] if s in set(df_all["set_name"])]
     fig, axes = plt.subplots(
         nrows=len(METRICS),

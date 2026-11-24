@@ -6,10 +6,9 @@
 #
 # Usage: run_adni_seeds.sh {prep|start-nodes|stop-nodes|fit|forecast|summarize|all} [SEED ...]
 #
-# "fit" also scores held-out subjects personalized on their first N visits only, for
-# N in N_TIMEPOINTS (see get_metrics.py --personalize-n-timepoints/--forecast-after).
-# "forecast" (after "fit", not part of "all") recomputes the metrics of all models
-# without refitting, e.g. with other N_TIMEPOINTS.
+# "fit" also scores held-out subjects personalized on their first N visits, for each
+# N in N_TIMEPOINTS. "forecast" recomputes the metrics of fitted models without
+# refitting, e.g. with other N_TIMEPOINTS. Run it after "fit"; "all" doesn't include it.
 #
 # All runs write to results/<FL_PROG_DATE>/<tag>/.
 #
@@ -48,9 +47,7 @@ FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
 DPMOST_ARGS="--random-seed ${MODEL_SEED} ${DPMOST_EXTRA_ARGS:-}"
 LEASPY_ARGS="--random-seed ${MODEL_SEED} ${LEASPY_EXTRA_ARGS:-}"
 
-# held-out subjects are also personalized on their first N visits only (N in
-# N_TIMEPOINTS) and scored after the first FORECAST_AFTER visits, by get_metrics.py
-# ("fit" and "forecast"), all in the same metrics file
+# get_metrics.py --personalize-n-timepoints and --forecast-after
 N_TIMEPOINTS=${N_TIMEPOINTS:-"1 2 3"}
 # shellcheck disable=SC2086 # split N_TIMEPOINTS
 FORECAST_AFTER=${FORECAST_AFTER:-$(printf "%s\n" $N_TIMEPOINTS | sort -n | tail -n 1)}
@@ -283,9 +280,7 @@ cmd_fit() {
 }
 
 # ===== forecast =====
-# recompute the metrics of all models of a tag, reusing the fitted models (no nodes
-# needed), e.g. with other N_TIMEPOINTS/FORECAST_AFTER. Forecasts are scored on the
-# same subjects/visits for every N (visits after the first FORECAST_AFTER).
+# recompute the metrics of all fitted models of a tag (no nodes needed)
 forecast_one() {
     # $1: tag
     local tag=$1

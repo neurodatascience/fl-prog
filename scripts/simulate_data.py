@@ -401,8 +401,7 @@ def simulate_data(
             "cols_biomarker": cols_biomarker,
         },
         "subjects_by_node": subjects_by_node,
-        # train subjects at these nodes are truncated to their first visit by
-        # split_train_test.py
+        # training subjects at these nodes keep only their first visit after the split
         "cross_sectional_nodes": cross_sectional_nodes,
         "need_scaling": False,
     }
@@ -481,11 +480,11 @@ def simulate_data(
     type=str,
     multiple=True,
     help=(
-        "Simulate a single population and split it into sites based on t0 (use once"
-        " per site). Format: LO-HI[,LO-HI...][:cross], with windows on the t0 rank"
-        " scale [0, 1] (decimals or fractions), e.g. '0-1' (full coverage),"
-        " '0-1/4,3/4-1' (early and late subjects only), '0-1:cross' (first visit"
-        " only). Requires single values for --n-subjects/--t0-min/--t0-max."
+        "One site of a single simulated population, repeated once per site. Format:"
+        " LO-HI[,LO-HI...][:cross], with windows on the t0 rank scale from 0 to 1,"
+        " e.g. '0-1/4,3/4-1' for early and late subjects. ':cross' keeps only the"
+        " first visit of training subjects. Requires single values for"
+        " --n-subjects, --t0-min and --t0-max."
     ),
 )
 def main(**params):

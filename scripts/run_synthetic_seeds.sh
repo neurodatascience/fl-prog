@@ -3,8 +3,8 @@
 # (synthetic counterpart of run_adni_seeds.sh).
 #
 # For each seed, one population of ADNI-like subjects is simulated (same subjects
-# for every condition), then split into sites by t0 with different amounts of
-# overlap between neighbouring sites (conditions). The seed controls the data
+# for every condition), then split into 5 sites by t0 with a different site layout
+# per condition (see COND_SITES). The seed controls the data
 # (population, site split, pooled subject hold-out), not model fitting (fixed
 # MODEL_SEED for every model). Held-out test subjects are the same across conditions.
 #
@@ -17,10 +17,9 @@
 #        run_synthetic_seeds.sh {add-datasets-variants|fit-variants|variants} [SEED ...]
 #        run_synthetic_seeds.sh forecast [SEED ...]
 #
-# "fit" also scores held-out subjects personalized on their first N visits only, for
-# N in N_TIMEPOINTS (see get_metrics.py --personalize-n-timepoints/--forecast-after).
-# "forecast" (after "fit"/"variants", not part of "all") recomputes the metrics of all
-# models of each condition and seed without refitting, e.g. with other N_TIMEPOINTS.
+# "fit" also scores held-out subjects personalized on their first N visits, for each
+# N in N_TIMEPOINTS. "forecast" recomputes the metrics of fitted models without
+# refitting, e.g. with other N_TIMEPOINTS. Run it after "fit"; "all" doesn't include it.
 #
 # "variants" fits the federated setup with other optimizers/aggregators (FBM_VARIANTS,
 # e.g. native SCAFFOLD + SGD and its FedAvg + SGD baseline) on VARIANT_CONDITIONS, using
@@ -38,8 +37,8 @@
 # VARIANT_CONDITIONS, FBM_VARIANT_ARGS_<variant>, N_TIMEPOINTS, FORECAST_AFTER,
 # FORECAST_JOBS, FORECAST_THREADS, FORECAST_EXTRA_ARGS
 #
-# CONDITIONS (data splits, see COND_SITES) can be restricted, but must include
-# overlap100 (centralized setup and baselines).
+# CONDITIONS can be a subset of COND_SITES, but must include overlap100, which the
+# centralized setup and the baselines use.
 
 set -uo pipefail
 
@@ -61,12 +60,10 @@ MAX_USER_THREADS=${MAX_USER_THREADS:-3000}
 ADD_TO_NODES=${ADD_TO_NODES:-1} # set to 0 to only generate data in prep
 NICE="nice -n 10"
 
-# ADNI-like simulation (see get_simulation_config_from_adni_results.py for the config)
-# with full disease coverage (up to the late biomarkers). Tag prefix (dataset name):
-# use another one for other simulation settings, e.g. DATASET=synth_adnilike T0_MAX=2
-# (ADNI-like disease coverage)
+# ADNI-like simulation with full disease coverage. DATASET is the tag prefix; change
+# it with other settings, e.g. DATASET=synth_adnilike T0_MAX=2 for ADNI-like coverage.
 DATASET=${DATASET:-synth_fullcov}
-T0_MAX=${T0_MAX:-4.5} # true time shifts ~ U(0, T0_MAX) (model time, 1 = 96 months)
+T0_MAX=${T0_MAX:-4.5} # true time shifts ~ U(0, T0_MAX), in model time (1 = 96 months)
 SIM_CONFIG=${SIM_CONFIG:-"${ROOT_DIR}/data/_simulation_configs/adni_like.json"}
 LOG_DIR=${LOG_DIR:-"${RESULTS_DIR}/${FL_PROG_DATE}/logs-${DATASET}"}
 NODE_PIDS_FILE="${LOG_DIR}/node_pids.txt"
@@ -74,8 +71,8 @@ N_SUBJECTS=1735 # ADNI subjects (train + test)
 SIM_ARGS="--config ${SIM_CONFIG} --n-subjects ${N_SUBJECTS} \
 --t0-min 0 --t0-max ${T0_MAX} --acceleration-factor-std 0.5"
 
-# expected time shifts over the true range, weaker k regularization (needed with full
-# coverage, see results/2026_11_11-exploration_synth)
+# full coverage needs the time shift range to match T0_MAX and weaker k
+# regularization (see results/2026_11_11-exploration_synth)
 FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
 --time-shift-range 0 ${T0_MAX} --lambda-k-values 0.001 \
 --lambda-time-shifts 0.01 --lambda-acceleration-factors 0.01 \
@@ -84,9 +81,7 @@ FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
 DPMOST_ARGS="--random-seed ${MODEL_SEED} ${DPMOST_EXTRA_ARGS:-}"
 LEASPY_ARGS="--random-seed ${MODEL_SEED} ${LEASPY_EXTRA_ARGS:-}"
 
-# held-out subjects are also personalized on their first N visits only (N in
-# N_TIMEPOINTS) and scored after the first FORECAST_AFTER visits, by get_metrics.py
-# ("fit" and "forecast"), all in the same metrics file
+# get_metrics.py --personalize-n-timepoints and --forecast-after
 N_TIMEPOINTS=${N_TIMEPOINTS:-"1 2 3"}
 # shellcheck disable=SC2086 # split N_TIMEPOINTS
 FORECAST_AFTER=${FORECAST_AFTER:-$(printf "%s\n" $N_TIMEPOINTS | sort -n | tail -n 1)}
@@ -97,24 +92,18 @@ FORECAST_EXTRA_ARGS=${FORECAST_EXTRA_ARGS:-}
 METRICS_ARGS="--forecast-after ${FORECAST_AFTER}"
 for _n in $N_TIMEPOINTS; do METRICS_ARGS+=" --personalize-n-timepoints ${_n}"; done
 
-# condition -> t0 rank windows of the 5 sites (simulate_data.py --site, one per site:
-# LO-HI[,LO-HI...][:cross], ":cross" = first visit only for training subjects)
+# condition -> simulate_data.py --site spec of each of the 5 sites
 declare -A COND_SITES=(
-    # random split / contiguous t0 chunks
     [overlap100]="0-1 0-1 0-1 0-1 0-1"
     [overlap000]="0-1/5 1/5-2/5 2/5-3/5 3/5-4/5 4/5-1"
     # 4 non-overlapping sites plus one site with full coverage
     [chunks_full]="0-1/4 1/4-1/2 1/2-3/4 3/4-1 0-1"
-    # 4 non-overlapping sites spanning the whole range plus one site with only early
-    # and late subjects, with the same windows as the first and last sites. Widths
-    # are chosen so that every site has the same number of subjects and a uniform
-    # density over its windows (with 1/4-wide sites, the early/late site would take
-    # every subject just outside the first and last sites)
+    # 4 non-overlapping sites plus one early/late site sharing the outer windows.
+    # These widths give every site the same size and a uniform t0 density.
     [chunks_earlylate]="0-3/10 3/10-1/2 1/2-7/10 7/10-1 0-3/10,7/10-1"
-    # same, but the early/late site does not overlap the 4 other sites (it takes the
-    # extreme 10% at each end and the 4 other sites split the middle)
+    # the early/late site takes the outer 10% at each end; the 4 others split the rest
     [chunks_earlylate_sep]="1/10-3/10 3/10-1/2 1/2-7/10 7/10-9/10 0-1/10,9/10-1"
-    # random split, one site with only cross-sectional data (sites are exchangeable)
+    # one cross-sectional site; which one doesn't matter since all have full coverage
     [cross]="0-1 0-1 0-1 0-1 0-1:cross"
 )
 CONDITIONS=${CONDITIONS:-"overlap100 overlap000 chunks_full chunks_earlylate chunks_earlylate_sep cross"}
@@ -311,7 +300,7 @@ prep_one() {
             --test-fraction "$TEST_FRACTION" --random-seed "$seed" --pooled \
             --overwrite || return 1
         run "${SCRIPTS_DIR}/merge_data.py" --tag "$final" || return 1
-        # training data only (as fitted: cross-sectional sites already truncated)
+        # training data as fitted
         run "${SCRIPTS_DIR}/plot_synthetic_ground_truth.py" --tag "$final" || return 1
     fi
 
@@ -525,9 +514,7 @@ cmd_fit_variants() {
 }
 
 # ===== forecast =====
-# recompute the metrics of all models of a tag, reusing the fitted models (no nodes
-# needed), e.g. with other N_TIMEPOINTS/FORECAST_AFTER. Forecasts are scored on the
-# same subjects/visits for every N (visits after the first FORECAST_AFTER).
+# recompute the metrics of all fitted models of a tag (no nodes needed)
 forecast_one() {
     # $1: tag
     local tag=$1

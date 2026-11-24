@@ -253,7 +253,7 @@ def assign_sites_by_windows(
         for start, end in windows:
             eligible[:, i_site] |= (u >= start - eps) & (u < end + eps)
 
-    # one column per site place
+    # one slot per subject a site can take
     slot_sites = np.repeat(np.arange(n_sites), capacities)
     eligible_slots = eligible[:, slot_sites]
     cost = np.where(eligible_slots, rng.random(eligible_slots.shape), n_subjects + 1.0)

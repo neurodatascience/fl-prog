@@ -34,11 +34,10 @@ MARKER_SIZE = 0.5  # subjects of cross-sectional sites (single visit)
 
 
 def _get_title(tag: str) -> str:
-    # condition name in the tag (<dataset>_<condition>_s<seed>, see
-    # run_synthetic_seeds.sh), longest first in case one name contains another
+    # longest names first, since one name can contain another
     for condition in sorted(SYNTHETIC_CONDITION_LABELS, key=len, reverse=True):
         if f"_{condition}_" in f"_{tag}_":
-            # e.g. "0% overlap\n+ full" (narrow panels)
+            # two lines to fit narrow panels
             return SYNTHETIC_CONDITION_LABELS[condition].replace(" + ", "\n+ ")
     return tag
 

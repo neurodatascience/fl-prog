@@ -128,7 +128,7 @@ DATASETS = {
         split_baselines="iid",
         default_dpath_results=Path(DEFAULT_DPATH_RESULTS) / "2026_11_08",
     ),
-    # full disease coverage (run_synthetic_seeds.sh default)
+    # full disease coverage
     "synthetic": DatasetSpec(
         tag_prefix="synth_fullcov",
         condition_centralized="overlap100-centralized",
@@ -150,8 +150,7 @@ DATASETS = {
         has_ground_truth=True,
     ),
 }
-# same simulation with ADNI-like disease coverage (run_synthetic_seeds.sh with
-# DATASET=synth_adnilike T0_MAX=2)
+# same simulation with ADNI-like disease coverage
 DATASETS["synthetic_adnilike"] = dataclasses.replace(
     DATASETS["synthetic"], tag_prefix="synth_adnilike"
 )
@@ -190,8 +189,7 @@ BIOMARKER_ORDER = [
     "lh_parahippocampal_thickness",
     "rh_parahippocampal_thickness",
 ]
-# subject sets of the time shift plots (held-out subjects' time shifts are estimated
-# from all their visits). The fit metrics use other sets, see get_fit_sets
+# sets in the time shift plots; held-out subjects' time shifts use all their visits
 SET_NAME_ORDER = ["train", "test"]
 COL_SEED = "seed"
 
@@ -726,8 +724,10 @@ def _plot_metric_seeds(
     jitter: float = 0.04,
     rng_seed: int = 0,
 ) -> None:
-    """One row per model, train and test sets offset vertically: one small dot per
-    seed, and a large marker at the mean with a ±SD error bar."""
+    """Plot one row per model on ``ax``, with the sets offset vertically.
+
+    Each seed is a small dot; the mean is a large marker with a ±SD error bar.
+    """
     rng = np.random.default_rng(rng_seed)
     markers = {
         set_name: "o" if set_name == LABEL_TRAIN else "D" for set_name in set_name_order
@@ -795,8 +795,7 @@ def _plot_metric_seeds(
 
 
 def get_fit_set_palette(set_name_order: list[str]) -> dict:
-    """Map train to grey and the other sets to increasingly dark shades of one
-    colour."""
+    """Map train to grey and the other sets to darker and darker shades of one colour."""
     test_sets = [s for s in set_name_order if s != LABEL_TRAIN]
     color_test = next(iter(get_categorical_palette(["test"]).values()))
     shades = sns.light_palette(color_test, n_colors=len(test_sets) + 1)[1:]
@@ -1170,9 +1169,8 @@ def plot_fedbiomed_comparison_seeds(
     "--forecast-after",
     type=click.IntRange(min=1),
     default=None,
-    help="Fit metrics: test sets scored after the first K visits (held-out subjects "
-    "personalized on their first N <= K visits, one set per N). Default: the only K "
-    "in the results (the largest one if there are several).",
+    help="Plot test scores of forecasts after the first K visits. "
+    "Default: the largest K in the results.",
 )
 @click.option("--skip-trajectories", is_flag=True, help="Skip group trajectories.")
 @click.option("--skip-metrics", is_flag=True, help="Skip fit metrics.")

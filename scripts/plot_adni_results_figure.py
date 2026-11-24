@@ -86,8 +86,7 @@ HEMISPHERES = {"Left": "Left", "Right": "Right", "lh": "Left", "rh": "Right"}
 PATTERN_VOLUME = re.compile(r"^(?P<hemi>Left|Right)-Hippocampus$")
 PATTERN_THICKNESS = re.compile(r"^(?P<hemi>lh|rh)_(?P<region>.+)_thickness$")
 TIME_SHIFTS_LIGHT_SET = "train"
-# subject sets of the time shift panel (held-out subjects' time shifts are estimated
-# from all their visits)
+# sets in the time shift panel
 SET_NAMES_TIME_SHIFTS = ["train", "test"]
 TIME_SHIFTS_TITLE = r"Estimated time shifts ($\boldsymbol{\tau}_\mathbf{i}$)"
 # Pearson correlation of each federated model's time shifts with the centralized
@@ -341,9 +340,8 @@ def plot_adni_results_figure(
     "--forecast-after",
     type=click.IntRange(min=1),
     default=None,
-    help="Fit panels: test sets scored after the first K visits (held-out subjects "
-    "personalized on their first N <= K visits, one set per N). Default: the only K "
-    "in the results (the largest one if there are several).",
+    help="Plot test scores of forecasts after the first K visits. "
+    "Default: the largest K in the results.",
 )
 def main(**params):
     plot_adni_results_figure(**params)

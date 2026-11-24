@@ -29,7 +29,7 @@ COL_ADAPTATION = "adaptation"
 # plotting
 SITE_COLORS = ["#1f3b73", "#b2182b", "#e6ab02", "#4d4d4d", "#7b3294"]
 
-# synthetic data conditions (site splits, see run_synthetic_seeds.sh) -> label
+# synthetic data condition (site layout) -> plot label
 SYNTHETIC_CONDITION_LABELS = {
     "overlap100": "100% overlap",
     "overlap000": "0% overlap",

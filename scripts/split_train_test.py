@@ -447,7 +447,7 @@ def split_train_test(
     default=DEFAULT_TEST_FRACTION,
     show_default=True,
     help=(
-        "Fraction of subjects to hold out. Only used in {SplitMode.SUBJECT.value!r} mode."
+        f"Fraction of subjects to hold out. Only used in {SplitMode.SUBJECT.value!r} mode."
     ),
 )
 @click.option("--random-seed", type=int, envvar="RNG_SEED", show_envvar=True)

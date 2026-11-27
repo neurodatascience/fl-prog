@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """Plot the synthetic-data conditions (e.g. overlap between sites).
 
-One panel per tag (``simulate_data.py`` output), each showing the disease-time span of every
-subject (sorted by t0), coloured by site. Held-out test subjects, if any, are not shown.
+One panel per tag (``split_train_test.py`` output), each showing the disease-time span
+of every training subject (sorted by t0), coloured by site. Subjects of cross-sectional
+sites are shown as points (first visit only). Held-out test subjects are not shown.
 """
 
 from pathlib import Path
@@ -13,8 +14,12 @@ import numpy as np
 import seaborn as sns
 from matplotlib.lines import Line2D
 
-from fl_prog.plotting import get_categorical_palette
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, SITE_COLORS
+from fl_prog.plotting import get_categorical_palette, save_fig_formats
+from fl_prog.utils.constants import (
+    CLICK_CONTEXT_SETTINGS,
+    SITE_COLORS,
+    SYNTHETIC_CONDITION_LABELS,
+)
 from fl_prog.utils.io import (
     DEFAULT_DPATH_DATA,
     get_dpath_latest,
@@ -25,11 +30,16 @@ from fl_prog.utils.io import (
 FIGSIZE = (6.4, 3.0)  # half the width of a 16:9 slide (13.33 in)
 DPI = 300
 LINE_WIDTH = 0.3
+MARKER_SIZE = 0.5  # subjects of cross-sectional sites (single visit)
 
 
-def _get_title(json_data: dict, tag: str) -> str:
-    overlap = json_data.get("settings", {}).get("overlap")
-    return tag if overlap is None else f"{overlap:.0%} overlap"
+def _get_title(tag: str) -> str:
+    # longest names first, since one name can contain another
+    for condition in sorted(SYNTHETIC_CONDITION_LABELS, key=len, reverse=True):
+        if f"_{condition}_" in f"_{tag}_":
+            # two lines to fit narrow panels
+            return SYNTHETIC_CONDITION_LABELS[condition].replace(" + ", "\n+ ")
+    return tag
 
 
 def _get_site_palette(sites: list[str]) -> dict:
@@ -54,12 +64,13 @@ def _load_subject_spans(dpath: Path, json_data: dict):
 
 def plot_conditions(dpath_data: Path, tags: list[str], fpath_out: Path):
     sns.set_theme(context="talk", style="ticks")
-    dfs, titles = {}, {}
+    dfs, titles, cross_sectional_nodes = {}, {}, {}
     for tag in tags:
         dpath = dpath_data / tag
         json_data = load_json(dpath / f"{tag}.json")
         dfs[tag] = _load_subject_spans(dpath, json_data)
-        titles[tag] = _get_title(json_data, tag)
+        titles[tag] = _get_title(tag)
+        cross_sectional_nodes[tag] = set(json_data["cross_sectional_nodes"])
     sites = sorted({site for df in dfs.values() for site in df["site"]}, key=int)
     palette = _get_site_palette(sites)
     n_subjects = max(len(df) for df in dfs.values())
@@ -68,7 +79,8 @@ def plot_conditions(dpath_data: Path, tags: list[str], fpath_out: Path):
     fig, axes = plt.subplots(
         1,
         len(tags),
-        figsize=FIGSIZE,
+        # FIGSIZE fits 3 panels
+        figsize=(FIGSIZE[0] * max(1, len(tags) / 3), FIGSIZE[1]),
         sharex=True,
         sharey=True,
         layout="constrained",
@@ -76,14 +88,25 @@ def plot_conditions(dpath_data: Path, tags: list[str], fpath_out: Path):
     axes = np.atleast_1d(axes)
     for ax, tag in zip(axes, tags, strict=True):
         df = dfs[tag]
+        is_cross = df["site"].isin(cross_sectional_nodes[tag]).to_numpy()
+        df_long = df[~is_cross]
         ax.hlines(
-            df["y"],
-            df["t0"],
-            df["t_end"],
-            colors=[palette[site] for site in df["site"]],
+            df_long["y"],
+            df_long["t0"],
+            df_long["t_end"],
+            colors=[palette[site] for site in df_long["site"]],
             linewidths=LINE_WIDTH,
         )
-        ax.set_title(titles[tag], fontsize="medium")
+        # cross-sectional sites: first visit only
+        df_cross = df[is_cross]
+        ax.scatter(
+            df_cross["t0"],
+            df_cross["y"],
+            color=[palette[site] for site in df_cross["site"]],
+            s=MARKER_SIZE,
+            linewidths=0,
+        )
+        ax.set_title(titles[tag], fontsize="small")
         ax.set_xticks([])
         sns.despine(ax=ax)
 
@@ -109,12 +132,7 @@ def plot_conditions(dpath_data: Path, tags: list[str], fpath_out: Path):
         borderaxespad=0.1,
     )
 
-    fpath_out.parent.mkdir(parents=True, exist_ok=True)
-    for ext in ("png", "pdf"):
-        fpath = fpath_out.with_suffix(f".{ext}")
-        fig.savefig(fpath, dpi=DPI)
-        print(f"Saved {fpath}")
-    plt.close(fig)
+    save_fig_formats(fig, fpath_out, bbox_inches=None, dpi=DPI)
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -124,7 +142,7 @@ def plot_conditions(dpath_data: Path, tags: list[str], fpath_out: Path):
     type=str,
     multiple=True,
     required=True,
-    help="Tag of a simulate_data.py output.",
+    help="Tag of a split_train_test.py output.",
 )
 @click.option(
     "--data-dir",
@@ -136,7 +154,7 @@ def plot_conditions(dpath_data: Path, tags: list[str], fpath_out: Path):
     "--output",
     "fpath_out",
     type=click.Path(path_type=Path),
-    help="Output path without extension (.png and .pdf are written). "
+    help="Output path without extension (.png and .svg are written). "
     "Default: <data-dir>/figures/conditions-<first tag>.",
 )
 def main(tags: tuple[str, ...], dpath_data: Path | None, fpath_out: Path | None):

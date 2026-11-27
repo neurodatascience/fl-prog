@@ -3,7 +3,8 @@
 
 Trajectories are shown on the disease-time axis, before the per-subject time shift
 is removed (disease time = t0 + acceleration_factor * observed time). Run on the
-output of ``simulate_data.py`` (held-out test subjects, if any, are not shown).
+output of ``split_train_test.py`` to show the training data as fitted (held-out test
+subjects are not shown, cross-sectional sites only have first visits).
 """
 
 import math
@@ -15,6 +16,7 @@ import numpy as np
 import seaborn as sns
 from matplotlib.collections import LineCollection
 
+from fl_prog.plotting import save_fig_formats
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import (
     DEFAULT_DPATH_DATA,
@@ -171,15 +173,14 @@ def plot_ground_truth(dpath: Path, tag: str) -> Path:
     for ax in axes[n_panels:]:
         ax.set_visible(False)
 
-    settings = json_data.get("settings", {})
+    sites = json_data["settings"]["sites"]
     fig.suptitle(
         f"{tag}\n{len(df_subjects)} subjects, {len(df)} visits, "
-        f"overlap={settings.get('overlap')}",
+        f"sites={' '.join(sites) if sites else 'independent'}",
         fontsize="medium",
     )
-    fpath_out = dpath / f"{tag}-ground_truth.png"
-    fig.savefig(fpath_out, dpi=DPI)
-    plt.close(fig)
+    fpath_out = dpath / f"{tag}-ground_truth"  # without extension
+    save_fig_formats(fig, fpath_out, bbox_inches=None, dpi=DPI)
 
     print(
         df_subjects.groupby("site")
@@ -192,7 +193,6 @@ def plot_ground_truth(dpath: Path, tag: str) -> Path:
         .round(2)
         .to_string()
     )
-    print(f"Saved ground-truth plot to {fpath_out}")
     return fpath_out
 
 

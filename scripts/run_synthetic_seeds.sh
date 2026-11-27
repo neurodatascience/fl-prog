@@ -3,8 +3,8 @@
 # (synthetic counterpart of run_adni_seeds.sh).
 #
 # For each seed, one population of ADNI-like subjects is simulated (same subjects
-# for every condition), then split into sites by t0 with different amounts of
-# overlap between neighbouring sites (conditions). The seed controls the data
+# for every condition), then split into 5 sites by t0 with a different site layout
+# per condition (see COND_SITES). The seed controls the data
 # (population, site split, pooled subject hold-out), not model fitting (fixed
 # MODEL_SEED for every model). Held-out test subjects are the same across conditions.
 #
@@ -17,10 +17,9 @@
 #        run_synthetic_seeds.sh {add-datasets-variants|fit-variants|variants} [SEED ...]
 #        run_synthetic_seeds.sh forecast [SEED ...]
 #
-# "forecast" (after "fit"/"variants", not part of "all") re-scores held-out subjects
-# personalized on their first N visits only, for N in N_TIMEPOINTS (see
-# get_metrics.py --personalize-n-timepoints/--forecast-after), for all models of
-# each condition and seed.
+# "fit" also scores held-out subjects personalized on their first N visits, for each
+# N in N_TIMEPOINTS. "forecast" recomputes the metrics of fitted models without
+# refitting, e.g. with other N_TIMEPOINTS. Run it after "fit"; "all" doesn't include it.
 #
 # "variants" fits the federated setup with other optimizers/aggregators (FBM_VARIANTS,
 # e.g. native SCAFFOLD + SGD and its FedAvg + SGD baseline) on VARIANT_CONDITIONS, using
@@ -29,13 +28,17 @@
 #
 # All runs write to results/<FL_PROG_DATE>/<tag>/.
 #
-# Environment overrides: SEEDS, FL_PROG_DATE, LOG_DIR, MAX_USER_THREADS,
+# Environment overrides: SEEDS, FL_PROG_DATE, RESULTS_DIR, LOG_DIR, MAX_USER_THREADS,
 # VENV_DIR (Python environment), FBM_POOL_DIR (where instances are created),
 # FBM_TEMPLATE_DIR / FBM_TEMPLATE_CENTRAL_NODE (existing instance/node to copy),
 # N_CENTRAL, N_FED, PORT_BASE, BASELINE_JOBS, BASELINE_THREADS, SIM_CONFIG,
 # ADD_TO_NODES, FBM_EXTRA_ARGS / DPMOST_EXTRA_ARGS / LEASPY_EXTRA_ARGS (e.g. for
-# smoke tests), DATASET, T0_MAX, BASELINES, INSTANCES, VARIANTS, VARIANT_CONDITIONS, FBM_VARIANT_ARGS_<variant>,
-# N_TIMEPOINTS, FORECAST_AFTER, FORECAST_JOBS, FORECAST_THREADS, FORECAST_EXTRA_ARGS
+# smoke tests), DATASET, T0_MAX, CONDITIONS, BASELINES, INSTANCES, VARIANTS,
+# VARIANT_CONDITIONS, FBM_VARIANT_ARGS_<variant>, N_TIMEPOINTS, FORECAST_AFTER,
+# FORECAST_JOBS, FORECAST_THREADS, FORECAST_EXTRA_ARGS
+#
+# CONDITIONS can be a subset of COND_SITES, but must include overlap100, which the
+# centralized setup and the baselines use.
 
 set -uo pipefail
 
@@ -52,33 +55,33 @@ MODEL_SEED=3791
 TEST_FRACTION=0.1
 TEST_PCT=10
 export FL_PROG_DATE=${FL_PROG_DATE:-$(date +%Y_%m_%d)}
-RESULTS_DIR="${ROOT_DIR}/results"
+RESULTS_DIR=${RESULTS_DIR:-"${ROOT_DIR}/results"}
 MAX_USER_THREADS=${MAX_USER_THREADS:-3000}
 ADD_TO_NODES=${ADD_TO_NODES:-1} # set to 0 to only generate data in prep
 NICE="nice -n 10"
 
-# ADNI-like simulation (see get_simulation_config_from_adni_results.py for the config)
-# tag prefix (dataset name): use another one for other simulation settings, e.g.
-# DATASET=synth_fullcov T0_MAX=4.5 FBM_EXTRA_ARGS="--lambda-k-values 0.001" (disease
-# coverage up to the late biomarkers)
-DATASET=${DATASET:-synth_adnilike}
-T0_MAX=${T0_MAX:-2} # true time shifts ~ U(0, T0_MAX) (model time, 1 = 96 months)
+# ADNI-like simulation with full disease coverage. DATASET is the tag prefix; change
+# it with other settings, e.g. DATASET=synth_adnilike T0_MAX=2 for ADNI-like coverage.
+DATASET=${DATASET:-synth_fullcov}
+T0_MAX=${T0_MAX:-4.5} # true time shifts ~ U(0, T0_MAX), in model time (1 = 96 months)
 SIM_CONFIG=${SIM_CONFIG:-"${ROOT_DIR}/data/_simulation_configs/adni_like.json"}
 LOG_DIR=${LOG_DIR:-"${RESULTS_DIR}/${FL_PROG_DATE}/logs-${DATASET}"}
 NODE_PIDS_FILE="${LOG_DIR}/node_pids.txt"
 N_SUBJECTS=1735 # ADNI subjects (train + test)
-N_SITES=5
-SIM_ARGS="--config ${SIM_CONFIG} --n-subjects ${N_SUBJECTS} --n-sites ${N_SITES} \
+SIM_ARGS="--config ${SIM_CONFIG} --n-subjects ${N_SUBJECTS} \
 --t0-min 0 --t0-max ${T0_MAX} --acceleration-factor-std 0.5"
 
+# full coverage recovers k, midpoints and time shifts better with weaker k
+# regularization (see results/2026_11_23-alpha_penalty-fullcov*)
 FBM_ARGS="--n-rounds 30 --n-updates 25 --learning-rate 0.05 \
+--lambda-k-values 0.001 \
 --lambda-time-shifts 0.01 --penalty-acceleration-factors l2 --lambda-acceleration-factors 0.1 \
 --with-acceleration --with-scaling --training-replies --aggregated-params \
 --random-seed ${MODEL_SEED} ${FBM_EXTRA_ARGS:-}"
 DPMOST_ARGS="--random-seed ${MODEL_SEED} ${DPMOST_EXTRA_ARGS:-}"
 LEASPY_ARGS="--random-seed ${MODEL_SEED} ${LEASPY_EXTRA_ARGS:-}"
 
-# held-out subjects personalized on their first N visits ("forecast" command)
+# get_metrics.py --personalize-n-timepoints and --forecast-after
 N_TIMEPOINTS=${N_TIMEPOINTS:-"1 2 3"}
 # shellcheck disable=SC2086 # split N_TIMEPOINTS
 FORECAST_AFTER=${FORECAST_AFTER:-$(printf "%s\n" $N_TIMEPOINTS | sort -n | tail -n 1)}
@@ -86,14 +89,24 @@ FORECAST_JOBS=${FORECAST_JOBS:-10} # tags processed at the same time
 FORECAST_THREADS=${FORECAST_THREADS:-2}
 # other get_metrics.py args, e.g. "--personalize-seed 3791 --leaspy-seed 3791"
 FORECAST_EXTRA_ARGS=${FORECAST_EXTRA_ARGS:-}
+METRICS_ARGS="--forecast-after ${FORECAST_AFTER}"
+for _n in $N_TIMEPOINTS; do METRICS_ARGS+=" --personalize-n-timepoints ${_n}"; done
 
-# condition -> overlap between neighbouring sites' t0 windows
-declare -A COND_OVERLAP=(
-    [overlap100]=1
-    [overlap050]=0.5
-    [overlap000]=0
+# condition -> simulate_data.py --site spec of each of the 5 sites
+declare -A COND_SITES=(
+    [overlap100]="0-1 0-1 0-1 0-1 0-1"
+    [overlap000]="0-1/5 1/5-2/5 2/5-3/5 3/5-4/5 4/5-1"
+    # 4 non-overlapping sites plus one site with full coverage
+    [chunks_full]="0-1/4 1/4-1/2 1/2-3/4 3/4-1 0-1"
+    # 4 non-overlapping sites plus one early/late site sharing the outer windows.
+    # These widths give every site the same size and a uniform t0 density.
+    [chunks_earlylate]="0-3/10 3/10-1/2 1/2-7/10 7/10-1 0-3/10,7/10-1"
+    # the early/late site takes the outer 10% at each end; the 4 others split the rest
+    [chunks_earlylate_sep]="1/10-3/10 3/10-1/2 1/2-7/10 7/10-9/10 0-1/10,9/10-1"
+    # one cross-sectional site; which one doesn't matter since all have full coverage
+    [cross]="0-1 0-1 0-1 0-1 0-1:cross"
 )
-CONDITIONS="overlap100 overlap050 overlap000"
+CONDITIONS=${CONDITIONS:-"overlap100 overlap000 chunks_full chunks_earlylate chunks_earlylate_sep cross"}
 
 # federated variants (name -> args added after FBM_ARGS, so they take precedence)
 # native SCAFFOLD needs plain SGD; fedavg_sgd is its baseline (same optimizer/lr)
@@ -104,7 +117,7 @@ declare -A FBM_VARIANTS=(
     [scaffold_adam]=${FBM_VARIANT_ARGS_scaffold_adam:-"--aggregator scaffold_adam"}
 )
 VARIANTS=${VARIANTS:-"scaffold fedavg_sgd"}
-VARIANT_CONDITIONS=${VARIANT_CONDITIONS:-overlap050}
+VARIANT_CONDITIONS=${VARIANT_CONDITIONS:-overlap000}
 
 # condition for the centralized setup and baselines (DPMoSt, Leaspy)
 CENTRAL_CONDITION=overlap100
@@ -154,7 +167,7 @@ instance_for() {
     elif [ "$setup" = centralized ]; then
         printf "central-%02d" $(((seed - 1) % N_CENTRAL + 1))
     else
-        local j=$(((seed - 1) * 3 + $(cond_index "$cond")))
+        local j=$(((seed - 1) * $(wc -w <<<"$CONDITIONS") + $(cond_index "$cond")))
         printf "fed-%02d" $((j % N_FED + 1))
     fi
 }
@@ -271,7 +284,9 @@ cmd_setup_instances() {
 # ===== prep =====
 prep_one() {
     local cond=$1 seed=$2
-    local tag final
+    local tag final site_args=() site
+    [ -n "${COND_SITES[$cond]+x}" ] || { log "[ERROR] unknown condition ${cond}"; return 1; }
+    for site in ${COND_SITES[$cond]}; do site_args+=(--site "$site"); done
     tag=$(base_tag "$cond" "$seed")
     final=$(final_tag "$cond" "$seed")
 
@@ -280,12 +295,13 @@ prep_one() {
     else
         # shellcheck disable=SC2086
         run "${SCRIPTS_DIR}/simulate_data.py" --tag "$tag" $SIM_ARGS \
-            --overlap "${COND_OVERLAP[$cond]}" --rng-seed "$seed" || return 1
-        run "${SCRIPTS_DIR}/plot_synthetic_ground_truth.py" --tag "$tag" || return 1
+            "${site_args[@]}" --rng-seed "$seed" || return 1
         run "${SCRIPTS_DIR}/split_train_test.py" --tag "$tag" --mode subject \
             --test-fraction "$TEST_FRACTION" --random-seed "$seed" --pooled \
             --overwrite || return 1
         run "${SCRIPTS_DIR}/merge_data.py" --tag "$final" || return 1
+        # training data as fitted
+        run "${SCRIPTS_DIR}/plot_synthetic_ground_truth.py" --tag "$final" || return 1
     fi
 
 }
@@ -423,8 +439,9 @@ fit_fbm_instance() {
                 run $NICE "${SCRIPTS_DIR}/run_fedbiomed.py" --tag "$tag" \
                     --fedbiomed-dir "${FBM_POOL_DIR}/${name}" --setup "$setup" \
                     --results-dir "$RESULTS_DIR" $FBM_ARGS $variant_args &&
+                # shellcheck disable=SC2086
                 run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
-                    --results-dir "$RESULTS_DIR" --run-tag "$run_tag"
+                    --results-dir "$RESULTS_DIR" --run-tag "$run_tag" $METRICS_ARGS
         } >"${LOG_DIR}/${lane}/seed${seed}.log" 2>&1 ||
             log "[ERROR] [${lane}] seed ${seed} failed, see ${LOG_DIR}/${lane}/seed${seed}.log"
     done < <("$jobs_fn")
@@ -443,7 +460,7 @@ fit_baseline_one() {
         run $NICE "${SCRIPTS_DIR}/run_${model}.py" --tag "$tag" \
             --results-dir "$RESULTS_DIR" $args &&
             run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
-                --results-dir "$RESULTS_DIR" --run-tag "${model}-*"
+                --results-dir "$RESULTS_DIR" --run-tag "${model}-*" $METRICS_ARGS
     } >"${LOG_DIR}/${model}/seed${seed}.log" 2>&1 ||
         { log "[ERROR] [${model}] seed ${seed} failed, see ${LOG_DIR}/${model}/seed${seed}.log"; return 1; }
 }
@@ -453,7 +470,7 @@ fit_baseline_lane() {
     set_threads "$BASELINE_THREADS"
     export -f fit_baseline_one wait_for_threads log run final_tag base_tag
     export SCRIPTS_DIR RESULTS_DIR LOG_DIR DPMOST_ARGS LEASPY_ARGS NICE MAX_USER_THREADS DATASET \
-        TEST_PCT CENTRAL_CONDITION
+        TEST_PCT CENTRAL_CONDITION METRICS_ARGS
     # shellcheck disable=SC2086
     parallel --line-buffer --jobs "$BASELINE_JOBS" fit_baseline_one "$model" ::: $SEEDS
     log "[${model}] done"
@@ -497,23 +514,16 @@ cmd_fit_variants() {
 }
 
 # ===== forecast =====
-# held-out subjects personalized on their first N visits only (N in N_TIMEPOINTS),
-# reusing the fitted models (no nodes needed). Forecasts are scored on the same
-# subjects/visits for every N (visits after the first FORECAST_AFTER).
+# recompute the metrics of all fitted models of a tag (no nodes needed)
 forecast_one() {
     # $1: tag
-    local tag=$1 n
+    local tag=$1
     wait_for_threads
     log "[forecast] ${tag}"
-    (
-        # sequential: all N write to the same results files
-        for n in $N_TIMEPOINTS; do
-            # shellcheck disable=SC2086
-            run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
-                --results-dir "$RESULTS_DIR" --personalize-n-timepoints "$n" \
-                --forecast-after "$FORECAST_AFTER" $FORECAST_EXTRA_ARGS || exit 1
-        done
-    ) >"${LOG_DIR}/forecast/${tag}.log" 2>&1 ||
+    # shellcheck disable=SC2086
+    run $NICE "${SCRIPTS_DIR}/get_metrics.py" --tag "$tag" \
+        --results-dir "$RESULTS_DIR" $METRICS_ARGS $FORECAST_EXTRA_ARGS \
+        >"${LOG_DIR}/forecast/${tag}.log" 2>&1 ||
         { log "[ERROR] [forecast] ${tag} failed, see ${LOG_DIR}/forecast/${tag}.log"; return 1; }
 }
 
@@ -522,7 +532,7 @@ cmd_forecast() {
     set_threads "$FORECAST_THREADS"
     log "[forecast] N_TIMEPOINTS=${N_TIMEPOINTS} FORECAST_AFTER=${FORECAST_AFTER}"
     export -f forecast_one wait_for_threads log run
-    export SCRIPTS_DIR RESULTS_DIR LOG_DIR NICE MAX_USER_THREADS N_TIMEPOINTS FORECAST_AFTER \
+    export SCRIPTS_DIR RESULTS_DIR LOG_DIR NICE MAX_USER_THREADS METRICS_ARGS \
         FORECAST_EXTRA_ARGS
     local cond seed
     for cond in $CONDITIONS; do

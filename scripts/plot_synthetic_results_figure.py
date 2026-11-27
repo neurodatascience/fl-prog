@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Single-slide (16:9) results figure for a multi-seed synthetic run.
+"""Results figure for a multi-seed synthetic run.
 
-Top row: group trajectories (centralized and federated conditions vs ground
-truth, see ``plot_fedbiomed_comparison_seeds.py``). Bottom row: model fit (R² and
+Top rows: group trajectories of each condition vs ground truth, at most 4 panels
+per row. Bottom row: model fit (R² and
 MAE, train and test), recovery of all model parameters except acceleration
 factors, and recovery of acceleration factors by number of visits.
 
@@ -26,6 +26,7 @@ from plot_fedbiomed_comparison_seeds import (
     DATASETS,
     DNAME_FIGURES,
     LEGEND_HEADERS,
+    DatasetSpec,
     draw_group_trajectories,
     find_seed_files,
     find_tag_dirs,
@@ -36,8 +37,8 @@ from plot_fedbiomed_comparison_seeds import (
 )
 from scipy.stats import spearmanr
 
-from fl_prog.metrics import average_over_biomarkers
-from fl_prog.plotting import get_categorical_palette, save_fig
+from fl_prog.metrics import LABEL_TRAIN, average_over_biomarkers, get_fit_sets
+from fl_prog.plotting import get_categorical_palette, save_fig_formats
 from fl_prog.results import (
     estimated_params_by_setup,
     get_subjects,
@@ -48,31 +49,23 @@ from fl_prog.results import (
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import load_json
 
-DEFAULT_DATASET = "synthetic_fullcov"
+DEFAULT_DATASET = "synthetic"
 DEFAULT_DPATH_RESULTS = Path("results") / "2026_11_11-with-shifted"
-FIGSIZE = (14.83, 7.5)  # 16:9 slide (13.33 x 7.5 in) plus 1.5 in of width
+FIG_WIDTH = 14.83
+# figure height = rows of trajectory panels * TRAJECTORY_ROW_HEIGHT + BOTTOM_HEIGHT
+TRAJECTORY_ROW_HEIGHT = 3.75
+BOTTOM_HEIGHT = 3.6
+MAX_TRAJECTORY_PANELS_PER_ROW = 4
 CONTEXT = "talk"
 FONT_SCALE = 0.8  # talk context, scaled down to fit one slide
 N_YTICKS = 3
 
-# model label (collect_seed_metrics.py) -> short label, in plotting order
-MODELS = {
-    "Fed-BioMed centralized": "Centralized",
-    "Fed-BioMed 100% overlap": "100% overlap",
-    "Fed-BioMed 50% overlap": "50% overlap",
-    "Fed-BioMed 0% overlap": "0% overlap",
-}
-# DPMoSt/Leaspy are not shown
-MODELS_FEDBIOMED = list(MODELS)
 FIT_METRICS = {"r2_score": "R²", "mean_absolute_error": "MAE"}
-# fit panels of the synthetic and ADNI figures (plot_adni_results_figure.py):
-# same y-axis bounds (MAE), or same y-axis span centered on each figure's values
-# (R²), covering both datasets' Fed-BioMed results
-FIT_YLIMS = {"mean_absolute_error": (0.1, 0.145)}
-FIT_YSPANS = {"r2_score": 0.13}
-SET_NAMES = ["train", "test"]
-LABEL_TRAIN = "Train subjects"
-LABEL_TEST = "Test subjects"
+# fit panels: per model, the train box, then the test boxes from light to dark
+FIT_SHADE_TRAIN = 0.7  # amount of white blended into the model color
+FIT_SHADES_TEST = (0.45, 0.0)  # lightest (smallest N) to darkest (largest N)
+FIT_BOX_STEP = 0.9  # distance between the boxes of a model
+FIT_MODEL_GAP = 0.6  # extra distance between models
 # relative errors of the biomarker parameters, in one panel: (set name, metric) ->
 # label (x0 after removing the arbitrary time origin; k_j, s_j, sigma_j do not
 # depend on it)
@@ -96,13 +89,31 @@ ACCELERATION_TITLE = r"$\alpha_i$ recovery"
 # number of timepoints per subject (at most 11; subjects with one timepoint have no
 # acceleration estimate). Only ~3-10 training subjects per seed have 11 timepoints
 VISIT_BINS = {str(n): (n, n) for n in range(2, 12)}
-# Fed-BioMed model label -> (condition, setup) in the dataset spec
-CONDITIONS = {
-    "Fed-BioMed centralized": "overlap100-centralized",
-    "Fed-BioMed 100% overlap": "overlap100-federated",
-    "Fed-BioMed 50% overlap": "overlap050-federated",
-    "Fed-BioMed 0% overlap": "overlap000-federated",
-}
+LABEL_FEDBIOMED_CENTRALIZED = "Fed-BioMed centralized"
+
+
+def get_conditions(spec: DatasetSpec) -> dict[str, str]:
+    """Map each Fed-BioMed model label to its condition in ``spec``, in plotting
+    order."""
+    return {
+        LABEL_FEDBIOMED_CENTRALIZED: spec.condition_centralized,
+        **{
+            f"Fed-BioMed {label}": condition
+            for condition, label in spec.conditions_federated.items()
+        },
+    }
+
+
+def get_models(spec: DatasetSpec) -> dict[str, str]:
+    """Map each Fed-BioMed model label in ``spec`` to its short label."""
+    return {
+        model: spec.condition_labels[condition]
+        for model, condition in get_conditions(spec).items()
+    }
+
+
+# default models
+MODELS = get_models(DATASETS[DEFAULT_DATASET])
 
 
 # legend color boxes: outline width relative to the default (patch.linewidth)
@@ -156,40 +167,81 @@ def _values(df: pd.DataFrame, **conditions) -> np.ndarray:
     return df.loc[mask, "value"].to_numpy()
 
 
-def _plot_fit(axes, df_fit: pd.DataFrame, palette: dict, models=MODELS):
-    """Train (light) and test boxes per model, for each fit metric."""
+def get_fit_shades(set_names: list[str]) -> dict[str, float]:
+    """Map each set label to the amount of white blended into the model color.
+
+    Train is lightest, then the other sets go from light to dark.
+    """
+    test_sets = [s for s in set_names if s != LABEL_TRAIN]
+    shades_test = np.linspace(*FIT_SHADES_TEST, len(test_sets))
+    return {LABEL_TRAIN: FIT_SHADE_TRAIN, **dict(zip(test_sets, shades_test))}
+
+
+def legend_row_major(
+    handles: list, labels: list[str], n_rows: int
+) -> tuple[list, list[str], int]:
+    """Reorder legend entries so that they read row by row.
+
+    Returns the handles, labels and number of columns.
+    """
+    n_cols = -(-len(labels) // n_rows)
+    order = [
+        i_row * n_cols + i_col
+        for i_col in range(n_cols)
+        for i_row in range(n_rows)
+        if i_row * n_cols + i_col < len(labels)
+    ]
+    return [handles[i] for i in order], [labels[i] for i in order], n_cols
+
+
+def get_fit_legend(set_names: list[str], color="0.45") -> tuple[list, list[str]]:
+    """Return legend handles and labels showing the shade of each set."""
+    shades = get_fit_shades(set_names)
+    handles = [
+        Patch(facecolor=_lighten(color, shades[s]), edgecolor="0.25") for s in set_names
+    ]
+    return handles, set_names
+
+
+def _plot_fit(
+    axes,
+    df_fit: pd.DataFrame,
+    palette: dict,
+    models=MODELS,
+    forecast_after: int | None = None,
+) -> list[str]:
+    """Draw one box per model and set on each axis, one axis per fit metric.
+
+    Returns the set labels.
+    """
+    df_fit, set_names = get_fit_sets(df_fit, forecast_after=forecast_after)
+    shades = get_fit_shades(set_names)
+    model_step = len(set_names) * FIT_BOX_STEP + FIT_MODEL_GAP
     for ax, (metric, title) in zip(axes, FIT_METRICS.items()):
         groups = []
         for i_model, model in enumerate(models):
-            for i_set, set_name in enumerate(SET_NAMES):
-                values = _values(df_fit, model=model, metric=metric, set_name=set_name)
-                color = palette[model]
+            for i_set, set_name in enumerate(set_names):
                 groups.append(
                     (
-                        2.2 * i_model + 0.9 * i_set,
-                        values,
-                        _lighten(color) if set_name == "train" else color,
+                        model_step * i_model + FIT_BOX_STEP * i_set,
+                        _values(df_fit, model=model, metric=metric, set_name=set_name),
+                        _lighten(palette[model], shades[set_name]),
                     )
                 )
         _boxes(ax, groups, width=0.8)
         ax.set_title(title, fontweight="bold")
-        if metric in FIT_YLIMS:
-            ax.set_ylim(FIT_YLIMS[metric])
-        elif metric in FIT_YSPANS:
-            values = np.concatenate([v for _, v, _ in groups])
-            middle = (values.min() + values.max()) / 2
-            ax.set_ylim(
-                middle - FIT_YSPANS[metric] / 2, middle + FIT_YSPANS[metric] / 2
-            )
+    return set_names
 
 
-def _plot_recovery(ax_relative, axes_months, df_recovery: pd.DataFrame, palette):
+def _plot_recovery(
+    ax_relative, axes_months, df_recovery: pd.DataFrame, palette, models=MODELS
+):
     """Relative errors of the biomarker scale parameters (one group of boxes per
     parameter), then errors in months (midpoints, time shifts), one panel each."""
-    n_models = len(MODELS_FEDBIOMED)
+    n_models = len(models)
     groups = []
     for i_param, (set_name, metric) in enumerate(RELATIVE_ERROR_METRICS):
-        for i_model, model in enumerate(MODELS_FEDBIOMED):
+        for i_model, model in enumerate(models):
             groups.append(
                 (
                     i_param * (n_models + 1) + i_model,
@@ -222,7 +274,7 @@ def _plot_recovery(ax_relative, axes_months, df_recovery: pd.DataFrame, palette)
                     * MONTHS_PER_MODEL_TIME,
                     palette[model],
                 )
-                for i_model, model in enumerate(MODELS_FEDBIOMED)
+                for i_model, model in enumerate(models)
             ],
         )
         ax.set_title(title, fontweight="bold")
@@ -231,12 +283,17 @@ def _plot_recovery(ax_relative, axes_months, df_recovery: pd.DataFrame, palette)
             ax.set_ylabel(LABEL_MONTHS_ERROR)
 
 
-def get_df_accel_by_visits(fpaths_json: dict[int, dict[str, Path]]) -> pd.DataFrame:
+def get_df_accel_by_visits(
+    fpaths_json: dict[int, dict[str, Path]], conditions: dict[str, str]
+) -> pd.DataFrame:
     """Spearman correlation between true and estimated acceleration factors of the
-    training subjects, by number of visits (seed x model x visit bin)."""
+    training subjects, by number of visits (seed x model x visit bin).
+
+    ``conditions``: model label -> condition (see ``get_conditions``).
+    """
     rows = []
     for seed, fpaths in fpaths_json.items():
-        for model, condition in CONDITIONS.items():
+        for model, condition in conditions.items():
             json_results = load_json(fpaths[condition])
             json_data = load_json_data(json_results)
             subjects_by_node = json_data["subjects_by_node"]
@@ -274,10 +331,10 @@ def get_df_accel_by_visits(fpaths_json: dict[int, dict[str, Path]]) -> pd.DataFr
     return pd.DataFrame(rows)
 
 
-def _plot_accel_by_visits(ax, df_accel: pd.DataFrame, palette: dict):
+def _plot_accel_by_visits(ax, df_accel: pd.DataFrame, palette: dict, models=MODELS):
     x = np.arange(len(VISIT_BINS))
-    offsets = np.linspace(-0.15, 0.15, len(MODELS_FEDBIOMED))
-    for offset, model in zip(offsets, MODELS_FEDBIOMED):
+    offsets = np.linspace(-0.15, 0.15, len(models))
+    for offset, model in zip(offsets, models):
         df_summary = (
             df_accel.query("model == @model")
             .groupby("n_visits")["spearman_r"]
@@ -309,8 +366,8 @@ def plot_synthetic_results_figure(
     dataset: str,
     dpath_results: Path,
     dpath_out: Path | None,
-    extension: str,
     xlim_percentile: float,
+    forecast_after: int | None = None,
 ):
     spec = DATASETS[dataset]
     suffix = f"-{spec.tag_prefix}"
@@ -358,40 +415,66 @@ def plot_synthetic_results_figure(
     df_recovery = pd.read_csv(
         dpath_figures / f"param_recovery-seeds{suffix}-all.tsv", sep="\t"
     ).query("col_biomarker == 'all'")
-    df_accel = get_df_accel_by_visits(fpaths_json)
+    df_accel = get_df_accel_by_visits(fpaths_json, get_conditions(spec))
     fpath_accel = dpath_out / f"accel_recovery_by_visits{suffix}.tsv"
     fpath_accel.parent.mkdir(parents=True, exist_ok=True)
     df_accel.to_csv(fpath_accel, sep="\t", index=False)
     print(f"Saved acceleration recovery by visits to {fpath_accel}")
 
     # figure
-    palette = dict(zip(MODELS, get_categorical_palette(list(MODELS)).values()))
-    fig = plt.figure(figsize=FIGSIZE, layout="constrained")
-    subfig_top, subfig_bottom = fig.subfigures(2, 1, height_ratios=[1.1, 1])
-
-    axes_top = subfig_top.subplots(1, len(trajectories.panels), sharex=True)
-    for ax in axes_top[1:]:
-        ax.sharey(axes_top[0])
-        ax.tick_params(labelleft=False)
+    models = get_models(spec)
+    palette = dict(zip(models, get_categorical_palette(list(models)).values()))
+    n_panels = len(trajectories.panels)
+    n_rows_top = -(-n_panels // MAX_TRAJECTORY_PANELS_PER_ROW)
+    n_cols_top = -(-n_panels // n_rows_top)
+    height_top = n_rows_top * TRAJECTORY_ROW_HEIGHT
+    fig = plt.figure(
+        figsize=(FIG_WIDTH, height_top + BOTTOM_HEIGHT), layout="constrained"
+    )
+    subfig_top, subfig_bottom = fig.subfigures(
+        2, 1, height_ratios=[height_top, BOTTOM_HEIGHT]
+    )
+    axes_grid = subfig_top.subplots(
+        n_rows_top, n_cols_top, sharex=True, sharey=True, squeeze=False
+    )
+    axes_top = list(axes_grid.flat[:n_panels])
     draw_group_trajectories(
-        list(axes_top),
+        axes_top,
         trajectories,
         linewidth=1,
         linewidth_mean=2.5,
         title_fontsize=plt.rcParams["axes.titlesize"],
     )
-    for ax in axes_top:
-        ax.set_xlabel("Months")
+    ylabel = axes_top[0].get_ylabel()
+    for i_panel, ax in enumerate(axes_top):
+        # long condition labels don't fit on one line
+        ax.title.set_text(ax.get_title().replace(" + ", "\n+ "))
+        ax.set_ylabel(ylabel if i_panel % n_cols_top == 0 else "")
+        # x labels on the lowest panel of each column
+        if i_panel + n_cols_top < n_panels:
+            ax.set_xlabel("")
+        else:
+            ax.set_xlabel("Months")
+            ax.tick_params(labelbottom=True)
     handles, labels = get_group_trajectories_legend(trajectories, linewidth=2)
-    legend = subfig_top.legend(
-        handles,
-        labels,
-        loc="outside right center",
-        handlelength=1.5,
-        labelspacing=0.25,
-        fontsize="small",
-        frameon=False,
-    )
+    legend_kwargs = {
+        "handlelength": 1.5,
+        "labelspacing": 0.25,
+        "fontsize": "small",
+        "frameon": False,
+    }
+    axes_empty = axes_grid.flat[n_panels:]
+    for ax in axes_empty:
+        ax.axis("off")
+    if len(axes_empty):
+        # in the first empty slot of the grid
+        legend = axes_empty[0].legend(
+            handles, labels, loc="center left", **legend_kwargs
+        )
+    else:
+        legend = subfig_top.legend(
+            handles, labels, loc="outside right center", **legend_kwargs
+        )
     for text in legend.get_texts():
         if text.get_text() in LEGEND_HEADERS:
             text.set_fontweight("bold")
@@ -404,31 +487,47 @@ def plot_synthetic_results_figure(
             "width_ratios": [2.2] * n_fit + [2.6] + [1.1] * len(MONTHS_METRICS) + [2.2]
         },
     )
-    _plot_fit(axes_bottom[:n_fit], df_fit, palette)
+    set_names = _plot_fit(
+        axes_bottom[:n_fit],
+        df_fit,
+        palette,
+        models=models,
+        forecast_after=forecast_after,
+    )
     _plot_recovery(
         axes_bottom[n_fit],
         axes_bottom[n_fit + 1 : n_fit + 1 + len(MONTHS_METRICS)],
         df_recovery,
         palette,
+        models=models,
     )
-    _plot_accel_by_visits(axes_bottom[-1], df_accel, palette)
+    _plot_accel_by_visits(axes_bottom[-1], df_accel, palette, models=models)
     for ax in axes_bottom:
         ax.yaxis.set_major_locator(MaxNLocator(nbins=N_YTICKS))
         ax.title.set_fontsize("medium")
 
-    # shared legend: models, then train/test shading
-    handles = [
-        Patch(facecolor=palette[model], edgecolor="0.25") for model in MODELS
-    ] + [
-        Patch(facecolor=_lighten("0.5"), edgecolor="0.25"),
-        Patch(facecolor="0.5", edgecolor="0.25"),
+    # shared legend: models in the first rows, set shades in the last row
+    handles_sets, labels_sets = get_fit_legend(set_names)
+    handles_models = [
+        Patch(facecolor=palette[model], edgecolor="0.25") for model in models
     ]
-    labels = list(MODELS.values()) + [LABEL_TRAIN, LABEL_TEST]
+    labels_models = list(models.values())
+    n_cols = len(labels_sets)
+    rows = [
+        (handles_models[i : i + n_cols], labels_models[i : i + n_cols])
+        for i in range(0, len(labels_models), n_cols)
+    ] + [(handles_sets, labels_sets)]
+    handles, labels = [], []
+    for handles_row, labels_row in rows:
+        n_blank = n_cols - len(labels_row)
+        handles += handles_row + [Patch(visible=False)] * n_blank
+        labels += labels_row + [""] * n_blank
+    handles, labels, n_cols = legend_row_major(handles, labels, n_rows=len(rows))
     legend = subfig_bottom.legend(
         handles,
         labels,
         loc="outside lower center",
-        ncols=len(labels),
+        ncols=n_cols,
         fontsize="small",
         handlelength=1,
         columnspacing=1,
@@ -437,8 +536,7 @@ def plot_synthetic_results_figure(
     _thin_legend_patches(legend)
     sns.despine(fig)
 
-    fpath_out = dpath_out / f"results_figure{suffix}.{extension}"
-    save_fig(fig, fpath_out, bbox_inches=None)
+    save_fig_formats(fig, dpath_out / f"results_figure{suffix}", bbox_inches=None)
     plt.close(fig)
 
 
@@ -465,19 +563,19 @@ def plot_synthetic_results_figure(
     help="Output directory. Default: <results-dir>/figures.",
 )
 @click.option(
-    "--format",
-    "extension",
-    type=click.Choice(["svg", "png", "pdf"]),
-    default="svg",
-    show_default=True,
-)
-@click.option(
     "--xlim-percentile",
     type=click.FloatRange(0, 100, min_open=True),
     default=99,
     show_default=True,
     help="Trajectory x-axis ends at this percentile of the centralized models' "
     "shifted visit times.",
+)
+@click.option(
+    "--forecast-after",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Plot test scores of forecasts after the first K visits. "
+    "Default: the largest K in the results.",
 )
 def main(**params):
     plot_synthetic_results_figure(**params)

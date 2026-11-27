@@ -2,12 +2,14 @@
 """Collect metrics from a multi-seed run (see ``run_adni_seeds.sh`` and
 ``run_synthetic_seeds.sh``).
 
-Expected layout::
+Expected layout (produced by get_metrics.py)::
 
     <results-dir>/<tag>/<model type>-*-fit_quality*.tsv
     <results-dir>/<tag>/<model type>-*-param_recovery*.tsv (synthetic data only)
 
-where ``<tag>`` looks like ``<dataset>_<condition>_s<seed>_...``.
+where ``<tag>`` looks like ``<dataset>_<condition>_s<seed>_...``. Each file has the
+results of one run, for held-out subjects personalized on all their visits and on
+their first N visits (``n_timepoints``/``forecast_after`` columns.
 """
 
 import re
@@ -18,14 +20,24 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
-from fl_prog.plotting import get_categorical_palette, save_fig
-from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
+from fl_prog.metrics import (
+    BIOMARKER_ALL,
+    COL_FORECAST_AFTER,
+    COL_N_TIMEPOINTS,
+    SET_NAME_TEST,
+    SET_NAME_TEST_FIT,
+    SET_NAME_TEST_FORECAST,
+    SET_NAME_TRAIN,
+    select_forecast_after,
+)
+from fl_prog.plotting import get_categorical_palette, save_fig_formats
+from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS, SYNTHETIC_CONDITION_LABELS
 
 DATASET_ADNI = "adni_harmonized"
-DATASET_SYNTHETIC = "synth_adnilike"
-# same simulation with wider true time shifts (disease coverage up to late biomarkers)
-DATASET_SYNTHETIC_FULLCOV = "synth_fullcov"
-DATASETS = [DATASET_ADNI, DATASET_SYNTHETIC, DATASET_SYNTHETIC_FULLCOV]
+DATASET_SYNTHETIC = "synth_fullcov"
+# same simulation with ADNI-like (reduced) disease coverage
+DATASET_SYNTHETIC_ADNILIKE = "synth_adnilike"
+DATASETS = [DATASET_ADNI, DATASET_SYNTHETIC, DATASET_SYNTHETIC_ADNILIKE]
 
 # (model type, data condition, setup[, variant]) -> model label
 # variant: Fed-BioMed aggregator/optimizer from the file name (see _get_variant),
@@ -40,27 +52,29 @@ MODELS = {
     ("leaspy", "iid", "centralized"): "Leaspy",
     # synthetic
     ("fedbiomed", "overlap100", "centralized"): "Fed-BioMed centralized",
-    ("fedbiomed", "overlap100", "federated"): "Fed-BioMed 100% overlap",
-    ("fedbiomed", "overlap050", "federated"): "Fed-BioMed 50% overlap",
+    **{
+        ("fedbiomed", condition, "federated"): f"Fed-BioMed {label}"
+        for condition, label in SYNTHETIC_CONDITION_LABELS.items()
+    },
+    # other aggregators/optimizers
     (
         "fedbiomed",
-        "overlap050",
+        "overlap000",
         "federated",
         "scaffold_native_sgd",
-    ): "Fed-BioMed 50% overlap (SCAFFOLD)",
+    ): "Fed-BioMed 0% overlap (SCAFFOLD)",
     (
         "fedbiomed",
-        "overlap050",
+        "overlap000",
         "federated",
         "fedavg_sgd",
-    ): "Fed-BioMed 50% overlap (FedAvg, SGD)",
+    ): "Fed-BioMed 0% overlap (FedAvg, SGD)",
     (
         "fedbiomed",
-        "overlap050",
+        "overlap000",
         "federated",
         "scaffold_adam",
-    ): "Fed-BioMed 50% overlap (SCAFFOLD, Adam)",
-    ("fedbiomed", "overlap000", "federated"): "Fed-BioMed 0% overlap",
+    ): "Fed-BioMed 0% overlap (SCAFFOLD, Adam)",
     ("dpmost", "overlap100", "centralized"): "DPMoSt",
     ("leaspy", "overlap100", "centralized"): "Leaspy",
 }
@@ -87,16 +101,10 @@ RECOVERY_METRICS = {
         "acceleration_factors_spearman_r",
     ): "Accel. factor \u03c1 (train)",  # rho
 }
-BIOMARKER_ALL = "all"
-SET_NAME_ORDER = ["train", "test"]
 # held-out subjects personalized on their first N visits
-SET_NAME_TEST_ALL = "test"
-SET_NAME_TEST_FIT = "test_fit"
-SET_NAMES_FORECAST = [SET_NAME_TEST_FIT, "test_forecast"]
+SET_NAMES_FORECAST = [SET_NAME_TEST_FIT, SET_NAME_TEST_FORECAST]
 # prefix of the recovery set names of held-out subjects (also "_shifted")
 PREFIX_SET_NAME_RECOVERY_TEST = "recovery_per_subject_test"
-COL_N_TIMEPOINTS = "n_timepoints"
-COL_FORECAST_AFTER = "forecast_after"
 PATTERN_TAG = re.compile(
     rf"^(?P<dataset>{'|'.join(DATASETS)})_(?P<condition>.+?)_s(?P<seed>\d+)_"
 )
@@ -104,8 +112,6 @@ PATTERN_TAG = re.compile(
 PATTERN_FBM_AGGREGATOR = re.compile(
     r"-(?:no_)?scaling-(?P<aggregator>[^-]+)-(?:\d+|no_seed)-"
 )
-# for extracting N and K for personalization and forecast timepoints respectivaly
-PATTERN_N_TIMEPOINTS = re.compile(r"-first(?P<n>\d+)_after(?P<k>\d+)\.tsv$")
 # suffixes to strip
 PATTERN_VARIANT_SUFFIXES_IGNORED = re.compile(
     r"((?<!scaffold)_adam)?(_locallr[\d.]+)?$"
@@ -123,15 +129,6 @@ def _get_variant(fname: str) -> str | None:
         return None
     variant = PATTERN_VARIANT_SUFFIXES_IGNORED.sub("", match.group("aggregator"))
     return None if variant == DEFAULT_FBM_AGGREGATOR else variant
-
-
-def _get_n_timepoints(fname: str) -> tuple[float, float]:
-    """Get (N, K) of a metrics file personalized on the first N visits and scored
-    after the first K (NaN, NaN for personalization on all visits)."""
-    match = PATTERN_N_TIMEPOINTS.search(fname)
-    if match is None:
-        return float("nan"), float("nan")
-    return int(match.group("n")), int(match.group("k"))
 
 
 def _collect(dpath_results: Path, dataset: str, pattern_fname: str) -> pd.DataFrame:
@@ -160,9 +157,6 @@ def _collect(dpath_results: Path, dataset: str, pattern_fname: str) -> pd.DataFr
             df_setup.insert(1, "condition", condition)
             df_setup.insert(2, "seed", int(match.group("seed")))
             df_setup.insert(3, "tag", tag)
-            df_setup[COL_N_TIMEPOINTS], df_setup[COL_FORECAST_AFTER] = (
-                _get_n_timepoints(fpath.name)
-            )
             df_setup["fpath"] = str(fpath)
             dfs.append(df_setup)
     if not dfs:
@@ -170,9 +164,9 @@ def _collect(dpath_results: Path, dataset: str, pattern_fname: str) -> pd.DataFr
     df = pd.concat(dfs, ignore_index=True)
     # a model/condition/seed must come from a single file (e.g. not from both a run
     # with all setups and a run with only one of them, or from two personalization
-    # seeds), otherwise it would be counted more than once
-    keys = ["model", "condition", "seed", COL_N_TIMEPOINTS, COL_FORECAST_AFTER]
-    n_files = df.groupby(keys, dropna=False)["fpath"].nunique()
+    # seeds), otherwise it would be counted more than once.
+    keys = ["model", "condition", "seed"]
+    n_files = df.groupby(keys)["fpath"].nunique()
     if (n_files > 1).any():
         duplicates = n_files[n_files > 1].index.tolist()
         fpaths = df.loc[
@@ -198,27 +192,6 @@ def _split_n_timepoints(
     is_all = df[COL_N_TIMEPOINTS].isna()
     is_forecast = ~is_all & df["set_name"].isin(set_names_forecast)
     return df.loc[is_all].copy(), df.loc[is_forecast].copy()
-
-
-def _select_forecast_after(
-    df: pd.DataFrame, forecast_after: int | None
-) -> pd.DataFrame:
-    """Get rows scored after the first ``forecast_after`` visits (default: largest)."""
-    values = sorted(df[COL_FORECAST_AFTER].unique())
-    if forecast_after is None:
-        forecast_after = values[-1]
-        if len(values) > 1:
-            click.secho(
-                f"WARNING: found forecast_after values {values}, using "
-                f"{forecast_after} (see --forecast-after)",
-                fg="yellow",
-            )
-    elif forecast_after not in values:
-        raise click.UsageError(
-            f"No results with forecast_after={forecast_after} (found {values})"
-        )
-    print(f"Forecast results: scored after the first {forecast_after} visit(s)")
-    return df.loc[df[COL_FORECAST_AFTER] == forecast_after]
 
 
 def _infer_dataset(dpath_results: Path) -> str:
@@ -284,7 +257,8 @@ def _boxplot(ax, data: pd.DataFrame, model_order: list[str], palette):
 def _plot_fit_metrics(df_all: pd.DataFrame, fpath_out: Path):
     model_order = _get_model_order(df_all)
     palette = get_categorical_palette(model_order)
-    set_names = [s for s in SET_NAME_ORDER if s in set(df_all["set_name"])]
+    # train only: test scores personalized on all visits are in-sample
+    set_names = [s for s in [SET_NAME_TRAIN] if s in set(df_all["set_name"])]
     fig, axes = plt.subplots(
         nrows=len(METRICS),
         ncols=len(set_names),
@@ -300,7 +274,7 @@ def _plot_fit_metrics(df_all: pd.DataFrame, fpath_out: Path):
             ax.set_title(f"{set_name.capitalize()} {metric_label}")
             ax.set_ylabel(metric_label if i_col == 0 else "")
     fig.tight_layout()
-    save_fig(fig, fpath_out)
+    save_fig_formats(fig, fpath_out)
 
 
 def _plot_recovery(
@@ -333,7 +307,7 @@ def _plot_recovery(
     for ax in axes[len(panels) :]:
         ax.set_visible(False)
     fig.tight_layout()
-    save_fig(fig, fpath_out)
+    save_fig_formats(fig, fpath_out)
 
 
 def _lineplot_vs_n_timepoints(
@@ -400,7 +374,7 @@ def _plot_fit_metrics_vs_n_timepoints(
                 # all-visit scores are in-sample: not a reference for forecasts
                 data_reference=(
                     df_all_visits.query(
-                        "metric == @metric and set_name == @SET_NAME_TEST_ALL"
+                        f"metric == @metric and set_name == {SET_NAME_TEST!r}"
                     )
                     if set_name == SET_NAME_TEST_FIT
                     else None
@@ -414,7 +388,7 @@ def _plot_fit_metrics_vs_n_timepoints(
         "all subjects)"
     )
     fig.tight_layout()
-    save_fig(fig, fpath_out)
+    save_fig_formats(fig, fpath_out)
 
 
 def _plot_recovery_vs_n_timepoints(
@@ -446,7 +420,7 @@ def _plot_recovery_vs_n_timepoints(
         ax.set_ylabel("")
     axes[0, -1].legend(fontsize="small")
     fig.tight_layout()
-    save_fig(fig, fpath_out)
+    save_fig_formats(fig, fpath_out)
 
 
 @click.command(context_settings=CLICK_CONTEXT_SETTINGS)
@@ -496,18 +470,18 @@ def main(dpath_results: Path, dataset: str | None, forecast_after: int | None):
     _summarize(
         df_all, ["set_name", "metric"], dpath_out / f"{PREFIX_OUT}{suffix}-summary.tsv"
     )
-    _plot_fit_metrics(df_all, dpath_out / f"{PREFIX_OUT}{suffix}.svg")
+    _plot_fit_metrics(df_all, dpath_out / f"{PREFIX_OUT}{suffix}")
 
     # held-out subjects personalized on their first N visits
     if not df_forecast.empty:
-        df_forecast = _select_forecast_after(df_forecast, forecast_after)
+        df_forecast = select_forecast_after(df_forecast, forecast_after)
         _summarize(
             df_forecast,
             [COL_N_TIMEPOINTS, COL_FORECAST_AFTER, "set_name", "metric"],
             dpath_out / f"{PREFIX_OUT}{suffix}-forecast-summary.tsv",
         )
         _plot_fit_metrics_vs_n_timepoints(
-            df_forecast, df_all, dpath_out / f"{PREFIX_OUT}{suffix}-forecast.svg"
+            df_forecast, df_all, dpath_out / f"{PREFIX_OUT}{suffix}-forecast"
         )
 
     # parameter recovery (only if ground truth is known)
@@ -531,10 +505,10 @@ def main(dpath_results: Path, dataset: str | None, forecast_after: int | None):
         ["set_name", "metric"],
         dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}-summary.tsv",
     )
-    _plot_recovery(df_recovery, dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}.svg")
+    _plot_recovery(df_recovery, dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}")
 
     if not df_recovery_forecast.empty:
-        df_recovery_forecast = _select_forecast_after(
+        df_recovery_forecast = select_forecast_after(
             df_recovery_forecast, forecast_after
         )
         _summarize(
@@ -545,7 +519,7 @@ def main(dpath_results: Path, dataset: str | None, forecast_after: int | None):
         _plot_recovery_vs_n_timepoints(
             df_recovery_forecast,
             df_recovery,
-            dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}-forecast.svg",
+            dpath_out / f"{PREFIX_OUT_RECOVERY}{suffix}-forecast",
         )
 
 

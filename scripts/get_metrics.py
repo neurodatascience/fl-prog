@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 import dataclasses
 import fnmatch
-from collections.abc import Callable
+import functools
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import click
@@ -9,6 +10,10 @@ import numpy as np
 import pandas as pd
 
 from fl_prog.metrics import (
+    COL_FORECAST_AFTER,
+    COL_N_TIMEPOINTS,
+    SET_NAME_TEST_FIT,
+    SET_NAME_TEST_FORECAST,
     SUFFIX_SHIFTED,
     compute_per_subject_recovery,
     compute_predictive_metrics,
@@ -24,7 +29,6 @@ from fl_prog.personalization import (
     DEFAULT_PERSONALIZE_SEED,
     PERSONALIZE_ALGORITHMS,
     get_first_timepoints_mask,
-    get_n_timepoints_suffix,
     get_penalty_weight,
     personalize_dpmost,
     personalize_fl_prog,
@@ -68,6 +72,9 @@ from fl_prog.utils.constants import (
     LEASPY_COL_TIMEPOINT,
 )
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS, get_dpath_latest
+
+DEFAULT_PERSONALIZE_N_TIMEPOINTS = (1, 2, 3)
+PREFIX_SET_NAME_RECOVERY_TEST = "recovery_per_subject_test"
 
 
 def _save_tsv(df_metrics: pd.DataFrame, fpath_out: Path):
@@ -586,6 +593,28 @@ def get_metrics_single_run_leaspy(
     )
 
 
+def _get_metrics_single_run_leaspy_with_recovery(
+    *args, **kwargs
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return the Leaspy metrics and an empty recovery table."""
+    return get_metrics_single_run_leaspy(*args, **kwargs), pd.DataFrame()
+
+
+def _with_n_timepoints(
+    df: pd.DataFrame, n_timepoints: int | None, forecast_after: int | None
+) -> pd.DataFrame:
+    """Add ``n_timepoints`` and ``forecast_after`` columns to ``df``.
+
+    None values become missing values.
+    """
+    return df.assign(
+        **{
+            COL_N_TIMEPOINTS: pd.array([n_timepoints] * len(df), dtype="Int64"),
+            COL_FORECAST_AFTER: pd.array([forecast_after] * len(df), dtype="Int64"),
+        }
+    )
+
+
 def get_metrics(
     tag: str,
     dpath_results: Path,
@@ -595,12 +624,23 @@ def get_metrics(
     fedbiomed_personalize_algorithm=DEFAULT_PERSONALIZE_ALGORITHM,
     personalize_seed=DEFAULT_PERSONALIZE_SEED,
     dpmost_personalize_n_outer_iter=DEFAULT_DPMOST_N_OUTER_ITER,
-    personalize_n_timepoints: int | None = None,
+    personalize_n_timepoints: Iterable[int] = DEFAULT_PERSONALIZE_N_TIMEPOINTS,
     forecast_after: int | None = None,
     run_tag_pattern: str = "*",
 ):
-    if personalize_n_timepoints is not None and forecast_after is None:
-        forecast_after = personalize_n_timepoints
+    """Compute the metrics of each run of ``tag`` and save them to one metrics file
+    and one recovery file per run.
+
+    Held-out subjects are personalized on all their visits, then on their first N
+    visits for each N in ``personalize_n_timepoints``. ``forecast_after`` defaults
+    to the largest N.
+    """
+    n_values = sorted(set(personalize_n_timepoints))
+    if n_values and forecast_after is None:
+        forecast_after = n_values[-1]
+    if not n_values and forecast_after is not None:
+        raise click.UsageError("--forecast-after requires --personalize-n-timepoints")
+
     dpath_results_latest = get_dpath_latest(dpath_results)
     for fpath_json_results, json_results in iter_result_files(
         dpath_results_latest / tag
@@ -610,23 +650,25 @@ def get_metrics(
             continue
         model_type = get_model_type(fpath_json_results)
         print(f"fpath_json_results: {fpath_json_results}")
+        heldout = has_heldout_subjects(load_json_data(json_results)["subjects_by_node"])
+        n_values_run = n_values if heldout else []
+        if n_values and not heldout:
+            click.secho(
+                "\tNo held-out subjects: skipping personalization on the first visits",
+                fg="yellow",
+            )
 
         if model_type == MODEL_LEASPY:
-            df_metrics = get_metrics_single_run_leaspy(
+            get_metrics_run = functools.partial(
+                _get_metrics_single_run_leaspy_with_recovery,
                 fpath_json_results,
                 json_results,
                 tag,
                 algorithm_name=leaspy_algorithm_name,
                 seed=leaspy_seed,
                 n_jobs=leaspy_n_jobs,
-                personalize_n_timepoints=personalize_n_timepoints,
-                forecast_after=forecast_after,
             )
-            df_recovery = pd.DataFrame()
-            suffix = (
-                f"-{leaspy_algorithm_name}_{leaspy_seed}"
-                f"{get_n_timepoints_suffix(personalize_n_timepoints)}"
-            )
+            suffix = f"-{leaspy_algorithm_name}_{leaspy_seed}"
         else:
             normalisation = None
             if model_type == MODEL_DPMOST:
@@ -637,7 +679,8 @@ def get_metrics(
                 )
                 if normalisation is not None:
                     print("\tApplying DPMoSt data normalization")
-            df_metrics, df_recovery = get_metrics_single_run(
+            get_metrics_run = functools.partial(
+                get_metrics_single_run,
                 json_results,
                 tag,
                 predict_fn=get_predict_fn(model_type, normalisation=normalisation),
@@ -647,22 +690,58 @@ def get_metrics(
                 personalize_algorithm=fedbiomed_personalize_algorithm,
                 personalize_seed=personalize_seed,
                 dpmost_n_outer_iter=dpmost_personalize_n_outer_iter,
-                personalize_n_timepoints=personalize_n_timepoints,
-                forecast_after=forecast_after,
             )
             suffix = ""
-            if has_heldout_subjects(load_json_data(json_results)["subjects_by_node"]):
+            if heldout:
                 personalization_key = get_heldout_personalization_key(
                     model_type,
                     fedbiomed_personalize_algorithm=fedbiomed_personalize_algorithm,
                     personalize_seed=personalize_seed,
                     dpmost_personalize_n_outer_iter=dpmost_personalize_n_outer_iter,
-                    personalize_n_timepoints=personalize_n_timepoints,
                 )
                 suffix = f"-{personalization_key}"
 
-        if forecast_after is not None:
-            suffix += f"_after{forecast_after}"
+        df_metrics, df_recovery = get_metrics_run(
+            personalize_n_timepoints=None, forecast_after=None
+        )
+        dfs_metrics = [_with_n_timepoints(df_metrics, None, None)]
+        dfs_recovery = [_with_n_timepoints(df_recovery, None, None)]
+        # only the held-out subjects' rows depend on N
+        for n_timepoints in n_values_run:
+            df_metrics_n, df_recovery_n = get_metrics_run(
+                personalize_n_timepoints=n_timepoints, forecast_after=forecast_after
+            )
+            dfs_metrics.append(
+                _with_n_timepoints(
+                    df_metrics_n.loc[
+                        df_metrics_n["set_name"].isin(
+                            [SET_NAME_TEST_FIT, SET_NAME_TEST_FORECAST]
+                        )
+                    ],
+                    n_timepoints,
+                    forecast_after,
+                )
+            )
+            if not df_recovery_n.empty:
+                dfs_recovery.append(
+                    _with_n_timepoints(
+                        df_recovery_n.loc[
+                            df_recovery_n["set_name"].str.startswith(
+                                PREFIX_SET_NAME_RECOVERY_TEST
+                            )
+                        ],
+                        n_timepoints,
+                        forecast_after,
+                    )
+                )
+        df_metrics = pd.concat(dfs_metrics, ignore_index=True)
+        dfs_recovery = [df for df in dfs_recovery if not df.empty]
+        df_recovery = (
+            pd.concat(dfs_recovery, ignore_index=True)
+            if dfs_recovery
+            else pd.DataFrame()
+        )
+
         fpath_metrics_out = fpath_json_results.with_name(
             f"{run_tag}-fit_quality{suffix}.tsv"
         )
@@ -730,17 +809,18 @@ def get_metrics(
 @click.option(
     "--personalize-n-timepoints",
     type=click.IntRange(min=1),
-    default=None,
-    help="Estimate held-out subjects' parameters from their first N visits only, "
-    "and score these (test_fit) and later visits (test_forecast, see --forcecast-after) "
-    "separately. Subjects without enough visits are not scored. Default: all visits.",
+    multiple=True,
+    default=DEFAULT_PERSONALIZE_N_TIMEPOINTS,
+    show_default=True,
+    help="Also personalize held-out subjects on their first N visits only. "
+    "Can be repeated.",
 )
 @click.option(
     "--forecast-after",
     type=click.IntRange(min=1),
     default=None,
-    help="With --personalize-n-timepoints N, score forecasts on visits after the "
-    "first K (>= N) only. Subjects with K visits or fewer are not scored. Default: K = N.",
+    help="Score forecasts on visits after the first K, for every N. Must be at "
+    "least the largest N. Default: the largest N.",
 )
 @click.option(
     "--run-tag",

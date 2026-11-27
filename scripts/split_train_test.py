@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import shutil
+from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
 
@@ -30,7 +31,8 @@ DEFAULT_MIN_N_TIMEPOINTS = 4
 DEFAULT_TEST_FRACTION = 0.14
 SUFFIX_TEST = "-test"
 # settings of the input data that are copied to the output JSON (if present)
-SETTINGS_KEYS_KEPT = ("overlap",)
+SETTINGS_KEYS_KEPT = ("sites",)
+KEY_ACCELERATION_FACTORS = "acceleration_factors"
 
 
 def _is_adaptation_subject(
@@ -156,6 +158,16 @@ def _split_site_subjects(
     return dfs_train, dfs_test, subjects
 
 
+def _keep_first_timepoint(
+    dfs_subject: list[pd.DataFrame], col_timepoint: str
+) -> list[pd.DataFrame]:
+    """Keep only the first row (by ``col_timepoint``) of each subject's data."""
+    return [
+        df_subject.sort_values(col_timepoint, ascending=True).iloc[[0]]
+        for df_subject in dfs_subject
+    ]
+
+
 def _get_new_tag(
     tag: str,
     mode: SplitMode,
@@ -190,9 +202,15 @@ def _realign_params(
     params: dict,
     subjects_by_node_old: dict[str, list[str]],
     subjects_by_node_new: dict[str, list[str]],
+    subjects_cross_sectional: Iterable[str] = (),
 ) -> dict:
-    """Realign true per-subject parameters to the new ``subjects_by_node``."""
+    """Realign true per-subject parameters to the new ``subjects_by_node``.
+
+    Subjects truncated to a single visit get an acceleration factor of 1.
+    """
     params_by_subject = _get_true_params_by_subject(params, subjects_by_node_old)
+    for subject in subjects_cross_sectional:
+        params_by_subject[KEY_ACCELERATION_FACTORS][subject] = 1.0
 
     params_new = params.copy()
     for param_name, values_by_subject in params_by_subject.items():
@@ -247,6 +265,9 @@ def split_train_test(
     for key in SETTINGS_KEYS_KEPT:
         if key in json_data_old["settings"]:
             settings[key] = json_data_old["settings"][key]
+    # train subjects at these nodes keep only their first visit
+    cross_sectional_nodes = json_data_old.get("cross_sectional_nodes", [])
+    subjects_cross_sectional = []
 
     fnames_site = []
     for fname_site in node_id_map_old:
@@ -317,6 +338,11 @@ def split_train_test(
             )
         dfs_test.extend(dfs_test_site)
 
+        if node_id in cross_sectional_nodes:
+            dfs_train = _keep_first_timepoint(dfs_train, col_timepoint)
+            subjects_cross_sectional.extend(subjects)
+            print(f"Node {node_id}: keeping only the first visit of train subjects")
+
         subjects_by_node[node_id] = subjects
         df_train = pd.concat(dfs_train)
         df_train[col_subject_index] = df_train[col_subject].map(
@@ -374,8 +400,12 @@ def split_train_test(
     json_data_new["subjects_by_node"] = subjects_by_node
     if "params" in json_data_old:
         json_data_new["params"] = _realign_params(
-            json_data_old["params"], json_data_old["subjects_by_node"], subjects_by_node
+            json_data_old["params"],
+            json_data_old["subjects_by_node"],
+            subjects_by_node,
+            subjects_cross_sectional=subjects_cross_sectional,
         )
+    json_data_new["cross_sectional_nodes"] = cross_sectional_nodes
     json_data_new["need_scaling"] = json_data_old["need_scaling"]
     json_data_new["scaling_references"] = scaling_references
     json_data_new["do_not_merge"] = json_data_old.get("do_not_merge", [])
@@ -417,7 +447,7 @@ def split_train_test(
     default=DEFAULT_TEST_FRACTION,
     show_default=True,
     help=(
-        "Fraction of subjects to hold out. Only used in {SplitMode.SUBJECT.value!r} mode."
+        f"Fraction of subjects to hold out. Only used in {SplitMode.SUBJECT.value!r} mode."
     ),
 )
 @click.option("--random-seed", type=int, envvar="RNG_SEED", show_envvar=True)

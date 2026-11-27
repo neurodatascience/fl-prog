@@ -38,18 +38,16 @@ from plot_synthetic_results_figure import (
     FIGSIZE,
     FIT_METRICS,
     FONT_SCALE,
-    LABEL_TEST,
-    LABEL_TRAIN,
     N_YTICKS,
-    SET_NAMES,
-    _lighten,
     _plot_fit,
     _thin_legend_patches,
+    get_fit_legend,
+    legend_row_major,
 )
 from scipy.stats import pearsonr
 
 from fl_prog.metrics import average_over_biomarkers
-from fl_prog.plotting import get_categorical_palette, save_fig
+from fl_prog.plotting import get_categorical_palette, save_fig_formats
 from fl_prog.results import COL_SET_NAME, COL_SUBJECT, COL_TIME_SHIFT
 from fl_prog.utils.constants import CLICK_CONTEXT_SETTINGS
 from fl_prog.utils.io import DEFAULT_DPATH_RESULTS
@@ -88,6 +86,8 @@ HEMISPHERES = {"Left": "Left", "Right": "Right", "lh": "Left", "rh": "Right"}
 PATTERN_VOLUME = re.compile(r"^(?P<hemi>Left|Right)-Hippocampus$")
 PATTERN_THICKNESS = re.compile(r"^(?P<hemi>lh|rh)_(?P<region>.+)_thickness$")
 TIME_SHIFTS_LIGHT_SET = "train"
+# sets in the time shift panel
+SET_NAMES_TIME_SHIFTS = ["train", "test"]
 TIME_SHIFTS_TITLE = r"Estimated time shifts ($\boldsymbol{\tau}_\mathbf{i}$)"
 # Pearson correlation of each federated model's time shifts with the centralized
 # model's (same seed), separately for train and test subjects
@@ -112,7 +112,7 @@ def get_time_shift_correlations(
     """Pearson correlation between each federated model's time shifts and the
     centralized model's: federated condition -> set name (train/test) -> r."""
     correlations = {condition: {} for condition in spec.conditions_federated}
-    for set_name in SET_NAMES:
+    for set_name in SET_NAMES_TIME_SHIFTS:
         df_wide = (
             df_subject.query(f"{COL_SET_NAME} == @set_name")
             .pivot(index=COL_SUBJECT, columns="condition", values=COL_TIME_SHIFT)
@@ -158,16 +158,21 @@ def plot_adni_results_figure(
     dpath_results: Path,
     dpath_out: Path | None,
     seed_time_shifts: int,
-    extension: str,
     xlim_percentile: float,
     overwrite: bool,
+    forecast_after: int | None = None,
 ):
     spec = dataclasses.replace(DATASETS[DATASET], conditions_federated=CONDITION_LABELS)
     dpath_figures = dpath_results / DNAME_FIGURES
     dpath_out = dpath_out or dpath_figures
-    fpath_out = dpath_out / f"{FNAME_OUT}.{extension}"
-    if fpath_out.exists() and not overwrite:
-        raise click.ClickException(f"{fpath_out} exists, use --overwrite")
+    fpath_out = dpath_out / FNAME_OUT  # without extension
+    fpaths_existing = [
+        fpath_out.with_name(f"{FNAME_OUT}.{fmt}")
+        for fmt in ("png", "svg")
+        if fpath_out.with_name(f"{FNAME_OUT}.{fmt}").exists()
+    ]
+    if fpaths_existing and not overwrite:
+        raise click.ClickException(f"{fpaths_existing} exist(s), use --overwrite")
 
     # data
     dpaths_tag = dict(sorted(find_tag_dirs(dpath_results, spec).items()))
@@ -243,7 +248,13 @@ def plot_adni_results_figure(
     axes_bottom = subfig_bottom.subplots(
         1, n_fit + 1, gridspec_kw={"width_ratios": [2.2] * n_fit + [5]}
     )
-    _plot_fit(axes_bottom[:n_fit], df_fit, palette, models=MODELS)
+    set_names = _plot_fit(
+        axes_bottom[:n_fit],
+        df_fit,
+        palette,
+        models=MODELS,
+        forecast_after=forecast_after,
+    )
     ax_time_shifts = axes_bottom[-1]
     (group_handles, group_labels), _ = draw_time_shifts(
         ax_time_shifts,
@@ -270,18 +281,17 @@ def plot_adni_results_figure(
         ax.title.set_fontsize("medium")
 
     # shared legend: models, then train/test shading
+    handles_sets, labels_sets = get_fit_legend(set_names)
     handles = [
         Patch(facecolor=palette[model], edgecolor="0.25") for model in MODELS
-    ] + [
-        Patch(facecolor=_lighten("0.5"), edgecolor="0.25"),
-        Patch(facecolor="0.5", edgecolor="0.25"),
-    ]
-    labels = list(MODELS.values()) + [LABEL_TRAIN, LABEL_TEST]
+    ] + handles_sets
+    labels = list(MODELS.values()) + labels_sets
+    handles, labels, n_cols = legend_row_major(handles, labels, n_rows=2)
     legend = subfig_bottom.legend(
         handles,
         labels,
         loc="outside lower center",
-        ncols=len(labels),
+        ncols=n_cols,
         fontsize="small",
         handlelength=1,
         columnspacing=1,
@@ -290,7 +300,7 @@ def plot_adni_results_figure(
     _thin_legend_patches(legend)
     sns.despine(fig)
 
-    save_fig(fig, fpath_out, bbox_inches=None)
+    save_fig_formats(fig, fpath_out, bbox_inches=None)
     plt.close(fig)
 
 
@@ -318,13 +328,6 @@ def plot_adni_results_figure(
     help="Seed whose estimated time shifts are shown.",
 )
 @click.option(
-    "--format",
-    "extension",
-    type=click.Choice(["svg", "png", "pdf"]),
-    default="svg",
-    show_default=True,
-)
-@click.option(
     "--xlim-percentile",
     type=click.FloatRange(0, 100, min_open=True),
     default=100,
@@ -333,6 +336,13 @@ def plot_adni_results_figure(
     "shifted visit times.",
 )
 @click.option("--overwrite", is_flag=True, help="Overwrite an existing figure.")
+@click.option(
+    "--forecast-after",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Plot test scores of forecasts after the first K visits. "
+    "Default: the largest K in the results.",
+)
 def main(**params):
     plot_adni_results_figure(**params)
 

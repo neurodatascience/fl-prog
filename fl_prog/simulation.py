@@ -1,6 +1,7 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from fl_prog.utils.math import multivariate_logistic
 from fl_prog.utils.validation import check_rng
@@ -195,51 +196,38 @@ def simulate_all_subjects(
     )
 
 
-def get_overlap_windows(n_sites: int, overlap: float) -> list[tuple[float, float]]:
-    """Get equally spaced windows on [0, 1] where neighbours share a fraction of width.
+Window = tuple[float, float]
 
-    Examples
-    --------
-    >>> get_overlap_windows(4, 0)
-    [(0.0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.0)]
-    >>> [(round(a, 2), round(b, 2)) for a, b in get_overlap_windows(4, 0.5)]
-    [(0.0, 0.4), (0.2, 0.6), (0.4, 0.8), (0.6, 1.0)]
-    >>> get_overlap_windows(4, 1)
-    [(0.0, 1.0), (0.0, 1.0), (0.0, 1.0), (0.0, 1.0)]
+
+def _rank_positions(t0: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Get the position ``rank / N`` in [0, 1) of each subject when ranked by t0.
+
+    Ties are broken randomly, so the result doesn't depend on input order.
     """
-    if n_sites < 1:
-        raise ValueError(f"n_sites must be at least 1, got {n_sites}")
-    if not 0 <= overlap <= 1:
-        raise ValueError(f"overlap must be in [0, 1], got {overlap}")
-    width = 1 / (1 + (n_sites - 1) * (1 - overlap))
-    step = width * (1 - overlap)
-    return [(i * step, i * step + width) for i in range(n_sites)]
+    n_subjects = len(t0)
+    order = np.lexsort((rng.random(n_subjects), t0))
+    u = np.empty(n_subjects)
+    u[order] = np.arange(n_subjects) / n_subjects
+    return u
 
 
 @check_rng
-def assign_sites_by_overlap(
+def assign_sites_by_windows(
     t0: Iterable[float],
-    n_sites: int,
-    overlap: float,
+    windows_per_site: Sequence[Sequence[Window]],
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Assign subjects to sites based on their t0 (disease stage at first visit).
 
-    1. Subjects are ranked by t0. Each subject gets a position ``u = rank / N`` in [0, 1).
-       Ties are broken randomly, so the result doesn't depend on input order. Using
-       ranks rather than raw t0 means the windows split subjects evenly, however t0
-       is distributed.
-    2. Each site is given a window on u, using ``get_overlap_windows(n_sites, overlap)``.
-    3. Sites are filled in in order. Each site has a capacity of ``N / n_sites`` (±1).
-       Site i:
-       - First takes every unassigned subject left of the next site's window
-         (``u < next_start``). No later site could take them, so site i must.
-       - Then fills its remaining places at random from the unassigned subjects in
-         the part of its window that overlaps the next site
-         (``next_start <= u <= end``).
-       - The last site takes everyone left.
-
-    ``overlap=0`` gives contiguous t0 chunks, ``overlap=1`` gives a random split.
+    1. Subjects are ranked by t0. Each subject gets a position ``u = rank / N`` in
+       [0, 1). Ties are broken randomly. Using ranks rather than raw t0 means the
+       windows split subjects evenly, however t0 is distributed.
+    2. Each site has one or more windows on u, e.g. ``[(0, 1)]`` for full coverage
+       or ``[(0, 0.25), (0.75, 1)]`` for only early and late subjects. A subject can
+       go to a site if its u is in one of the site's windows.
+    3. Each site has a capacity of ``N / n_sites`` (±1). Subjects are matched to site
+       places at random among the valid assignments (linear assignment with random
+       costs), so a subject in the windows of several sites can go to any of them.
 
     Returns
     -------
@@ -248,43 +236,37 @@ def assign_sites_by_overlap(
     """
     t0 = np.asarray(t0, dtype=float)
     n_subjects = len(t0)
+    n_sites = len(windows_per_site)
+    if n_sites < 1:
+        raise ValueError("Need at least 1 site")
     if n_subjects < n_sites:
         raise ValueError(f"Need at least {n_sites} subjects, got {n_subjects}")
 
-    # break ties randomly so that the assignment does not depend on input order
-    order = np.lexsort((rng.random(n_subjects), t0))
-    u = np.empty(n_subjects)
-    u[order] = np.arange(n_subjects) / n_subjects
+    u = _rank_positions(t0, rng)
 
-    windows = get_overlap_windows(n_sites, overlap)
     capacities = np.full(n_sites, n_subjects // n_sites)
     capacities[: n_subjects % n_sites] += 1
 
-    sites = np.full(n_subjects, -1, dtype=int)
     eps = 1e-12  # tolerance for float window edges
-    for i_site, (start, end) in enumerate(windows):
-        unassigned = sites == -1
-        if i_site == n_sites - 1:
-            sites[unassigned] = i_site
-            break
-        next_start = windows[i_site + 1][0]
-        forced = np.flatnonzero(unassigned & (u < next_start - eps))
-        n_remaining = capacities[i_site] - len(forced)
-        if n_remaining < 0:
-            raise RuntimeError(
-                f"Site {i_site} must take {len(forced)} subjects, "
-                f"more than its capacity ({capacities[i_site]})"
-            )
-        candidates = np.flatnonzero(
-            unassigned & (u >= next_start - eps) & (u < end + eps)
-        )
-        if len(candidates) < n_remaining:
-            raise RuntimeError(
-                f"Site {i_site} needs {n_remaining} more subjects but only "
-                f"{len(candidates)} are available in its window"
-            )
-        chosen = rng.choice(candidates, size=n_remaining, replace=False)
-        sites[forced] = i_site
-        sites[chosen] = i_site
+    eligible = np.zeros((n_subjects, n_sites), dtype=bool)
+    for i_site, windows in enumerate(windows_per_site):
+        for start, end in windows:
+            eligible[:, i_site] |= (u >= start - eps) & (u < end + eps)
 
+    # one slot per subject a site can take
+    slot_sites = np.repeat(np.arange(n_sites), capacities)
+    eligible_slots = eligible[:, slot_sites]
+    cost = np.where(eligible_slots, rng.random(eligible_slots.shape), n_subjects + 1.0)
+    i_subjects, i_slots = linear_sum_assignment(cost)
+
+    if not eligible_slots[i_subjects, i_slots].all():
+        raise RuntimeError(
+            "Cannot assign every subject to a site with these windows "
+            f"(site capacities: {capacities.tolist()}, subjects in each site's "
+            f"windows: {eligible.sum(axis=0).tolist()}, subjects in no window: "
+            f"{int((~eligible.any(axis=1)).sum())})"
+        )
+
+    sites = np.empty(n_subjects, dtype=int)
+    sites[i_subjects] = slot_sites[i_slots]
     return sites
